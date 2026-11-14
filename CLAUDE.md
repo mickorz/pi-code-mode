@@ -77,6 +77,40 @@
 4. **升级方式**：本地目录用重新下载/克隆覆盖；Submodule 用 `git submodule update --remote` 固定新 commit 并更新清单。
 5. **复用前检查**：复用第三方代码前核对其 License 与版权声明；无 License 的仓库只读研究、禁止复制代码。
 
+## 开发流程：src 修改、构建与宿主安装（必读）
+
+### 修改 src 后要测试：先 `npm run build`
+
+**每次修改 `src/` 后、开始测试前，先跑一次 `npm run build`**，这是纪律不是可选项。原因与边界：
+
+- **类型关卡**：单测（tsx）与 pi 宿主（jiti）都直接加载 TS 源码、**不做类型检查**，`npm run build`（tsc）是唯一能拦住类型错误的关卡——测试前必跑，防止类型错误入库。
+- **宿主加载事实**（2026-11-15 实测：删 dist + 清 jiti 缓存后 `pi -e .` 全功能正常）：pi 宿主经 jiti 直载 `extensions/` 与 `src/` 的 TS 源码，所以宿主联调**改完 src 重启 pi 即生效**，不存在"测到旧 dist"；build 的意义是类型检查与发布产物（`package.json` main → `dist/index.js`），不是刷新宿主缓存。
+- 更新循环三步：改 `src/` → `npm run build`（类型检查）→ 重启 pi 会话。
+
+### 把开发中的本插件装进项目（宿主联调）
+
+统一**本地路径安装**（直连仓库目录不拷贝、不走 npm 包名，理由见下方专项约定第 5 条）：
+
+```bash
+REPO=/Users/michaelchang/Desktop/WorkProjects/pi-code-mode
+
+# ① 一次性测试（不写任何配置，仅当次生效）：
+pi -e $REPO
+
+# ② 项目级常驻（推荐；写入目标项目 .pi/settings.json，随项目走）：
+cd <目标项目> && pi install -l $REPO
+# 首次在该项目启动 pi 会弹 project trust 确认，授权一次永久生效
+
+# ③ 个人全局常驻（写入 ~/.pi/agent/settings.json，所有项目生效）：
+pi install $REPO
+
+# 卸载：在对应目录执行 pi remove <当初 install 的路径>
+```
+
+- 本仓库已自托管：在本仓库目录直接 `pi` 即加载（`.pi/settings.json`，commit 0e75b51）。
+- 干净房间测试（跳过全部已装扩展，避免 billion-context 端口轮换干扰）：`pi -ne -e $REPO`。
+- 并发两个 pi 会话时 bili 代理（127.0.0.1:18787）会端口冲突，解法：关一个 / `ACP_PORT=18799` 起新会话 / `BILI_PI_INLINE=1`（不起代理）。
+
 ## 专项约定：pi 插件与工作流联调测试
 
 本项目是 pi agent 插件（workflow 编排引擎），联调测试涉及真实模型调用：
