@@ -1,0 +1,228 @@
+---
+name: workflow-authoring
+description: 编写 pi 动态工作流 JavaScript 脚本时加载。涉及 workflow tool 的脚本生成、修改、审查、报错排查时使用。
+---
+
+# Workflow 编写指南
+
+编写 workflow 脚本时遵守以下规则；细节 API 参考 references/runtime.md，完整范例看 examples/。
+
+## 生成前问询（必做，动笔之前）
+
+生成 workflow 脚本前，先用环境的问询工具（ask / interview 类）一次性向用户确认以下各项；用户明确说「用默认」的项可跳过：
+
+1. **档位**：速度优先（迭代出稿）/ 质量优先（正式交付）/ 双档开关（args.fast / args.quality）。
+2. **模型**：先探测可用模型，再把候选列出来让用户自己选。探测按可靠度排序：
+   - 既有 workflow 脚本与 dev-docs 里实际用过的 model（用过即证明可用，最可靠）；
+   - pi 的模型配置（~/.pi/agent/models.json）或 model-tiers 配置；
+   - 都拿不到时直接问用户要模型名。
+
+   分析类（扫描 / 对照 / 枚举 / 归类）与写作类（长输出报告 / 终稿）分两问让用户各选一个；写作类缺省用会话默认模型。
+3. **并发**：默认 16（运行时钳制上限，组数 ≤ 并发才能一波跑完）；网关限流环境建议 8；允许自定义正整数。
+4. **拆分形态**：多阶段流程默认推荐 **sub workflow 拆分**（问询确认，用户未明确反对即按拆分做）：主编排 + 各阶段子流程，创建 `.pi/workflows/<workflow 名>/` 子文件夹，主编排与全部子流程都放里面（布局与调用约定见「拆分：子文件夹布局」）；只有无阶段边界、agent 总数少的短流程才单文件全写。用户明确说「写一起」时按单文件做。
+
+答案直接落成脚本头部：model 常量、args 默认值与 `setConcurrency(并发)`，并在头注释里记录用户选择。档位执行细节见 [性能与质量模式手册](references/performance.md)。
+
+## 不变量（违反即报错）
+
+1. 脚本首条语句必须是 `export const meta = { name: 'short_snake_case', description: '一句话说明' }`；可选 `id`（稳定标识，可含斜杠如 `ui/main-menu`，供按名引用与定时寻址；缺省回落 name）
+2. 整个 run 至少一次 agent dispatch：直接调 `agent()`，或经 `workflow()` 子流程间接（纯编排父脚本合法）；两者都没有的纯计算不要用 workflow
+3. 禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（可确定性重放要求）
+4. `parallel()` 接收函数数组，不是 Promise 数组：`() => agent(...)`，返回结果按输入顺序
+5. `agent()` 的 agentType 选项在 pi 版当前被忽略（子代理默认可用全部工具）；只读任务在 prompt 中明确「不要修改任何文件」，写文件任务无需额外参数
+6. **阶段失败闸门**：agent 重试耗尽（缺省重试 1 次）后，当前阶段收尾、下一 `phase()` 边界终止 run 并报告失败明细；需静默继续传工具参数 `continueOnAgentFailure: true`，需要容错降级用 `fallback()`（降级成功自动吸收失败）
+7. **默认超时 1 小时**：生成的每个 `agent()` 调用默认带 `timeoutMs: 3600000`；任务明显更快（如固定文本回复）可用更小值，用户显式指定时从其指定——缺省无兜底超时的裸 agent 不要生成
+
+## 可用全局
+
+`agent(prompt, opts?)` `parallel(thunks)` `pipeline(items, ...stages)`（等价于 parallel+sequence 组合，新脚本优先组合写法） `phase(title)` `log(msg)` `args`
+`setConcurrency(n)`（运行中调并发上限：正整数、钳 16；调大立即放行排队者，调小不抢占存量）
+`verify(item, opts?)` `judgePanel(attempts, opts?)` `retry(fn, opts?)` `checkpoint(promptText, opts?)`
+`sequence(nodes)` `fallback(nodes)` `race(nodes)`（Composite 组合控制流，见下下节）`check(cond, msg?)`（确定性事实验证）
+`workflow(ref, args?)`（原生子工作流：ref 为脚本路径（`./x.js`/`../x.js`/绝对路径）或**注册名**（`.pi/workflows/` 下脚本的 meta.id ?? meta.name，含斜杠名合法）；可传 `{ scriptPath, label? }` 带实例显示名；同 run 共享配额/中断/journal；args 与返回值克隆隔离；仅一层嵌套；父可纯编排；详见 references/runtime.md）
+
+## 子 workflow 组合（workflow 原语）
+
+遇到以下需求时用 `workflow()` 原语，**不要**让 agent 转发调用 workflow 工具（旧方案已 legacy）：
+
+- 多阶段流水线：需求分析 -> 设计 -> 编码，各阶段已是独立 workflow 脚本
+- 同一子脚本多配置/多模型对比（同定义多实例，label 区分）
+- 复用既有稳定 workflow 作为大流程的一环
+- 纯编排：父脚本只做组装/传参/汇总，自己不调 agent
+
+```javascript
+// 串行：上段结果传入下段；父脚本零 agent 合法
+const spec = await workflow('./scripts/1-spec.js')
+const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
+
+// 并行：同脚本三实例，label 区分（UI/phase/journal 身份）
+const rs = await parallel([
+  () => workflow({ scriptPath: './sub.js', label: 'deepseek' }, args),
+  () => workflow({ scriptPath: './sub.js', label: 'gpt' }, args),
+])
+```
+
+关键约束（细节见 references/runtime.md）：
+- scriptPath 相对项目根目录（或按注册名引用）；嵌套默认最多 3 层（workflow 工具的 maxWorkflowDepth 可调）；禁止调用自身/祖先脚本（沿链检查，隔层祖先也拦）
+- args 与返回值必须是可克隆数据（对象/数组/标量）；子内修改不影响父对象
+- 子脚本错误直接上抛，父 try-catch 自理；返回 `{ok:false}` 之类的业务结果不影响执行成功
+- 同 run 共享并发配额与中断；子内 phase 自动带 `▸ label / ` 前缀分组；结果带「子流程耗时」段（wall-clock，并行对比的正确口径）
+
+## 拆分：子文件夹布局（默认推荐形态）
+
+多阶段 workflow 拆分时的文件组织与调用约定（output-spec-generate 拆分经验沉淀）：
+
+- **目录布局**：创建 `.pi/workflows/<workflow 名>/` 子文件夹，主编排与子流程**全部**放里面；子流程按执行顺序编号命名（`1-scan.js`、`2-verify.js`…），主编排沿用 workflow 原名（如 `output-spec-generate.js`）。
+- **注册表代价（拆分前告知用户）**：注册表只扫描 `workflows/` 一级目录的 `*.js`，子目录脚本**不进注册表**——不能按 workflowId 被 Schedule 寻址、不能被其他脚本按名 `workflow('id')` 引用；需要这两个能力的 workflow 留一级目录。调用子目录脚本一律用显式路径。
+- **调用路径**：`workflow({ scriptPath: './.pi/workflows/<名>/1-x.js', label: '阶段名' }, childArgs)`；路径相对**项目根**解析，与父脚本自己放在哪无关（子文件夹内互相引用也写项目根相对路径）。
+- **数据传递**：VM 沙箱无 fs，脚本不能直接读写文件——子流程之间用**内存链式传参**（上游 `workflow()` 返回值克隆后作为下游 args，可传大 JSON）；需要人工观察/复用的中间产物（如扫描结果）由 echo agent 落盘到产出目录 `runtime/state/`。
+- **分步执行 + 观察**：需要「逐步跑、逐步看」时主编排加 `mode` 开关（`'all'` 默认 | `'step'`）：step 模式每个子流程完成后 `checkpoint('步骤 N 完成：<确定性摘要>，继续？', { default: true })`；父脚本 try-catch `e.code === 'CHECKPOINT_REJECTED'` 返回 `{ stopped: true }` 正常收尾（已完成产物保留在磁盘）；checkpoint prompt 必须由结果数据拼出（确定性，journal 回放按 prompt 哈希匹配）；headless 无确认通道时自动按 default 继续（退化为 all）。
+- **并发透传**：并发配额是 run 级共享的，主编排 `setConcurrency` 一次即可；若子流程内部也调 `setConcurrency`，args 必须把 `concurrency` 原样透传给子流程，否则子流程缺省逻辑会把它重置回 16。
+- **拆分边界**：按「阶段产物」切——产物被后续多个任务消费的阶段单独成子流程（如模板扫描）；结果校验逻辑放在产出它的子流程内 fail-fast 上抛，主编排只做输入检查（`check`/`fileExists`）与汇总返回，零 agent 合法。
+- **失败与续跑**：子脚本错误直接上抛；中途中止后 `resumeFromRunId` 断点续跑（已完成 agent 从 journal 重放不重扣 token），这是分步执行跨会话续跑的正式通道。
+
+## 组合控制流（Composite：sequence / fallback / race）
+
+**使用边界（重要，不要滥用）：**
+
+- 简单串行（A 完了接 B）→ **继续用普通 await 链**，不要机械地把所有 await 包进 sequence
+- Composite 只在这些场景用：多级候选降级（fallback）、多路竞争择优（race）、与 sequence/parallel 嵌套组成结构化控制流（如「失败后修复再验」链、决策树）
+
+```javascript
+// 降级链：快模型不行换强模型，再不行规则兜底；任一成功即返回其结果
+const result = await fallback([
+  () => workflow('./fast.js'),
+  () => workflow('./strong.js'),
+  () => ({ source: 'rule-based', data: [] }),
+])
+if (!result) return '全部降级路径失败'
+
+// 多路竞争：任一成功即胜出，其余自动取消（不浪费 token）
+const best = await race([
+  () => workflow('./model-a.js'),
+  () => workflow('./model-b.js'),
+])
+
+// 嵌套组合：「失败后修复再验」的链，作为 fallback 的第二候选
+await fallback([
+  () => workflow('./verify.js'),
+  () => sequence([
+    () => workflow('./fix.js'),
+    (prev) => workflow('./verify.js', { fixed: prev }),
+  ]),
+])
+```
+
+语义规则（细节见 references/runtime.md）：
+- 节点返回任意值（含 `null` / `false` / `{ok:false}`）都是**执行成功**；业务否决自己写 if 判断，不要指望组合节点替你判断
+- 可恢复失败：sequence 立即停止返回 `null`；fallback 换下一候选；race 等其余候选——三者与 `agent()` 可恢复失败返回 `null` 同构，`if (!r)` 判断即可
+- 拼错脚本名 / 嵌套超限 / 非函数数组等**结构性错误直接抛错**，不会被 fallback 吞掉伪装成降级
+- race 胜出后其余候选被局部取消（仅限 race 内部，不中断整个 run）
+- 三者不占 journal 位，resume 行为与普通 await 链一致
+
+## 典型形态
+
+```javascript
+export const meta = { name: 'fan_out_audit', description: '并行审计多个文件后汇总' }
+
+phase('Scan')
+const files = await agent('列出 src/routes 下所有路由文件，每行一个')
+
+phase('Audit')
+const findings = await parallel(
+  files.split('\n').filter(Boolean).map(file => () => agent(`审计 ${file}，指出风险`))
+)
+
+phase('Synthesize')
+return await agent('综合以下审计结果，输出风险清单：\n' + findings.join('\n'))
+```
+
+纯编排父（零 agent，全部经子 workflow，返回值直接组装）：
+
+```javascript
+export const meta = { name: 'full_pipeline', description: '三段式流水线父编排' }
+phase('编排')
+const spec = await workflow('./scripts/1-spec.js')
+const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
+const code = await workflow('./scripts/3-code.js', { design: design.design })
+return { brief: spec.brief, design: design.design, code: code.code }
+```
+
+## agent() 选项
+
+| 选项 | 说明 |
+|------|------|
+| `label` | 显示名（metadata 摘要用） |
+| `schema` | JSON Schema 对象，返回结构化 JSON |
+| `agentType` | pi 版当前忽略此选项（保留兼容）；只读约束写在 prompt 里 |
+| `model` | "provider/modelId"，如 anthropic/claude-sonnet-4-6 |
+| `isolation` | `"worktree"` 独立 git worktree 隔离（写型任务配合 agentType general） |
+| `timeoutMs` | 单 agent 超时毫秒；**生成时默认带 3600000（1h）**，快任务可调小 |
+| `retries` | 可恢复失败重试次数（上限 3） |
+| `phase` | 显式归属阶段（缺省用当前 phase） |
+
+## 确定性验证
+
+可用 helper（VM 沙箱无 fs/进程能力，由 runtime 注入）：`fileExists(path)`（相对项目根）、`commandSuccess(cmd, timeoutMs?)`（退出码 0）
+
+```javascript
+// check：客观事实验证（true=过，false=可恢复失败：sequence 停 / fallback 换候选）
+await check(() => args.config.debug !== undefined, 'config.debug 必须存在')
+// 条件函数自身 throw = 结构性错误（检查代码 bug），不会被当作「验证未过」
+// 职责边界：check=客观事实 / verify=AI 质量判断 / checkpoint=人工决定
+```
+
+## 质量与控制助手
+
+```javascript
+// 对抗式验证：多 reviewer 试图反驳，投票达阈值判真
+const verdict = await verify(agent 的结论, { reviewers: 3, threshold: 0.5 })
+
+// 评审团：多 judge 给多个候选打分，返回最高均分
+const best = await judgePanel([方案A, 方案B], { judges: 3, rubric: '正确性与成本' })
+
+// 有界重试：until 通过即停，耗尽返回最后一次结果
+const out = await retry(() => agent('生成'), { attempts: 3, until: (r) => r && r.ok })
+
+// 人工确认点（Human Gate）：允许=true 继续；拒绝=强停止（抛 CHECKPOINT_REJECTED，
+// 不可被 fallback/parallel 吞掉）；回放时不再询问、拒绝确定性重现（改 prompt 文本才会重问）
+await checkpoint('即将改动生产配置，确认？')
+// 需要优雅处理拒绝时自己 try/catch：
+try { await checkpoint('即将改动生产配置，确认？') } catch { return '已取消' }
+```
+
+## 速度与质量两种模式
+
+写有扇出的 workflow 前，先定档：**速度优先**（迭代出稿，压墙钟）或**质量优先**（正式交付，压缺陷率）。token 消耗不设限时——质量靠并行冗余买（不增加串行回合），速度靠砍串行买，两档共用同一脚本，用 args 开关切换。
+
+| 维度 | 速度优先 | 质量优先 |
+|---|---|---|
+| 串行回合 | 能砍则砍：确定性去重、质检跳过或改 check 客观校验 | 保留并加厚：verify 多 reviewer、有界修正循环 |
+| 波次 | 组数 ≤ 并发上限，一波跑完 | 不敏感，冗余并行随便加 |
+| 模型 | 分析对照类用快模型，写作保留默认 | 关键路径全强模型 + best-of-N 选优 |
+| 写作输入 | 瘦身字段（P0/P1 全量、P2 抽样） | 全量字段、全量详情 |
+| 大输入 | >20KB 按章节分片并行 | 同样分片（分片与质量不冲突） |
+
+默认建议：日常迭代用速度档快速反馈，正式交付前用质量档重跑一遍。细节与代码片段见 [性能与质量模式手册](references/performance.md)。
+
+## 交付前语法自检（必做）
+
+生成或修改 workflow 脚本后、写盘交付前，先跑本 skill 自带的语法检查：
+
+```bash
+node <skill 目录>/scripts/wf-syntax-check.cjs <脚本路径> [更多脚本...]
+```
+
+- 检查原理：`export const meta` 降级为 `const meta` 后包进 async IIFE，用 vm 编译——支持 workflow 的顶层 await 与 return（`node --check` 不支持顶层 return，故不能替代）
+- 退出码 0 全通过；1 时按报错（含行号）修完再交付
+- 典型拦获：括号不闭合、await 漏包、引号错配、模板字符串反引号丢失
+
+## 参考
+
+- [生成前问询：本文件开头章节，动笔前必读](#生成前问询必做动笔之前)
+- [runtime API 详解](references/runtime.md)
+- [性能与质量模式手册](references/performance.md)
+- [Schedule 定时执行](references/schedule.md)
+- [范例：扇出汇总](examples/fan-out-and-synthesize.js)
+- [范例：分阶段流水线](examples/phased-pipeline-review.js)
+- 实装范例（PrdGameSkill 仓库）：`.pi/workflows/output-spec-generate/`（主编排 + 四子流程拆分、mode=all/step、checkpoint 闸门、内存链式传参）

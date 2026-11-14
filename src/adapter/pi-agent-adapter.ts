@@ -20,6 +20,7 @@ import {
 import os from "node:os"
 import path from "node:path"
 import type { AgentAdapter, AgentEvent, AgentRequest, AgentResult, ExecutionContext } from "./types.js"
+import { validateStructured } from "./structured.js"
 
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent")
 
@@ -88,10 +89,12 @@ export class PiAgentAdapter implements AgentAdapter {
     }
 
     try {
-      // P0 结构化透传：schema 存在时 prompt 附加 JSON 输出要求（M2 换 typebox 校验 + 修复循环）
-      const finalPrompt = request.outputSchema
-        ? `${request.prompt}\n\n[输出要求] 只输出一个 JSON 对象（符合给定 schema 语义），不要输出任何其他内容。`
-        : request.prompt
+      // schema 路径（R3 M2）：JSON 输出要求 + typebox 校验 + 修复循环（校验失败把错误清单附回 prompt，最多 2 轮）
+      const MAX_FIX_ROUNDS = 2
+      let finalPrompt = request.prompt
+      if (request.outputSchema) {
+        finalPrompt += `\n\n[输出要求] 只输出一个 JSON 对象（符合给定 schema 语义），不要输出任何其他内容。`
+      }
 
       let text = ""
       let usage: { inputTokens: number; outputTokens: number } | undefined
@@ -101,6 +104,7 @@ export class PiAgentAdapter implements AgentAdapter {
             if (c.type === "text") text += c.text
           }
           // pi 规范化 usage 单值（M0 实证：无 step-finish 覆盖问题）；部分取消可能缺失，按契约缺省
+          // 多轮 prompt 下取累计值（usage 是消息级字段，修复轮只增不减）
           const u = e.message.usage
           if (u) usage = { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 }
         }
@@ -108,6 +112,36 @@ export class PiAgentAdapter implements AgentAdapter {
 
       const t0 = Date.now()
       await session.prompt(finalPrompt)
+
+      // 修复循环：校验失败时把错误清单附回 prompt 重试（订阅保持开启以收集修复轮文本）
+      if (request.outputSchema) {
+        let validation = validateStructured(text, request.outputSchema)
+        let round = 0
+        while (!validation.ok && round < MAX_FIX_ROUNDS && !cancelled && !request.signal?.aborted) {
+          round += 1
+          text = ""
+          const fixPrompt =
+            `你上次的输出不符合 schema 要求，错误清单:\n${(validation.errors ?? []).map((m: string, i: number) => `${i + 1}. ${m}`).join("\n")}\n\n请只输出修正后的 JSON 对象，不要任何解释文字。`
+          await session.prompt(fixPrompt)
+          validation = validateStructured(text, request.outputSchema)
+        }
+        unsub()
+
+        if (cancelled || request.signal?.aborted) {
+          return { status: "cancelled", output: { type: "text", value: "" }, sessionId: session.sessionId }
+        }
+        if (validation.ok) {
+          return { status: "ok", output: { type: "structured", value: validation.value }, usage, sessionId: session.sessionId }
+        }
+        return {
+          status: "error",
+          output: { type: "text", value: text },
+          usage,
+          sessionId: session.sessionId,
+          error: { kind: "schema", message: `结构化输出校验失败（修复 ${round} 轮后仍不达标）: ${(validation.errors ?? []).join("; ")}` },
+        }
+      }
+
       unsub()
 
       if (cancelled) {
@@ -122,27 +156,6 @@ export class PiAgentAdapter implements AgentAdapter {
         executionId: ctx.executionId,
         record: { sessionId: session.sessionId, durationMs: Date.now() - t0, textPreview: text.slice(0, 200) },
       })
-
-      // schema 路径：本地解析失败归为 schema 错误（Engine 可恢复重试语义）
-      if (request.outputSchema) {
-        try {
-          const value = parseStructured(text)
-          return {
-            status: "ok",
-            output: { type: "structured", value },
-            usage,
-            sessionId: session.sessionId,
-          }
-        } catch {
-          return {
-            status: "error",
-            output: { type: "text", value: text },
-            usage,
-            sessionId: session.sessionId,
-            error: { kind: "schema", message: "结构化输出解析失败（非纯 JSON）" },
-          }
-        }
-      }
 
       return {
         status: "ok",

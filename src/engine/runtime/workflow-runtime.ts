@@ -74,6 +74,11 @@ export interface ScriptAgentOptions {
   retries?: number
   /** worktree 隔离：独立 git worktree 中运行，互不覆盖；失败静默降级共享目录（P1-5） */
   isolation?: "worktree"
+  /**
+   * Replay Policy 声明（R3 §5.2）：true 时该调用在 resume 中可静默复用（需 run 用 explicit 模式
+   * 且指纹匹配）；缺省 false = 默认重跑（副作用安全的保守默认）。不进 hash 身份（策略非身份）。
+   */
+  replayable?: boolean
 }
 
 /** workflow() 的 ref：字符串快捷方式或对象形式（label 为实例显示名） */
@@ -97,6 +102,13 @@ export interface WorkflowRunOptions {
   resolveTier?: (tier: string) => string | undefined
   /** resume：上一轮的 journal（root key 为 runId:callIndex，child key 为 runId:wfK:callIndex） */
   resumeJournal?: Map<string, JournalEntry>
+  /**
+   * Replay Policy（R3 §5.2，M2）：
+   * - "prefix"（缺省，M1 基线语义）：hash 命中且在最长未变前缀内即回放
+   * - "explicit"（R3 复用白名单制）：仅显式 replayable: true 的 agent() 调用参与回放；默认一律重跑
+   *   （副作用安全：写文件的 agent 即使 prompt 未变也不静默复用旧结果）
+   */
+  replayPolicy?: "prefix" | "explicit"
   /** 每个成功 live agent 完成后回调，调用方负责持久化（P1-1） */
   onAgentJournal?: (entry: JournalEntry & { key: string }) => void
   /** checkpoint() 的人工确认通道（tool 层接 ToolContext.ask；缺省走 headless default，P1-4） */
@@ -184,6 +196,7 @@ interface SharedRunContext {
   resolveTier?: (tier: string) => string | undefined
   confirm?: (promptText: string) => Promise<unknown>
   resumeJournal?: Map<string, JournalEntry>
+  replayPolicy?: "prefix" | "explicit"
   onAgentJournal?: (entry: JournalEntry & { key: string }) => void
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
   onAgentUpdate?: (record: AgentRecord) => void
@@ -251,6 +264,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     resolveTier: options.resolveTier,
     confirm: options.confirm,
     resumeJournal: options.resumeJournal,
+    replayPolicy: options.replayPolicy,
     onAgentJournal: options.onAgentJournal,
     onAgentExecution: options.onAgentExecution,
     onAgentUpdate: options.onAgentUpdate,
@@ -465,7 +479,9 @@ async function executeWorkflow(
     const hashMatches = cached != null && cached.hash === callHash
     // 空文本结果不回放：历史 journal 里的空串一律重跑（与 Pi isEmptyTextAgentResult 同语义）
     const cachedEmpty = hashMatches && isEmptyTextResult(cached.result, scriptOptions.schema)
-    if (hashMatches && !cachedEmpty && callIndex < scope.firstMiss) {
+    // Replay Policy（R3 §5.2）：explicit 模式下仅显式 replayable 的调用可回放（默认 rerun，副作用安全）
+    const replayAllowed = shared.replayPolicy !== "explicit" || scriptOptions.replayable === true
+    if (hashMatches && !cachedEmpty && callIndex < scope.firstMiss && replayAllowed) {
       record.status = "ok"
       record.replayed = true
       record.model = cached.model
