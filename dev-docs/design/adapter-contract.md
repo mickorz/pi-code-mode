@@ -1,7 +1,7 @@
 # AgentAdapter 契约（M0-2 定稿）
 
 > M0 技术验证产出物之二。本文件是 Workflow Engine（宿主无关层）与 Pi Session Adapter 之间的正式接口契约，Engine **禁止**绕过本契约 import pi SDK。
-> 依据：需求文档 R3 第 2.3 节骨架 + M0-1 审计报告（`dev-docs/research/runtime-host-dependency-audit.md`）实证结论。契约版本：1.0-draft（M0 第 3-5 步实证后转 1.0 正式）。
+> 依据：需求文档 R3 第 2.3 节骨架 + M0-1 审计报告（`dev-docs/research/runtime-host-dependency-audit.md`）实证结论。契约版本：1.0（M0 第 3-5 步实证通过后定稿，见 progress-result/M0-执行报告.md）。
 
 ## 1. ID 体系：executionId 与节点身份严格分离（回应评审建议 1）
 
@@ -134,7 +134,9 @@ type AgentEvent =
 | 事件映射 | AgentSession 事件 → AgentEvent | 待实证 |
 | 模型解析 | tier → provider/modelId（P1/M4 tier 体系；P0 直接 model 串） | P0 用直传 |
 
-## 5. 待实证清单（M0 第 3-5 步，Go/No-Go 输入）
+## 5. 待实证清单（M0 第 3-5 步，Go/No-Go 输入）——已全部实证通过（2026-11-14）
+
+> 实证结果见 dev-docs/progress-result/M0-执行报告.md；原始输出 dev-examples/m0-spike/（spike.ts 7 用例 + contract.test.ts 7 断言全 PASS）。
 
 1. execute：pi 子会话创建 + prompt + 终态收集（文本/结构化各一例）
 2. cancel：在途调用取消的传播与终态形态（cancelled status 而非 throw）
