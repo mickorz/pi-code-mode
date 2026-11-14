@@ -39,16 +39,27 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
  *  宿主 API：widget 挂在 ctx.ui（session_start 事件上下文），工厂期不可直接调用；
  *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 跳过注册 */
 function installTaskWidget(pi: ExtensionAPI): void {
+  // render 运行在宿主 TUI 渲染循环内，任何异常都会击穿宿主进程（2026-11-15 实测：
+  // 曾因 list() 快照的 agents 是 number 而非数组，r.agents.filter 抛 TypeError 直接
+  // 杀死整个 pi 宿主）——因此整个 render 必须自防御，异常时返回空行集。
   const render = (width: number): string[] => {
-    const running = runManager.list().filter((r) => r.status === "running")
-    if (!running.length) return []
-    const lines = [`workflow 进行中（${running.length}）:`]
-    for (const r of running) {
-      const done = r.agents.filter((a) => a.status === "ok").length
-      lines.push(`  ${r.label ?? r.runId}  ${done}/${r.agents.length} nodes`)
+    try {
+      const running = runManager.list().filter((r) => r.status === "running")
+      if (!running.length) return []
+      const lines = [`workflow 进行中（${running.length}）:`]
+      for (const r of running) {
+        // list() 快照的 agents 是数量（number）；done 进度走 status() 全量快照
+        const detail = runManager.status(r.runId)
+        const agents = detail?.agents ?? []
+        const done = agents.filter((a) => a.status === "ok").length
+        lines.push(`  ${r.label ?? r.runId}  ${done}/${agents.length} nodes`)
+      }
+      // 截断超宽行（终端列宽约束）
+      return lines.map((l) => (l.length > width ? l.slice(0, Math.max(0, width - 1)) : l))
+    } catch (e) {
+      console.error("[pi-code-mode] widget render 失败:", String((e as Error)?.message ?? e))
+      return []
     }
-    // 截断超宽行（终端列宽约束）
-    return lines.map((l) => (l.length > width ? l.slice(0, Math.max(0, width - 1)) : l))
   }
 
   pi.on("session_start", (_event, ctx) => {
