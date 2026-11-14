@@ -2,7 +2,7 @@
 export const meta = { name: 'composite_fb_struct', description: 'fallback 结构性错误' }
 phase('编排')
 const r = await fallback([
-  () => workflow('./scripts/native/不存在的脚本.js'),
+  () => workflow('../native/不存在的脚本.js'),
   () => ({ provider: 'backup' }),
 ])
 return { winner: r }

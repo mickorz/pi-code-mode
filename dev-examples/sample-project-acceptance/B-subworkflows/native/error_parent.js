@@ -3,7 +3,7 @@ export const meta = { name: 'error_parent', description: '子流程错误上抛�
 phase('错误处理')
 let failed = null
 try {
-  await workflow('./scripts/native/error_child.js')
+  await workflow('./error_child.js')
 } catch (e) {
   failed = String(e.message || e)
 }

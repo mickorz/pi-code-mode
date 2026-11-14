@@ -22,12 +22,18 @@ const REPO_ROOT = path.resolve(HERE, "../..")
 const SAMPLE_PROJECT = path.resolve(REPO_ROOT, "thirdparties/opencode-dynamic-workflows/examples/sample-project")
 const JOURNAL_DIR = path.join(HERE, ".journal")
 
+const B_NATIVE = path.join(HERE, "B-subworkflows/native")
+const B_COMPOSITE = path.join(HERE, "B-subworkflows/composite")
+const B_REGISTRY = path.join(HERE, "B-subworkflows/registry")
+
 interface CaseDef {
   key: string
   scriptPath: string
-  /** 执行 cwd：读 docs 的脚本用 sample-project；chain 适配版自包含 */
+  /** 执行 cwd：读 docs 的脚本用 sample-project；chain 适配版与 B 类副本自包含 */
   cwd: string
   concurrency?: number
+  /** 失败语义用例：预期 runWorkflow 抛错, 错误消息命中此正则即 PASS */
+  failureAssert?: (e: unknown) => { ok: boolean; note: string }
   assert: (r: WorkflowRunResult) => { ok: boolean; note: string }
 }
 
@@ -35,6 +41,164 @@ function allOk(r: WorkflowRunResult): boolean {
   return r.agents.length > 0 && r.agents.every((a) => a.status === "ok")
 }
 
+/** 失败语义用例：预期 runWorkflow 抛 WORKFLOW_FAILED 类错误 */
+function expectWorkflowFailure(match: RegExp): (e: unknown) => { ok: boolean; note: string } {
+  return (e: unknown) => {
+    const msg = String((e as Error)?.message ?? e)
+    return { ok: match.test(msg), note: `预期失败已捕获: ${msg.slice(0, 120)}` }
+  }
+}
+
+// ---- P0-B: 子工作流与 sequence（M1）——自包含副本，cwd 用 B-subworkflows 子目录 ----
+const P0B_CASES: CaseDef[] = [
+  {
+    key: "native-pipeline",
+    scriptPath: path.join(B_NATIVE, "pipeline_parent.js"),
+    cwd: B_NATIVE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: r.agentCount === 3 && allOk(r) && typeof res?.brief === "string" && typeof res?.design === "string" && typeof res?.code === "string",
+        note: "三段串行 spec->design->code 纯编排父",
+      }
+    },
+  },
+  {
+    key: "deep-parent",
+    scriptPath: path.join(B_NATIVE, "deep_parent.js"),
+    cwd: B_NATIVE,
+    assert: (r) => {
+      const res = r.result as any
+      return { ok: allOk(r) && typeof res?.brief === "string", note: `root->child->spec 两层, agentCount=${r.agentCount}` }
+    },
+  },
+  {
+    key: "deep-chain",
+    scriptPath: path.join(B_NATIVE, "deep_chain_parent.js"),
+    cwd: B_NATIVE,
+    assert: (r) => {
+      const res = r.result as any
+      return { ok: typeof res === "string" || res == null || typeof res === "object", note: `三层链 root->l2->l3, agentCount=${r.agentCount}` }
+    },
+  },
+  {
+    key: "self-ref-reject",
+    scriptPath: path.join(B_NATIVE, "self_ref_parent.js"),
+    cwd: B_NATIVE,
+    failureAssert: expectWorkflowFailure(/自环|祖先/),
+    assert: () => ({ ok: false, note: "不应到达" }),
+  },
+  {
+    key: "error-propagation",
+    scriptPath: path.join(B_NATIVE, "error_parent.js"),
+    cwd: B_NATIVE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: res?.caught === true && typeof res?.message === "string" && res.message.includes("产物闸门"),
+        note: "child throw 被父捕获降级",
+      }
+    },
+  },
+  {
+    key: "mutate-args-isolation",
+    scriptPath: path.join(B_NATIVE, "mutate_parent.js"),
+    cwd: B_NATIVE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: res?.counter === 1 && res?.injected === false && allOk(r),
+        note: "args 克隆隔离（child 内 999/injected 改动不外溢父层）",
+      }
+    },
+  },
+  {
+    key: "registry-byname",
+    scriptPath: path.join(B_REGISTRY, "registry_parent.js"),
+    cwd: B_REGISTRY,
+    assert: (r) => {
+      const res = r.result as any
+      return { ok: res?.status === "ok" && typeof res?.reply === "string", note: "注册名 schedule_test 按名寻址" }
+    },
+  },
+  {
+    key: "compare-parallel",
+    scriptPath: path.join(B_NATIVE, "compare_parent.js"),
+    cwd: B_NATIVE,
+    assert: (r) => {
+      const res = r.result as any
+      const briefs = Array.isArray(res) ? res : []
+      return {
+        ok: r.agentCount === 3 && allOk(r) && briefs.length === 3 && new Set(briefs).size === 3,
+        note: "同脚本三实例并行 args 隔离（brief 互不相同）",
+      }
+    },
+  },
+  {
+    key: "composite-seq",
+    scriptPath: path.join(B_COMPOSITE, "seq_parent.js"),
+    cwd: B_COMPOSITE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: typeof res?.lastNodeValue?.code === "string" && res?.chain?.includes("prev"),
+        note: "sequence 三段 prev 链传递",
+      }
+    },
+  },
+  {
+    key: "composite-seq-fail",
+    scriptPath: path.join(B_COMPOSITE, "seq_fail_parent.js"),
+    cwd: B_COMPOSITE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: res?.isNull === true && res?.seen?.length === 2 && res?.seen?.[0] === "a" && res?.after === "STOP-CHECK",
+        note: "sequence 可恢复失败立即停止返回 null, 同 phase 收尾照常",
+      }
+    },
+  },
+  {
+    key: "composite-seq-parallel",
+    scriptPath: path.join(B_COMPOSITE, "seq_parallel_parent.js"),
+    cwd: B_COMPOSITE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: res?.laneCount === 2 && Array.isArray(res?.briefs) && res.briefs.length === 2,
+        note: "sequence 内组合 parallel 两实例并发保序",
+      }
+    },
+  },
+  {
+    key: "par-child-fail-collapse",
+    scriptPath: path.join(B_COMPOSITE, "par_child_fail_parent.js"),
+    cwd: B_COMPOSITE,
+    assert: (r) => {
+      const res = r.result as any
+      return {
+        ok: res?.failedLane === "collapsed-null" && typeof res?.okLane === "string" && res.okLane.length > 0,
+        note: "parallel 内 child 失败塌缩 null, 兄弟分支照常",
+      }
+    },
+  },
+  {
+    key: "failure-gate",
+    scriptPath: path.join(B_COMPOSITE, "failure-gate-test.js"),
+    cwd: B_COMPOSITE,
+    failureAssert: expectWorkflowFailure(/阶段失败闸门/),
+    assert: () => ({ ok: false, note: "不应到达" }),
+  },
+  {
+    key: "queue-timer",
+    scriptPath: path.join(B_COMPOSITE, "queue-timer-test.js"),
+    cwd: B_COMPOSITE,
+    concurrency: 2,
+    assert: (r) => ({ ok: r.agentCount === 4 && allOk(r) && r.result === 4, note: "并发 2 下 4 agent 排队执行" }),
+  },
+]
+
+interface CaseDef2Placeholder {}
 const CASES: CaseDef[] = [
   {
     key: "smoke",
@@ -117,7 +281,7 @@ interface Row {
 
 async function runCase(def: CaseDef): Promise<Row> {
   const script = fs.readFileSync(def.scriptPath, "utf-8")
-  const runId = `p0a-${def.key}-${Date.now()}`
+  const runId = `${P0B_CASES.includes(def) ? "p0b" : "p0a"}-${def.key}-${Date.now()}`
   const journal = new JournalStore(def.cwd, JOURNAL_DIR)
   const t0 = Date.now()
   try {
@@ -139,6 +303,17 @@ async function runCase(def: CaseDef): Promise<Row> {
       error: verdict.ok ? undefined : `断言未通过: agents=${outcome.agents.map((a) => `${a.label}:${a.status}`).join(",")}`,
     }
   } catch (e) {
+    if (def.failureAssert) {
+      const verdict = def.failureAssert(e)
+      return {
+        key: def.key,
+        status: verdict.ok ? "PASS" : "FAIL",
+        agentCount: 0,
+        elapsedMs: Date.now() - t0,
+        note: verdict.note,
+        error: verdict.ok ? undefined : `预期失败但消息不匹配: ${String((e as Error)?.message ?? e).slice(0, 200)}`,
+      }
+    }
     return {
       key: def.key,
       status: "FAIL",
@@ -152,10 +327,10 @@ async function runCase(def: CaseDef): Promise<Row> {
 
 // ---- main ----
 const filter = process.argv.slice(2)
-let cases = CASES
-if (filter.length) cases = CASES.filter((c) => filter.some((f) => c.key.includes(f)))
+let cases = [...CASES, ...P0B_CASES]
+if (filter.length) cases = cases.filter((c) => filter.some((f) => c.key.includes(f)))
 
-console.log(`P0-A 验收：${cases.length} 个脚本，真实模型串行执行...\n`)
+console.log(`P0 验收（P0-A/P0-B）：${cases.length} 个脚本，真实模型串行执行...\n`)
 const rows: Row[] = []
 for (const def of cases) {
   process.stdout.write(`- ${def.key} ... `)
@@ -164,12 +339,12 @@ for (const def of cases) {
   console.log(`${row.status}（${row.agentCount} agents, ${row.elapsedMs}ms）${row.error ? `\n  错误: ${row.error}` : ""}`)
 }
 
-console.log("\n==== P0-A 验收结果 ====")
+console.log("\n==== P0 验收结果 ====")
 for (const r of rows) {
   console.log(`  ${r.status.padEnd(4)} ${r.key.padEnd(18)} ${String(r.agentCount).padStart(3)} agents ${String(r.elapsedMs).padStart(7)}ms  ${r.note}${r.error ? `\n      ${r.error}` : ""}`)
 }
 const pass = rows.filter((r) => r.status === "PASS").length
-console.log(`\n${pass}/${rows.length} PASS${pass === rows.length ? " —— P0-A 验收通过" : " —— 存在失败项"}`)
+console.log(`\n${pass}/${rows.length} PASS${pass === rows.length ? " —— 验收通过" : " —— 存在失败项"}`)
 
 // 保留 journal 供审计；清理隔次运行产物
 process.exit(pass === rows.length ? 0 : 1)

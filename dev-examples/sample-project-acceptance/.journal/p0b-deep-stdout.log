@@ -1,0 +1,12 @@
+P0-A 验收：3 个脚本，真实模型串行执行...
+
+- deep-parent ... PASS（2 agents, 33388ms）
+- deep-chain ... PASS（3 agents, 7390ms）
+- self-ref-reject ... PASS（0 agents, 57893ms）
+
+==== P0-A 验收结果 ====
+  PASS deep-parent          2 agents   33388ms  root->child->spec 两层, agentCount=2
+  PASS deep-chain           3 agents    7390ms  三层链 root->l2->l3, agentCount=3
+  PASS self-ref-reject      0 agents   57893ms  预期失败已捕获: workflow 不能调用自身或祖先：e:\workprojects\pi-code-mode\dev-examples\sample-project-acceptance\b-subworkflows\native\self_ref.js
+
+3/3 PASS —— P0-A 验收通过

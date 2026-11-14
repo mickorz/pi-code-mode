@@ -3,8 +3,8 @@
 export const meta = { name: 'composite_seq', description: 'sequence 三段流水线父编排' }
 phase('编排')
 const code = await sequence([
-  () => workflow('./scripts/native/1_spec.js'),
-  (spec) => workflow('./scripts/native/2_design.js', { brief: spec.brief }),
-  (design) => workflow('./scripts/native/3_code.js', { design: design.design }),
+  () => workflow('../native/1_spec.js'),
+  (spec) => workflow('../native/2_design.js', { brief: spec.brief }),
+  (design) => workflow('../native/3_code.js', { design: design.design }),
 ])
 return { lastNodeValue: code, chain: 'spec->design->code 经 prev 传递' }

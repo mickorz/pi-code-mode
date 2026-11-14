@@ -3,7 +3,7 @@
 export const meta = { name: 'composite_par_fail', description: 'parallel child 失败塌缩' }
 phase('编排')
 const rs = await parallel([
-  () => workflow('./scripts/native/error_child.js'),
-  () => workflow('./scripts/native/1_spec.js', { tag: 'SIBLING' }),
+  () => workflow('../native/error_child.js'),
+  () => workflow('../native/1_spec.js', { tag: 'SIBLING' }),
 ])
 return { len: rs.length, failedLane: rs[0] === null ? 'collapsed-null' : 'unexpected', okLane: rs[1]?.brief }

@@ -4,8 +4,8 @@ phase('编排')
 const lanes = await sequence([
   () => '视角种子',
   (seed) => parallel([
-    () => workflow('./scripts/native/1_spec.js', { tag: seed + '-A' }),
-    () => workflow('./scripts/native/1_spec.js', { tag: seed + '-B' }),
+    () => workflow('../native/1_spec.js', { tag: seed + '-A' }),
+    () => workflow('../native/1_spec.js', { tag: seed + '-B' }),
   ]),
 ])
 return { laneCount: lanes.length, briefs: lanes.map(l => l.brief) }

@@ -3,8 +3,8 @@
 export const meta = { name: 'composite_fb_child', description: 'fallback child 候选换链' }
 phase('编排')
 const r = await fallback([
-  () => workflow('./scripts/native/error_child.js'),
-  () => workflow('./scripts/native/1_spec.js', { tag: 'FALLBACK' }),
+  () => workflow('../native/error_child.js'),
+  () => workflow('../native/1_spec.js', { tag: 'FALLBACK' }),
 ])
 const after = await agent('回复固定文本：AFTER-FALLBACK')
 return { winner: r, after }

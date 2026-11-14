@@ -4,7 +4,7 @@ export const meta = { name: 'composite_fb_first', description: 'fallback 首选�
 phase('编排')
 const r = await fallback([
   () => ({ provider: 'fast', note: '快路径直接成功' }),
-  () => workflow('./scripts/native/1_spec.js'),
+  () => workflow('../native/1_spec.js'),
 ])
 const after = await agent('回复固定文本：AFTER-FAST')
 return { winner: r.provider, after }
