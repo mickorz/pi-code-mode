@@ -94,19 +94,24 @@
 ```bash
 REPO=/Users/michaelchang/Desktop/WorkProjects/pi-code-mode
 
-# ① 一次性测试（不写任何配置，仅当次生效）：
-pi -e $REPO
+# ⭐ 最快：开发者快捷指令（npm link 已建全局软链 bin/pi-code-mode.js，任意项目目录下直接用）：
+pi-code-mode install   # 按本地路径装进当前项目（自管 .pi/settings.json，绝对路径条目）
+pi-code-mode remove    # 卸载
+pi-code-mode path      # 打印插件仓库路径
+pi-code-mode test      # 干净房间一次性测试：pi -ne -e $REPO
 
-# ② 项目级常驻（推荐；写入目标项目 .pi/settings.json，随项目走）：
+# ② 手动项目级（与 ① 等价，写入目标项目 .pi/settings.json，随项目走）：
 cd <目标项目> && pi install -l $REPO
 # 首次在该项目启动 pi 会弹 project trust 确认，授权一次永久生效
 
-# ③ 个人全局常驻（写入 ~/.pi/agent/settings.json，所有项目生效）：
-pi install $REPO
+# ③ 一次性测试（不写任何配置，仅当次生效）：
+pi -e $REPO
 
-# 卸载：在对应目录执行 pi remove <当初 install 的路径>
+# ④ 个人全局常驻（写入 ~/.pi/agent/settings.json，所有项目生效）：
+pi install $REPO
 ```
 
+- 快捷指令不走 `pi install/remove` CLI，直接管理 packages 条目：规避未信任项目二次修改被拒（`Project is not trusted`）与 `pi remove` 相对路径匹配失败两个坑（2026-11-15 实测）；已用完整 pi 会话（BILI_PI_INLINE=1）端到端验证绝对路径条目加载正常。
 - 本仓库已自托管：在本仓库目录直接 `pi` 即加载（`.pi/settings.json`，commit 0e75b51）。
 - 干净房间测试（跳过全部已装扩展，避免 billion-context 端口轮换干扰）：`pi -ne -e $REPO`。
 - 并发两个 pi 会话时 bili 代理（127.0.0.1:18787）会端口冲突，解法：关一个 / `ACP_PORT=18799` 起新会话 / `BILI_PI_INLINE=1`（不起代理）。
