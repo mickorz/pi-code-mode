@@ -1,6 +1,8 @@
 # pi-code-mode 插件需求文档
 
-> 修订版 R2（2026-11-14）：吸收外部评审意见——修正 MVP 与验收冲突、Runtime 复用降级为待验证假设、新增 Adapter Contract 与执行边界章节、验收阶段重划（P0-A 至 P2）、新增 M0 技术验证里程碑与三层测试体系。修订记录见文末。
+> 修订版 R3（2026-11-14）：第二轮评审确认 R2 架构通过，本版修正 3 个 P0 矛盾（Resume 验收与 Replay Policy 冲突、全局并发闸交付阶段矛盾、P1-C 与 M3 边界交叉）与 4 个契约/测试细节，收敛设计，进入 M0。修订记录见文末。
+>
+> 修订版 R2（2026-11-14）：吸收外部评审意见——修正 MVP 与验收冲突、Runtime 复用降级为待验证假设、新增 Adapter Contract 与执行边界章节、验收阶段重划（P0-A 至 P2）、新增 M0 技术验证里程碑与三层测试体系。
 >
 > 目标：开发一个基于 pi agent 的第三方 package（插件），把 `opencode-dynamic-workflows`（下称 opencode 版）的动态工作流能力移植到 pi 平台，形成 `pi-code-mode` 包，并以 `examples/sample-project` 下的测试脚本分类验收。
 
@@ -92,6 +94,16 @@ interface AgentAdapter {
   cancel(executionId: string): Promise<void>;
 }
 
+interface ExecutionContext {
+  // 由 Engine 生成的全局唯一执行标识（Adapter 不自造、不复用）
+  // journal 键、取消路由、日志关联均以此为准
+  executionId: string;
+  runId: string;
+  phase?: string;
+  // 流式/进度事件独立通道：不把 pi AgentSession 内部事件原样暴露给 Engine
+  onEvent?: (event: AgentEvent) => void;
+}
+
 interface AgentRequest {
   prompt: string;
   model?: string;          // provider/modelId 或 tier 解析后的结果
@@ -105,7 +117,8 @@ interface AgentRequest {
 interface AgentResult {
   status: "ok" | "error" | "cancelled" | "timeout";
   output: { type: "text" | "structured"; value: unknown };
-  usage: { inputTokens: number; outputTokens: number };
+  // cancelled/timeout/error 终态时可能拿不到真实值：允许缺省，禁止填 0 冒充已知
+  usage?: { inputTokens: number; outputTokens: number };
   sessionId: string;
   error?: { kind: string; message: string };
 }
@@ -115,6 +128,7 @@ interface AgentResult {
 
 - 流式/进度事件走独立的 `onEvent`（AsyncIterable 或回调），**不把 pi AgentSession 的内部事件原样暴露给 Engine**。
 - 契约成立后，后续 pi SDK 变更只影响 Pi Session Adapter 实现，不影响 DSL 与 runtime。
+- `executionId` 由 Engine 在每次 dispatch 前生成（uuid），贯穿 journal 键、取消路由与日志关联；Adapter 只消费不自造。
 - opencode 版的 `AgentSessionRunner`（`run(prompt, options): Promise<AgentExecutionResult>`）是本契约的简化前身，移植时以本契约为准。
 
 ### 2.4 Runtime 宿主依赖审计矩阵（M0 逐项过）
@@ -151,18 +165,17 @@ interface AgentResult {
 
 > `.opencode/workflows/fff-search-benchmark.js` 是 benchmark 遗留物（不属于本插件注册表体系），不纳入验收。
 
-### 3.2 验收阶段映射（R2 修订）
+### 3.2 验收阶段映射（R3 修订：验收跟随里程碑）
 
 | 阶段 | 验收脚本范围 | 依赖的引擎能力 |
 |---|---|---|
-| P0-A 基础引擎与 Adapter | A 类全部 | agent/parallel/phase/log、顺序链、并发限制 |
-| P0-B 基础嵌套 | `native/pipeline_parent.js`、`1_spec/2_design/3_code`、`deep_chain_*`、`deep_parent/child`、`self_ref*`、`error_*`、`registry_parent`、`compare_parent`、`composite/seq_parent.js`、`seq_fail_parent.js`、`seq_parallel_parent.js`、`par_child_fail_parent.js`、`failure-gate-test.js`、`queue-timer-test.js` | `workflow()` 嵌套、深度限制、自环拒绝、错误传播、sequence（**不含** race/fallback/resume 变体） |
-| P1-A 高级控制流 | `race_parent/slow/fallback_parent`、`fb_*` 三个 fallback 变体 | race 取消传播、fallback 塌缩语义 |
-| P1-B 持久化与恢复 | `resume-test.js`、`resume_child/parent`、`mutate_child/parent`、`seq_resume_parent.js` | journal、`resumeFromRunId`、脚本变更检测、跨 scope 回放 |
-| P1-C 质量与隔离 | C 类 + E 类 | judgePanel/verify/checkpoint、schema、worktree、background |
-| P2 产品化 | F + G + H 类 | schedule、pi-tui、tier |
+| P0-A 基础引擎与 Adapter（M1） | A 类 | agent/parallel/phase/log、顺序链、并发限制、全局并发闸 |
+| P0-B 基础嵌套（M1） | `native/pipeline_parent.js`、`1_spec/2_design/3_code`、`deep_chain_*`、`deep_parent/child`、`self_ref*`、`error_*`、`registry_parent`、`compare_parent`、`composite/seq_parent.js`、`seq_fail_parent.js`、`seq_parallel_parent.js`、`par_child_fail_parent.js`、`failure-gate-test.js`、`queue-timer-test.js` | `workflow()` 嵌套、深度限制、自环拒绝、错误传播、sequence（**不含** race/fallback/resume 变体） |
+| M2 高级引擎与恢复 | B 类 resume/race/fallback 变体（`race_*`、`fb_*`、`resume_*`、`mutate_*`、`seq_resume_parent.js`）+ C 类（`quality-dsl-test.js`、`schema-test.js`）+ D 类（`resume-test.js`） | race 取消传播、fallback 塌缩、journal 指纹回放与 Replay Policy、完整 Schema DSL、judgePanel/verify/checkpoint |
+| M3 工程化运行 | E 类（`worktree-test.js`、`background-test.js`） | worktree 隔离、background、结果回传、pause/resume 控制、后台并发与资源回收 |
+| M4 产品化 | F + G + H 类 | schedule、pi-tui、tier |
 
-MVP = **P0-A + P0-B**。resume/race/fallback 相关脚本从 MVP 剔除，进入 P1 对应阶段。
+> R3：验收跟随里程碑，原 P1-C「C 类 + E 类」拆开——E 类的后台能力在 M3，不让 M2 提前承担 M3 的测试。MVP = **P0-A + P0-B**，resume/race/fallback 相关脚本从 MVP 剔除。
 
 ## 4. 执行边界：权限、并发与取消（R2 新增）
 
@@ -177,10 +190,12 @@ VM 沙箱只约束「编排脚本代码能做什么」；子 Agent 通过自身�
 
 两层配置都进入 `AgentRequest.tools`（ToolPolicy）与 Adapter 实现参数，M0 出口前定稿默认值。
 
+**M0 必须实测**（R3 新增）：子 Agent 工具禁用不能只依赖 `excludeTools` 单一机制——需实测工具白名单生效方式、宿主权限设置继承行为、不同 pi SDK 版本下递归防护（禁止子会话再调 workflow 系工具）的可靠性，结论写入审计报告。
+
 ### 4.2 并发与取消
 
 - **Run 级并发**：沿用 opencode 版上限 16（`setConcurrency` 可下调）。
-- **全局 Agent 并发**（R2 新增）：RunManager 维护跨 run 的全局并发闸。理由：测试约定允许 2 个联调 run 并行，每个 run 内部最多 16 个 agent，理论上 32 路并发请求——全局闸在 Engine 层兜底（默认 16，可配置），超出的 dispatch 排队。
+- **全局 Agent 并发**（R3 统一交付阶段）：RunManager 维护跨 run 的全局并发闸，**M1 随 RunManager 一起交付**（不是 M3 交付物）。理由：测试约定允许 2 个联调 run 并行，每个 run 内部最多 16 个 agent，理论上 32 路并发请求——全局闸在 Engine 层兜底（默认 16，可配置），超出的 dispatch 排队。M3 仅增加后台运行场景下的并发与资源回收测试。
 - **取消传播**：`workflow_control` cancel / run 超时 / 宿主会话关闭 → Engine 向所有在途 `AgentAdapter.execute` 发 `cancel(executionId)` → Adapter 落到 pi 子会话 abort。composite race 的兄弟取消在 Engine 层完成（`AsyncLocalStorage` scope 机制随 runtime 移植）。
 - **资源上限**：沿用 run 级常量 `MAX_AGENTS_PER_RUN=1000`、`MAX_AGENT_RETRIES=3`、`MAX_WORKFLOW_DEPTH=3`。
 
@@ -192,8 +207,8 @@ VM 沙箱只约束「编排脚本代码能做什么」；子 Agent 通过自身�
 |---|---|---|
 | Journal | 记录每次 agent/tool 调用的事件、输入、输出、错误（落盘 `.pi/workflows/journal/<runId>.json`） | P0-A 即启用（只写不读） |
 | Checkpoint / Snapshot | run 快照（进度、节点状态）落盘供恢复与 UI 读取（3s 心跳） | P0 基础 |
-| Resume | 识别可复用节点并恢复执行 | P1-B |
-| Human Checkpoint | `checkpoint()` 暂停等待人工决策（journal 确定性回放、Reject 强停止） | P1-C |
+| Resume | 识别可复用节点并恢复执行 | M2 |
+| Human Checkpoint | `checkpoint()` 暂停等待人工决策（journal 确定性回放、Reject 强停止） | M2 |
 
 ### 5.1 节点身份与回放指纹
 
@@ -212,14 +227,25 @@ Replay Fingerprint:
 
 指纹任一变化即判定「该节点不可复用」，这与 opencode 版「hash 覆盖 prompt/model/phase/agentType/schema」的 journal key 设计一致，M0 审计确认其覆盖面后直接沿用。
 
-### 5.2 Replay Policy（副作用感知，R2 新增）
+### 5.2 Replay Policy（副作用感知，R3 修正与验收一致）
 
-节点结果能否重放还取决于节点是否有副作用：写文件的 Agent 即使 prompt 未变，Resume 直接复用旧结果可能出现「日志显示成功、目标文件实际不存在」。
+R2 的「默认 rerun」与「resume 只重跑变化节点」表述冲突。R3 统一为：**复用是白名单行为，重跑是默认行为**。
 
-- 节点默认 `rerun`（有副作用的保守默认）；
-- 显式标记 `replayable`（纯读/纯分析节点）才静默回放；
-- 高风险节点可标 `manual-confirm`，恢复前弹人工确认。
-- P1-B 交付最小版：默认 rerun + 脚本内 `agent()` opts 显式 `replayable: true` 白名单；`manual-confirm` 随 Human Checkpoint 在 P1-C 交付。
+复用（静默回放旧结果）必须同时满足三个条件：
+
+1. 节点显式标记 `replayable`（脚本内 `agent()` opts 声明，默认不带即视为 `rerun`）；
+2. Replay Fingerprint 全部匹配（脚本/prompt/model/依赖/runtimeVersion 未变）；
+3. 依赖有效：上游节点全部被复用且输出指纹未变；上游任一重跑，下游复用前必须重新校验依赖指纹。
+
+因此：
+
+- 默认 `rerun` 节点**无论指纹是否变化，一律重新执行**（有副作用的保守默认）；
+- 高风险节点可标 `manual-confirm`，恢复前弹人工确认（随 Human Checkpoint 在 M2 交付）；
+- 回放判定结果必须在 journal 中记录（reused/rerun/confirm-required），可审计。
+
+**契约测试三类**（M2 交付，锁死语义）：纯读取节点（应复用）、文件写入节点（必须 rerun）、跨 Scope 节点（依赖链校验生效）。
+
+对应验收标准见第 8 章 M2 门槛——不再使用「只重跑变化节点」的表述。
 
 ## 6. 功能范围（对齐阶段）
 
@@ -227,18 +253,16 @@ Replay Fingerprint:
 
 1. pi package 骨架：`package.json`（`pi` manifest：extensions + skills）、`extensions/pi-code-mode.ts` 桥接、构建产物入口
 2. `workflow` 工具注册（deferred exposure）；`workflow_control` 工具同时注册但**仅暴露 `list/status/cancel`**（R2：控制动作渐进暴露，M3 再补可持久化的 `pause/resume`，避免接口声明了内部做不到的状态转换）
-3. AgentAdapter 契约定稿 + Pi Session Adapter 实现（`createAgentSession` 子会话、schema 结构化输出、usage 统计、cancel/timeout）
-4. runtime 引擎移植：VM 沙箱、确定性 prelude、`agent/parallel/pipeline/sequence/workflow/phase/log/args`、并发限制、错误传播（race/fallback 语义暂不承诺）
+3. AgentAdapter 契约定稿 + Pi Session Adapter 实现（`createAgentSession` 子会话、基础结构化输出透传、usage 统计、cancel/timeout）。完整 Schema DSL 与修复循环属 P1/M2，不在 P0 承诺（R3）
+4. runtime 引擎移植：VM 沙箱、确定性 prelude、`agent/parallel/pipeline/sequence/workflow/phase/log/args`、Run 级并发限制、**跨 run 全局 Agent 并发闸**（R3 前移至 M1）、错误传播（race/fallback 语义暂不承诺）
 5. workflow 注册表：扫描 `.pi/workflows/`（兼容 `.opencode-workflows/workflows/`）
 6. run 快照 + journal 落盘（只写）
 7. `workflow-authoring` skill 移植
 
 ### P1
 
-8. P1-A：`race/fallback` 语义（取消传播、塌缩 vs 上抛）
-9. P1-B：journal/resume（指纹回放、`resumeFromRunId`、Replay Policy 最小版）
-10. P1-C：质量 DSL（`judgePanel/verify/checkpoint`）、worktree 隔离、后台运行 + `background: true` + 结果回传 + `workflow_control` 补齐
-11. 斜杠命令：`/workflows` 及内置 pattern（参考范本）
+8. M2：`race/fallback` 语义（取消传播、塌缩 vs 上抛）、完整 Schema DSL 与修复循环、journal/resume（指纹回放、`resumeFromRunId`、第 5.2 节 Replay Policy 三规则）、质量 DSL（`judgePanel/verify/checkpoint`）、斜杠命令 `/workflows` 及内置 pattern
+9. M3：worktree 隔离、后台运行 + `background: true` + 结果回传、`workflow_control` 补齐 `pause/resume`、后台场景并发与资源回收测试
 
 ### P2
 
@@ -255,26 +279,43 @@ Replay Fingerprint:
 |---|---|---|---|
 | Unit | DSL、VM、调度、journal、composite 逻辑正确性 | 否 | `tests/*.test.ts`，`tsx --test`，复用 opencode 版 60+ 测试的用例结构 |
 | Contract | OpenCode/Pi 两个 Adapter 满足同一 `AgentAdapter` 契约（含错误/cancel/timeout 语义） | 否 | **Deterministic Mock Adapter**（脚本化返回预置 AgentResult，含 status/error/usage 全形态） |
-| Integration | 真实 pi Agent、模型、工具、生命周期、取消 | 是 | sample-project 各阶段脚本 + 看门狗（并发 ≤2、落盘证据优先，见根 CLAUDE.md） |
+| Integration | 真实 pi Agent、模型、工具、生命周期、取消 | 是 | **Mock 全量跑各阶段脚本；真实模型只跑代表性子集**（R3：每阶段选 2-3 个代表脚本，如 smoke、deep_parent、resume-test、background-test）+ 看门狗（并发 ≤2、落盘证据优先，见根 CLAUDE.md） |
 
 收益：失败原因可定位（Unit 挂 = 引擎问题；Contract 挂 = Adapter 问题；Integration 挂 = 平台/模型问题），Integration 成本压到最小集。
 
 ## 8. 验收标准
 
-- **MVP 门槛（P0-A + P0-B）**：第 3.2 节对应脚本在 pi 中通过 `workflow` 工具执行成功，结果结构与 opencode 版语义一致；Unit + Contract 测试全绿。
-- **P1 门槛**：P1-A/B/C 脚本全通过；resume 按 `resume-test.js` 两步法验证（首跑记 runId、改 prompt 后 `resumeFromRunId` 只重跑变化节点），且 Replay Policy 对写型节点执行 rerun。
-- **P2 门槛**：F/G/H 通过；schedule 验证 cron 到期触发；TUI 人工目检。
+- **MVP 门槛（P0-A + P0-B，M1）**：对应脚本在 pi 中通过 `workflow` 工具执行成功，结果结构与 opencode 版语义一致；Unit + Contract 测试全绿；全局并发闸生效（并行 run 下 dispatch 总数不超上限）。
+- **M2 门槛**：B 类 resume/race/fallback 变体 + C 类 + D 类脚本通过。Resume 验收与第 5.2 节 Replay Policy 一致：**仅显式 `replayable` + 指纹匹配 + 依赖有效的节点复用；默认 rerun 节点一律重跑；上游重跑后下游复用需依赖校验**（不再使用「只重跑变化节点」表述）；三类回放契约测试（纯读取/写文件/跨 Scope）通过。
+- **M3 门槛**：E 类通过（worktree 隔离无残留、background 安全退出、结果回传、pause/resume 控制可用）。
+- **M4 门槛**：F/G/H 通过；schedule 验证 cron 到期触发；TUI 人工目检。
+- 真实模型 Integration 覆盖代表性子集（第 7 章），其余脚本由 Mock Adapter 全量覆盖。
 - Integration 跑法统一：在 sample-project 目录启动 pi，Main Agent 以 `scriptPath` 执行各脚本（与脚本头部注释用法一致，宿主换成 pi）。
 
-## 9. 里程碑（R2 修订：新增 M0）
+## 9. 里程碑（R3 修订：M0 执行清单固化，验收跟随里程碑）
 
 | 里程碑 | 内容 | 出口标准 |
 |---|---|---|
-| **M0 技术验证与接口锁定** | 逐模块过第 2.4 审计矩阵；`AgentAdapter` 契约定稿成文；pi 子会话真实调用打通（execute/流式事件/cancel/清理）；Mock Adapter 就绪 | 基础 agent 调用、取消、超时、usage 统计全部实证可用；审计结论落 `dev-docs/design/` |
-| M1 基础编排 MVP | P0 全部 7 项（race/fallback/resume 除外） | P0-A + P0-B 脚本通过，Unit/Contract 全绿 |
-| M2 高级引擎 | P1-A/B + P1-C 质量 DSL 部分 | 高级控制流与恢复测试通过，重启后行为可验证 |
-| M3 工程化运行 | worktree、background、结果回传、`workflow_control` 补齐 pause/resume、权限默认值、全局并发闸 | 后台任务安全退出、文件隔离与回传通过 |
+| **M0 技术验证与接口锁定** | 按第 9.1 节执行清单推进：审计矩阵、契约定稿（含 executionId 与 usage 未知语义）、pi 子会话实证、**工具权限与递归防护实测**、Mock Adapter | 见 9.1 出口：三个正式文档 + 可重复运行的代码验证 + M1 Go/No-Go |
+| M1 基础编排 MVP | P0 全部 7 项（race/fallback/resume/完整 Schema DSL 除外），含**跨 run 全局并发闸** | P0-A + P0-B 脚本通过，Unit/Contract 全绿 |
+| M2 高级引擎与恢复 | race/fallback、完整 Schema DSL、resume + Replay Policy 三规则、质量 DSL、斜杠命令 | 高级控制流与恢复测试通过（含三类回放契约测试），重启后行为可验证 |
+| M3 工程化运行 | worktree、background、结果回传、`workflow_control` 补齐 pause/resume、后台场景并发与资源回收测试 | 后台任务安全退出、文件隔离与回传通过 |
 | M4 产品体验 | TUI、schedule、tier、示例与发布文档、npm 发布 | F/G/H 回归通过，跨平台安装测试通过 |
+
+### 9.1 M0 执行清单（R3 固化，顺序执行）
+
+1. 审计 opencode runtime 对宿主结构的隐含依赖（第 2.4 矩阵逐项），产出审计文档
+2. 确定 `AgentAdapter` 契约并成文（含 executionId 来源、事件通道、usage 未知语义）
+3. pi SDK 创建子会话，代码实证 execute / cancel / timeout / 清理
+4. 实测工具禁用、权限继承、扩展递归防护（不能只信 `excludeTools`，见 4.1）
+5. 实现 Deterministic Mock Adapter（Contract 测试载体）
+6. 输出审计报告与 M1 Go/No-Go 结论
+
+**M0 必须有可重复运行的代码验证，不接受纯文档审计。** 产出三个正式文档（遵守根 CLAUDE.md 目录约定）：
+
+- `dev-docs/research/runtime-host-dependency-audit.md`
+- `dev-docs/design/adapter-contract.md`
+- `dev-docs/progress-result/M0-执行报告.md`
 
 ## 10. 工程细节与待办（R2 新增）
 
@@ -290,7 +331,7 @@ Replay Fingerprint:
 3. **pi SDK 版本门槛**（保留）：`exposure: "deferred"` 需 pi >= 0.99；peerDependencies 对齐范本并按实际 API 上调。
 4. **构建产物路径**（保留）：`dist/` 编译产物 + TS 桥接双路径；CI 必须先 build。
 5. **目录约定兼容**（保留）：P0 先兼容 `.opencode-workflows/` 保证 sample-project 零改动，P2 提供迁移说明。
-6. **测试并发 ≠ Agent 并发**（R2）：联调允许多 run 并行，全局 Agent 闸必须先于 M3 的后台能力上线（实现上随 M1 RunManager 一起交付）。
+6. **测试并发 ≠ Agent 并发**（R3 已统一）：全局 Agent 并发闸在 M1 随 RunManager 交付；M3 只增加后台运行场景下的并发与资源回收测试。
 
 ## 12. 引用
 
@@ -313,3 +354,4 @@ Replay Fingerprint:
 |---|---|---|
 | R1 | 2026-11-14 | 初版：三库角色、8 类脚本分类、P0-P2 范围、M1-M4 里程碑 |
 | R2 | 2026-11-14 | 吸收外部评审：MVP 收窄为 P0-A/B、runtime 复用降级为待验证假设并新增审计矩阵、AgentAdapter 契约与四层架构、双层权限与全局并发、Journal/Checkpoint/Resume 概念区分与 Replay Policy、三层测试体系、M0 里程碑、workflow_control 渐进暴露、工程细节三条 |
+| R3 | 2026-11-14 | 第二轮评审：修正 Resume 默认 rerun 与验收冲突（复用三条件白名单制 + 三类回放契约测试）；全局并发闸统一为 M1 交付（M3 仅测试）；验收跟随里程碑（原 P1-C 拆为 M2 质量 / M3 隔离后台）；契约补 executionId 与 usage 未知语义；P0 Schema 降为基础结构化透传；Integration 改代表性子集；M0 执行清单与三文档产出固化 |
