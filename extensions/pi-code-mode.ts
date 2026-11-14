@@ -1,34 +1,66 @@
 /**
  * pi-code-mode extension 入口（pi package manifest 指向本文件）
  *
- * 流程：
- *   pi 加载本扩展 -> registerTool(workflow / workflow_control) -> 模型调用
- *     -> 取脚本（scriptPath 或 script 字面量） -> parseWorkflowScript 校验 meta
- *     -> PiAgentAdapter（全局并发闸包装） + agentAdapterToRunner 组装 runner
- *     -> runWorkflow 执行（journal 落盘 .pi/workflows/journal/） -> 渲染结果回传主会话
+ * 注册面（M1-M4 全量）：
+ *   - workflow / workflow_control 工具（编排执行与控制）
+ *   - schedule_* 工具族 ×8 + ScheduleRuntime 调度循环（M4）
+ *   - /workflows、/schedule 斜杠命令
+ *   - workflow-tasks TUI widget（在途 runs 实时摘要，M4）
+ *   - 全局并发闸 + 模型 tier 解析（model-tiers.json -> resolveTier）
  *
  * RunManager 模块级单例：同进程多会话共享，workflow_control 可跨会话查询/取消。
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { RunManager, withGlobalGate } from "../src/manager/run-manager.js"
+import { PiScheduleRunner } from "../src/manager/pi-schedule-runner.js"
+import { ScheduleRuntime } from "../src/engine/schedule/runtime.js"
+import { loadModelTiers } from "../src/engine/agent/model-tiers.js"
 import { PiAgentAdapter } from "../src/adapter/pi-agent-adapter.js"
 import { loadRegistry } from "../src/engine/runtime/workflow-registry.js"
 import { makeWorkflowTool, makeWorkflowControlTool, type WorkflowToolDeps } from "../src/tools/workflow-tools.js"
+import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 
 const runManager = new RunManager(16)
+// tier 解析：~/.pi/workflows/model-tiers.json + 项目级合并（引擎 agent/model-tiers.ts）
+const tiers = loadModelTiers()
 
 function makeDeps(cwd?: string): WorkflowToolDeps {
   return {
     runManager,
-    // 全局并发闸：跨 run 兜底（run 级限流在 runtime 内，此处是全局第二道）
     adapterFactory: () => withGlobalGate(new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd() }), runManager.gate),
     cwd,
+    // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）
+    resolveTier: (tier: string) => tiers[tier],
   }
 }
 
+/** workflow-tasks widget：在途 runs 实时摘要（2s 节流刷新，idle 零开销） */
+function installTaskWidget(pi: ExtensionAPI): void {
+  const render = (width: number): string[] => {
+    const running = runManager.list().filter((r) => r.status === "running")
+    if (!running.length) return []
+    const lines = [`workflow 进行中（${running.length}）:`]
+    for (const r of running) {
+      const done = r.agents.filter((a) => a.status === "ok").length
+      lines.push(`  ${r.label ?? r.runId}  ${done}/${r.agents.length} nodes`)
+    }
+    // 截断超宽行（终端列宽约束）
+    return lines.map((l) => (l.length > width ? l.slice(0, Math.max(0, width - 1)) : l))
+  }
+
+  pi.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
+    const timer = setInterval(() => tui.requestRender(), 2000)
+    ;(timer as { unref?: () => void }).unref?.()
+    return {
+      render,
+      dispose: () => clearInterval(timer),
+    }
+  })
+}
+
 export default function extension(pi: ExtensionAPI): void {
-  // 后台 run 完成回传主会话（M3 结果回传通道：pi.sendUserMessage）
+  // 后台 run / schedule run 完成回传主会话（M3 结果回传通道：pi.sendUserMessage）
   const deliver = async (text: string) => {
     try {
       await pi.sendUserMessage(text)
@@ -40,6 +72,42 @@ export default function extension(pi: ExtensionAPI): void {
 
   pi.registerTool(makeWorkflowTool({ ...makeDeps(), deliver }) as any)
   pi.registerTool(makeWorkflowControlTool(makeDeps()) as any)
+
+  // ---- schedule_* 工具族 ×8 + 调度循环（M4）----
+  const scheduleRunner = new PiScheduleRunner({ runManager, deliver, cwd: process.cwd() })
+  const scheduler = new ScheduleRuntime({
+    client: undefined, // pi 版实现不直调 client（root session 由 PiScheduleRunner 创建）
+    directory: process.cwd(),
+    manager: scheduleRunner as any,
+  })
+  scheduler.start()
+
+  for (const tool of makeScheduleTools({ scheduler, cwd: process.cwd() })) {
+    pi.registerTool(tool as any)
+  }
+
+  // /schedule：查看定时任务列表与用法（创建/修改走 schedule_* 工具自然对话）
+  pi.registerCommand("schedule", {
+    description: "查看定时任务列表与 schedule_create 用法",
+    handler: async (_name: string, ctx: any) => {
+      const cwd = ctx.cwd ?? process.cwd()
+      const lines: string[] = []
+      try {
+        for (const tool of makeScheduleTools({ scheduler, cwd })) {
+          if (tool.name === "schedule_list") {
+            const r = await (tool as any).execute("cmd", {}, undefined, undefined, { cwd })
+            lines.push(r.content[0].text)
+          }
+        }
+      } catch (e) {
+        lines.push(`读取失败: ${String((e as Error)?.message ?? e)}`)
+      }
+      lines.push("")
+      lines.push("创建定时任务：对话中描述需求（如「每天 9 点跑 daily-review」），由 schedule_create 落配置；")
+      lines.push("边界：pi 运行期间生效，关闭不执行、错过不补跑；checkpoint 在无人值守执行中视为失败。")
+      ctx.ui.notify(lines.join("\n"), "info")
+    },
+  })
 
   // /workflows：列出注册表工作流与最近运行（M2）
   pi.registerCommand("workflows", {
@@ -62,9 +130,14 @@ export default function extension(pi: ExtensionAPI): void {
       lines.push("")
       lines.push(runs.length ? `最近运行（${runs.length}）:` : "最近无 workflow 运行")
       for (const r of runs) {
-        lines.push(`  - ${r.status.padEnd(9)} ${r.runId}${r.label ? `（${r.label}）` : ""} agents=${r.agents}${r.error ? ` 错误: ${r.error.slice(0, 60)}` : ""}`)
+        lines.push(
+          `  - ${r.status.padEnd(9)} ${r.runId}${r.label ? `（${r.label}）` : ""} agents=${r.agents}${r.error ? ` 错误: ${r.error.slice(0, 60)}` : ""}`,
+        )
       }
       ctx.ui.notify(lines.join("\n"), "info")
     },
   })
+
+  // workflow-tasks widget（M4）：在途 runs 实时摘要
+  installTaskWidget(pi)
 }

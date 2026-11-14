@@ -4,18 +4,25 @@
   "description": "面向 Pi Agent 的代码式工作流编排插件：JavaScript DSL 调度多个 Agent、管理执行状态、恢复工作流",
   "type": "module",
   "main": "./dist/index.js",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test:engine": "tsx --test tests/engine/*.test.ts",
     "test:contract": "tsx --test tests/contract/*.test.ts"
   },
   "pi": {
-    "extensions": ["./extensions/pi-code-mode.ts"],
-    "skills": ["./skills/workflow-authoring"]
+    "extensions": [
+      "./extensions/pi-code-mode.ts"
+    ],
+    "skills": [
+      "./skills/workflow-authoring"
+    ]
   },
   "dependencies": {
-    "acorn": "^8.16.0"
+    "acorn": "^8.16.0",
+    "cron-parser": "^5.10.5"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.3.0"

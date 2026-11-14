@@ -26,6 +26,8 @@ export interface WorkflowToolDeps {
   cwd?: string
   /** 后台 run 完成后回传主会话的通道（extension 接线 pi.sendUserMessage） */
   deliver?: (text: string) => Promise<void>
+  /** 模型分层解析：tier 名 -> provider/modelId（M4 tier 体系；未配置回退会话默认模型） */
+  resolveTier?: (tier: string) => string | undefined
 }
 
 /** 渲染 status 详情（agents 各节点状态行） */
@@ -123,6 +125,7 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         signal: run.controller.signal,
         runId,
         concurrency: typeof params.concurrency === "number" ? params.concurrency : undefined,
+        resolveTier: deps.resolveTier,
         resumeJournal,
         replayPolicy: "explicit" as const,
         confirm,
