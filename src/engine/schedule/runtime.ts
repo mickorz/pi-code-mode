@@ -52,10 +52,11 @@ export class ScheduleRuntime {
     this.graceMs = deps.graceMs ?? GRACE_MS
   }
 
-  /** 启动调度循环（幂等） */
+  /** 启动调度循环（幂等）；unref 保证不阻塞宿主进程退出（print 模式等） */
   start(): void {
     if (this.timer) return
     this.timer = setInterval(() => void this.tick(), this.intervalMs)
+    this.timer.unref?.()
   }
 
   /** 停止调度循环（不清在途 run；在途 run 由 BackgroundRunManager 管理） */
@@ -170,6 +171,7 @@ export class ScheduleRuntime {
           timedOut = true
           this.deps.manager.stop(runId)
         }, schedule.timeoutMs)
+        timeoutTimer.unref?.()
       }
       return runId
     } catch (error) {

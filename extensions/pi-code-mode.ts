@@ -35,7 +35,9 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
   }
 }
 
-/** workflow-tasks widget：在途 runs 实时摘要（2s 节流刷新，idle 零开销） */
+/** workflow-tasks widget：在途 runs 实时摘要（2s 节流刷新，idle 零开销）
+ *  宿主 API：widget 挂在 ctx.ui（session_start 事件上下文），工厂期不可直接调用；
+ *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 跳过注册 */
 function installTaskWidget(pi: ExtensionAPI): void {
   const render = (width: number): string[] => {
     const running = runManager.list().filter((r) => r.status === "running")
@@ -49,13 +51,16 @@ function installTaskWidget(pi: ExtensionAPI): void {
     return lines.map((l) => (l.length > width ? l.slice(0, Math.max(0, width - 1)) : l))
   }
 
-  pi.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
-    const timer = setInterval(() => tui.requestRender(), 2000)
-    ;(timer as { unref?: () => void }).unref?.()
-    return {
-      render,
-      dispose: () => clearInterval(timer),
-    }
+  pi.on("session_start", (_event, ctx) => {
+    if (!ctx.hasUI) return
+    ctx.ui.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
+      const timer = setInterval(() => tui.requestRender(), 2000)
+      ;(timer as { unref?: () => void }).unref?.()
+      return {
+        render,
+        dispose: () => clearInterval(timer),
+      }
+    })
   })
 }
 

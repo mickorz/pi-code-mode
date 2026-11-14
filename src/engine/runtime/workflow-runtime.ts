@@ -27,7 +27,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { exec, execFile } from "node:child_process"
+import { exec, execFile, spawnSync } from "node:child_process"
 import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
@@ -928,7 +928,12 @@ async function executeWorkflow(
   // Journal：消耗 callSeq（与 agent/checkpoint 同构），执行记录走 executions 通道
   // （不写 hash/result，resume 永远 miss 重跑）；下游 agent 若 prompt 嵌入输出，变化经
   // 既有 prompt-hash 机制失效。
-  const TOOL_INTERPRETER: Record<string, string> = { ".py": "python", ".js": "node" }
+  // Python 解释器解析：优先 python（Linux 发行版/venv 常见），无则回落 python3（macOS Homebrew 无 python 别名）；
+  // 探测失败两端都缺时保留 python，由执行时报错暴露环境问题。解释器选择不进 hash（executions 通道不写 hash）。
+  const PYTHON_BIN = ["python", "python3"].find(
+    (bin) => spawnSync(bin, ["-V"], { stdio: "ignore" }).status === 0,
+  ) ?? "python"
+  const TOOL_INTERPRETER: Record<string, string> = { ".py": PYTHON_BIN, ".js": "node" }
   const TOOL_MAX_BUFFER = 1024 * 1024 // execFile 的 maxBuffer 分别限制 stdout 与 stderr：各 1MB，任一超限即失败
 
   interface RunToolResult {
