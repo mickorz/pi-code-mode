@@ -1,7 +1,7 @@
 /**
  * workflow / workflow_control 工具工厂（与 pi extension 接线解耦，便于测试）
  *
- * R3 P0 约定：workflow_control 仅暴露 list/status/cancel；
+ * R3 约定：workflow_control 暴露 list/status/stop（stop + resumeFromRunId 组合覆盖 pause/resume，不单独实现——对齐 opencode 版语义）；
  * pause/resume 等可持久化控制动作属 M3（后台运行落地后），不在本阶段承诺。
  */
 
@@ -24,6 +24,8 @@ export interface WorkflowToolDeps {
   /** 每次执行新建 Adapter（带全局闸包装由接线方决定） */
   adapterFactory: () => AgentAdapter
   cwd?: string
+  /** 后台 run 完成后回传主会话的通道（extension 接线 pi.sendUserMessage） */
+  deliver?: (text: string) => Promise<void>
 }
 
 /** 渲染 status 详情（agents 各节点状态行） */
@@ -60,8 +62,15 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
       script: Type.Optional(Type.String({ description: "workflow 脚本完整内容（ESM，首条语句 export const meta）" })),
       scriptPath: Type.Optional(Type.String({ description: "脚本路径（相对项目根）或注册表工作流名" })),
       args: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "暴露给脚本的 args 全局" })),
+      background: Type.Optional(
+        Type.Boolean({ description: "true 时后台执行：立即返回 runId，完成后结果自动回传本会话；用 workflow_control 查询/停止" }),
+      ),
+      resumeFromRunId: Type.Optional(
+        Type.String({ description: "从指定 runId 的 journal 断点续跑：最长未变前缀回放（已完成节点零成本复用），仅变更后的节点真实执行" }),
+      ),
+      concurrency: Type.Optional(Type.Number({ description: "run 内并发上限（正整数，钳制 16；缺省 CPU 核数-2）" })),
     }),
-    async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: any) {
+    async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: any) {
       // 1. 取脚本
       let script: string
       let sourceLabel: string
@@ -88,20 +97,64 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         return toolText(`[workflow 参数错误] 脚本校验失败: ${String((e as Error)?.message ?? e)}`)
       }
 
-      // 3. RunManager 注册（宿主中断 signal 联动取消）+ 执行
-      const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      // 3. runId 与 journal（resume 语义：复用旧 runId 对齐 journal key——审计报告 §1.3）
+      const resuming = typeof params.resumeFromRunId === "string" && params.resumeFromRunId.length > 0
+      const runId = resuming ? params.resumeFromRunId : `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const run = deps.runManager.register(runId, { label: sourceLabel, externalSignal: signal })
       const journal = new JournalStore(cwd, path.join(cwd, JOURNAL_DIR))
+      const resumeJournal = resuming ? journal.load(params.resumeFromRunId) : undefined
+
+      // checkpoint 确认通道（M2）：宿主 TUI 的 ui.confirm 对话框；无 ui 环境（headless）走引擎缺省值
+      let checkpointSeq = 0
+      const confirm = ctx?.ui?.confirm
+        ? async (promptText: string) => {
+            try {
+              return await ctx.ui.confirm(`workflow checkpoint #${++checkpointSeq}`, promptText.slice(0, 200))
+            } catch {
+              return true // UI 不可用时不阻塞编排
+            }
+          }
+        : undefined
+
+      const runOpts = () => ({
+        args: params.args,
+        agent: agentAdapterToRunner(deps.adapterFactory()),
+        cwd,
+        signal: run.controller.signal,
+        runId,
+        concurrency: typeof params.concurrency === "number" ? params.concurrency : undefined,
+        resumeJournal,
+        replayPolicy: "explicit" as const,
+        confirm,
+        onAgentJournal: (entry: any) => journal.append(runId, entry.key, entry),
+        onAgentUpdate: (record: any) => deps.runManager.attach(runId, record),
+      })
+
+      // 4. 后台分支（M3）：立即返回 runId，完成后 deliver 回传主会话
+      if (params.background === true) {
+        void runWorkflow(script, runOpts())
+          .then((outcome) => {
+            const preview = JSON.stringify(outcome.result ?? null)
+            deps.runManager.finish(runId, { status: "completed", resultPreview: preview })
+            return deps.deliver?.(renderWorkflowRunResult(outcome, { runId, sourceLabel: `background:${sourceLabel}` }))
+          })
+          .catch(async (e) => {
+            const msg = String((e as Error)?.message ?? e)
+            const cancelled = run.controller.signal.aborted
+            deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
+            await deps.deliver?.(`[workflow ${cancelled ? "已停止" : "失败"}] runId=${runId}
+${msg}
+已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。`)
+          })
+        return toolText(
+          `后台 run 已提交: runId=${runId}${resuming ? `（resume 自 ${params.resumeFromRunId}，复用其 journal 续跑）` : ""}
+用 workflow_control(action=list/status) 查询进度；停止用 action=stop。`,
+        )
+      }
+
+      // 5. 前台执行
       try {
-        const outcome = await runWorkflow(script, {
-          args: params.args,
-          agent: agentAdapterToRunner(deps.adapterFactory()),
-          cwd,
-          signal: run.controller.signal,
-          runId,
-          onAgentJournal: (entry) => journal.append(runId, entry.key, entry),
-          onAgentUpdate: (record) => deps.runManager.attach(runId, record),
-        })
+        const outcome = await runWorkflow(script, runOpts())
         const preview = JSON.stringify(outcome.result ?? null)
         deps.runManager.finish(runId, { status: "completed", resultPreview: preview })
         return {
@@ -113,8 +166,11 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         const msg = String((e as Error)?.message ?? e)
         const cancelled = run.controller.signal.aborted
         deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
+        const resumeHint = cancelled ? `
+已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。` : ""
         return {
-          content: [{ type: "text" as const, text: `[workflow ${cancelled ? "已取消" : "失败"}] runId=${runId}\n${msg}` }],
+          content: [{ type: "text" as const, text: `[workflow ${cancelled ? "已停止" : "失败"}] runId=${runId}
+${msg}${resumeHint}` }],
           details: { runId, sourceLabel, error: msg, cancelled },
         }
       }
@@ -127,11 +183,11 @@ export function makeWorkflowControlTool(deps: WorkflowToolDeps) {
   return {
     name: "workflow_control",
     label: "Workflow Control",
-    description: "查询或控制 workflow 运行：list 列出全部运行（在途+最近终态）、status 查单次运行详情、cancel 取消在途运行。",
+    description: "查询或控制 workflow 运行：list 列出全部运行（在途+最近终态）、status 查单次运行详情、stop 停止在途运行（journal 保留，可 resumeFromRunId 续跑）。",
     promptSnippet: "workflow_control: list/status/cancel workflow runs",
     parameters: Type.Object({
-      action: Type.Union([Type.Literal("list"), Type.Literal("status"), Type.Literal("cancel")], {
-        description: "list=列出全部；status=查详情；cancel=取消在途 run",
+      action: Type.Union([Type.Literal("list"), Type.Literal("status"), Type.Literal("stop")], {
+        description: "list=列出全部；status=查详情；stop=停止在途 run（journal 保留可续跑）",
       }),
       runId: Type.Optional(Type.String({ description: "status/cancel 必填；list 忽略" })),
     }),
@@ -149,9 +205,13 @@ export function makeWorkflowControlTool(deps: WorkflowToolDeps) {
       if (params.action === "status") {
         return toolText(renderRunStatus(deps.runManager.status(params.runId)))
       }
-      // cancel
+      // stop（journal 保留，stop + resumeFromRunId 组合覆盖 pause/resume）
       const ok = await deps.runManager.cancel(params.runId)
-      return toolText(ok ? `已发送取消信号: ${params.runId}` : `未找到在途 run: ${params.runId}（可能已完成或从未执行）`)
+      return toolText(
+        ok
+          ? `已停止 run: ${params.runId}（在飞子会话一并取消）。已完成部分在 journal 中，可用 workflow(resumeFromRunId="${params.runId}") 续跑。`
+          : `未找到运行中的 run: ${params.runId}（可能已完成、已停止或不存在）；用 action=list 查看。`,
+      )
     },
   }
 }

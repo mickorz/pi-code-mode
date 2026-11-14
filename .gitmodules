@@ -6,3 +6,6 @@
 	path = thirdparties/pi-dynamic-workflows
 	url = https://github.com/QuintinShaw/pi-dynamic-workflows.git
 	ignore = all
+[submodule "thirdparties/vercel-workflow"]
+	path = thirdparties/vercel-workflow
+	url = https://github.com/vercel/workflow.git

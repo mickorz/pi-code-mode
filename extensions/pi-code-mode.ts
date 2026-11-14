@@ -28,7 +28,17 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
 }
 
 export default function extension(pi: ExtensionAPI): void {
-  pi.registerTool(makeWorkflowTool(makeDeps()) as any)
+  // 后台 run 完成回传主会话（M3 结果回传通道：pi.sendUserMessage）
+  const deliver = async (text: string) => {
+    try {
+      await pi.sendUserMessage(text)
+    } catch (e) {
+      // 会话已关闭等场景：后台 run 仍继续（对齐 opencode 版"不 kill"语义），回传失败静默
+      console.error("[pi-code-mode] 后台结果回传失败:", String((e as Error)?.message ?? e))
+    }
+  }
+
+  pi.registerTool(makeWorkflowTool({ ...makeDeps(), deliver }) as any)
   pi.registerTool(makeWorkflowControlTool(makeDeps()) as any)
 
   // /workflows：列出注册表工作流与最近运行（M2）
