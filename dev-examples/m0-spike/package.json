@@ -1,0 +1,9 @@
+{
+  "name": "m0-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^1.3.0"
+  }
+}

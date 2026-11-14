@@ -13,3 +13,7 @@ dist/
 
 # CodeGraph 本地索引产物（不提交）
 .codegraph/
+
+# workflow 运行产物（journal 等，不提交）
+.pi/workflows/journal/
+.opencode-workflows/

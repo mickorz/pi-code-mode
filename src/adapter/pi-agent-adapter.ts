@@ -1,0 +1,178 @@
+/**
+ * PiAgentAdapter —— AgentAdapter 契约的 pi SDK 实现
+ *
+ * 每次子代理调用创建独立的内存态 pi AgentSession：
+ *   - SessionManager.inMemory() 不落盘（与 opencode 版子会话内存态一致）
+ *   - DefaultResourceLoader({ noExtensions }) 防递归编排（M0 实测宿主扩展零加载）
+ *   - SettingsManager.create 继承用户 provider/model 认证
+ * usage 直接取 pi 规范化单值（message.usage）；cancel 走 session.abort（M0 实测 13ms 生效）
+ *
+ * M0 实证依据：dev-docs/progress-result/M0-执行报告.md；spike：dev-examples/m0-spike/spike.ts
+ */
+
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  SessionManager,
+  SettingsManager,
+  type AgentSession,
+} from "@earendil-works/pi-coding-agent"
+import os from "node:os"
+import path from "node:path"
+import type { AgentAdapter, AgentEvent, AgentRequest, AgentResult, ExecutionContext } from "./types.js"
+
+const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent")
+
+export interface PiAgentAdapterOptions {
+  /** pi 全局配置目录，默认 ~/.pi/agent */
+  agentDir?: string
+  /** 会话工作目录，默认 process.cwd()（worktree 隔离时由 Engine 传入 worktree 路径） */
+  defaultCwd?: string
+}
+
+/** 剥掉 markdown 代码围栏后尝试 JSON.parse（P0 基础结构化透传） */
+function parseStructured(raw: string): unknown {
+  const stripped = raw.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
+  return JSON.parse(stripped)
+}
+
+export class PiAgentAdapter implements AgentAdapter {
+  private readonly agentDir?: string
+  private readonly defaultCwd?: string
+  /** executionId -> 在途会话（cancel 路由） */
+  private readonly inflight = new Map<string, AgentSession>()
+
+  constructor(options: PiAgentAdapterOptions = {}) {
+    this.agentDir = options.agentDir
+    this.defaultCwd = options.defaultCwd
+  }
+
+  async execute(request: AgentRequest, ctx: ExecutionContext): Promise<AgentResult> {
+    const cwd = request.cwd ?? this.defaultCwd ?? process.cwd()
+    const policy = request.tools ?? {}
+    const emit = (event: AgentEvent) => ctx.onEvent?.(event)
+
+    // noExtensions 默认 true：子会话不加载宿主扩展，递归编排通道关闭（M0 recursive-guard PASS）
+    const agentDir = this.agentDir ?? DEFAULT_AGENT_DIR
+    const loader = new DefaultResourceLoader({ cwd, agentDir, noExtensions: policy.noExtensions !== false })
+    await loader.reload()
+
+    let session: AgentSession
+    try {
+      const created = await createAgentSession({
+        cwd,
+        agentDir: this.agentDir,
+        sessionManager: SessionManager.inMemory(),
+        settingsManager: SettingsManager.create(cwd, agentDir),
+        resourceLoader: loader,
+        ...(request.tools?.allowTools ? { tools: request.tools.allowTools } : {}),
+        ...(policy.excludeTools ? { excludeTools: policy.excludeTools } : {}),
+      })
+      session = created.session
+    } catch (e) {
+      return fail("session", `子会话创建失败: ${String((e as Error)?.message ?? e)}`)
+    }
+
+    this.inflight.set(ctx.executionId, session)
+    emit({ type: "session-created", executionId: ctx.executionId, sessionId: session.sessionId })
+
+    // 取消通道：Engine 的 attempt signal / cancel() 都落到 session.abort（M0: 13ms 生效）
+    let cancelled = false
+    const onAbort = () => {
+      cancelled = true
+      void session.abort()
+    }
+    if (request.signal) {
+      if (request.signal.aborted) onAbort()
+      else request.signal.addEventListener("abort", onAbort, { once: true })
+    }
+
+    try {
+      // P0 结构化透传：schema 存在时 prompt 附加 JSON 输出要求（M2 换 typebox 校验 + 修复循环）
+      const finalPrompt = request.outputSchema
+        ? `${request.prompt}\n\n[输出要求] 只输出一个 JSON 对象（符合给定 schema 语义），不要输出任何其他内容。`
+        : request.prompt
+
+      let text = ""
+      let usage: { inputTokens: number; outputTokens: number } | undefined
+      const unsub = session.subscribe((e: any) => {
+        if (e.type === "message_end" && e.message?.role === "assistant") {
+          for (const c of e.message.content ?? []) {
+            if (c.type === "text") text += c.text
+          }
+          // pi 规范化 usage 单值（M0 实证：无 step-finish 覆盖问题）；部分取消可能缺失，按契约缺省
+          const u = e.message.usage
+          if (u) usage = { inputTokens: u.input ?? 0, outputTokens: u.output ?? 0 }
+        }
+      })
+
+      const t0 = Date.now()
+      await session.prompt(finalPrompt)
+      unsub()
+
+      if (cancelled) {
+        return { status: "cancelled", output: { type: "text", value: "" }, sessionId: session.sessionId }
+      }
+      if (request.signal?.aborted) {
+        return { status: "cancelled", output: { type: "text", value: "" }, sessionId: session.sessionId }
+      }
+
+      emit({
+        type: "record",
+        executionId: ctx.executionId,
+        record: { sessionId: session.sessionId, durationMs: Date.now() - t0, textPreview: text.slice(0, 200) },
+      })
+
+      // schema 路径：本地解析失败归为 schema 错误（Engine 可恢复重试语义）
+      if (request.outputSchema) {
+        try {
+          const value = parseStructured(text)
+          return {
+            status: "ok",
+            output: { type: "structured", value },
+            usage,
+            sessionId: session.sessionId,
+          }
+        } catch {
+          return {
+            status: "error",
+            output: { type: "text", value: text },
+            usage,
+            sessionId: session.sessionId,
+            error: { kind: "schema", message: "结构化输出解析失败（非纯 JSON）" },
+          }
+        }
+      }
+
+      return {
+        status: "ok",
+        output: { type: "text", value: text },
+        usage,
+        sessionId: session.sessionId,
+      }
+    } catch (e) {
+      // pi 侧 abort 后 prompt 的异常形态：cancelled 优先
+      if (cancelled || request.signal?.aborted) {
+        return { status: "cancelled", output: { type: "text", value: "" }, sessionId: session.sessionId }
+      }
+      return fail("unknown", String((e as Error)?.message ?? e), session.sessionId)
+    } finally {
+      this.inflight.delete(ctx.executionId)
+    }
+  }
+
+  /** 幂等；未知 id 静默成功（契约 §2） */
+  async cancel(executionId: string): Promise<void> {
+    const session = this.inflight.get(executionId)
+    if (session) await session.abort()
+  }
+}
+
+function fail(kind: NonNullable<AgentResult["error"]>["kind"], message: string, sessionId = ""): AgentResult {
+  return {
+    status: "error",
+    output: { type: "text", value: "" },
+    sessionId,
+    error: { kind, message },
+  }
+}
