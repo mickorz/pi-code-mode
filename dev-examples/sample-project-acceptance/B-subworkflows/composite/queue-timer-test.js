@@ -2,9 +2,9 @@
 export const meta = { name: 'queue_timer', description: '排队计时修复验收' }
 phase('排队演示')
 const rs = await parallel([
-  () => agent('慢慢分析这个目录的文件结构，写 100 字', { label: '慢1' }),
-  () => agent('慢慢分析这个目录的依赖关系，写 100 字', { label: '慢2' }),
-  () => agent('慢慢分析这个目录的模块划分，写 100 字', { label: '慢3' }),
-  () => agent('慢慢分析这个目录的配置文件，写 100 字', { label: '慢4' }),
+  () => agent('用 100 字说明文件系统目录树的概念，不要读取任何文件', { label: '慢1' }),
+  () => agent('用 100 字说明软件依赖关系的概念，不要读取任何文件', { label: '慢2' }),
+  () => agent('用 100 字说明软件模块划分的原则，不要读取任何文件', { label: '慢3' }),
+  () => agent('用 100 字说明配置文件的作用，不要读取任何文件', { label: '慢4' }),
 ])
 return rs.length
