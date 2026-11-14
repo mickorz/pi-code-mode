@@ -8,6 +8,7 @@
 |---|---|---|---|---|---|---|---|
 | REF-001 | opencode-dynamic-workflows | git@github.com:mickorz/opencode-dynamicworkflows.git | thirdparties/opencode-dynamic-workflows | 7f6e93abb4ff993bbcc4dd8ebb7a66e47b1f9170 | MIT | 功能蓝图：runtime 引擎与 DSL 设计移植到本包（保留版权声明） | 2026-11-14 引入。opencode 版动态工作流插件，本包的引擎层移植来源；其 examples/sample-project 是本包验收测试集 |
 | REF-002 | pi-dynamic-workflows | https://github.com/QuintinShaw/pi-dynamic-workflows.git | thirdparties/pi-dynamic-workflows | 3f0d7e1c1b75536595e5a8bdcd69b5bd615a28ea | MIT | 集成范本：pi 平台接入方式（package manifest、createAgentSession 子会话、pi-tui widget）参考实现 | 2026-11-14 引入。pi 版动态工作流插件，本包的平台适配层参考来源 |
+| REF-003 | vercel-workflow | https://github.com/vercel/workflow.git | thirdparties/vercel-workflow | b1f92691b（HEAD 浮动，待固定窗口核定） | Apache-2.0 | 方法论参考：durable execution 工作流编排（hook/step 持久化语义、run 状态管理）；只读研究，集成前再评估 | 2026-11-14 引入。vercel 官方 AI 工作流编排 SDK，为 pi-code-mode 的 M2+ 恢复语义与后台 run 管理提供外部对照 |
 
 ## Submodule 引入与登记流程
 
