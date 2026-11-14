@@ -86,17 +86,17 @@ test("契约: 取消在途执行（signal 触发 Adapter 返回 cancelled 终态
   assert.equal(r.status, "cancelled");
 });
 
-test("契约: execute 超时由 Engine 计时收尾（复用取消通道）", async () => {
+test("契约: execute 超时由 Engine 计时收尾（signal 中止时提前返回 cancelled）", async () => {
   const adapter = new MockAgentAdapter({
     latencyMs: 200,
     default: { status: "ok", output: { type: "text", value: "late" }, sessionId: "s" },
   });
-  // Engine 侧: timeoutMs 到点 abort signal, promise race 收尾
+  // Engine 侧: timeoutMs 到点 abort signal; Adapter 响应 signal 提前返回 cancelled（不等 latency 走完）
   const ac = new AbortController();
   setTimeout(() => ac.abort(), 30);
-  const winner = await Promise.race([
-    adapter.execute({ ...REQ(), signal: ac.signal } as any, { executionId: randomUUID(), runId: "r" }),
-    new Promise<"engine-timeout">((r) => setTimeout(() => r("engine-timeout"), 60)),
-  ]);
-  assert.equal(winner, "engine-timeout");
+  const t0 = Date.now();
+  const r = await adapter.execute({ ...REQ(), signal: ac.signal } as any, { executionId: randomUUID(), runId: "r" });
+  const elapsed = Date.now() - t0;
+  assert.equal(r.status, "cancelled");
+  assert.ok(elapsed < 100, `应在 abort 后提前返回（实际 ${elapsed}ms，不应等满 latency 200ms）`);
 });

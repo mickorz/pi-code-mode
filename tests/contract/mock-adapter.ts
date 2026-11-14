@@ -22,7 +22,26 @@ export class MockAgentAdapter {
 
   async execute(request: AgentRequest, ctx: { executionId: string }): Promise<AgentResult> {
     this.calls.push({ request, ctx });
-    if (this.script.latencyMs) await new Promise((r) => setTimeout(r, this.script.latencyMs));
+    // 契约行为: signal 中止时返回 cancelled 终态（对齐 PiAgentAdapter 的取消语义）
+    if (request.signal?.aborted) {
+      return { status: "cancelled", output: { type: "text", value: "" }, sessionId: `mock-${ctx.executionId}` };
+    }
+    if (this.script.latencyMs) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, this.script.latencyMs);
+        request.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      if (request.signal?.aborted) {
+        return { status: "cancelled", output: { type: "text", value: "" }, sessionId: `mock-${ctx.executionId}` };
+      }
+    }
     const preset = this.script.byExecutionId?.[ctx.executionId] ?? this.script.default;
     if (!preset) throw new Error(`Mock script missing entry for ${ctx.executionId}`);
     if (this.settled.has(ctx.executionId)) {
