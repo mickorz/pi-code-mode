@@ -18,7 +18,7 @@ import { ScheduleRuntime } from "../src/engine/schedule/runtime.js"
 import { loadModelTiers } from "../src/engine/agent/model-tiers.js"
 import { PiAgentAdapter } from "../src/adapter/pi-agent-adapter.js"
 import { loadRegistry } from "../src/engine/runtime/workflow-registry.js"
-import { makeWorkflowTool, makeWorkflowControlTool, type WorkflowToolDeps } from "../src/tools/workflow-tools.js"
+import { makeWorkflowTool, makeWorkflowControlTool, parseWorkflowsRunArgs, type WorkflowToolDeps } from "../src/tools/workflow-tools.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 
 const runManager = new RunManager(16)
@@ -125,11 +125,25 @@ export default function extension(pi: ExtensionAPI): void {
     },
   })
 
-  // /workflows：列出注册表工作流与最近运行（M2）
+  // /workflows：无参数列出注册表工作流与最近运行（M2）；run 子命令后台执行脚本，结果经 deliver 回传会话
   pi.registerCommand("workflows", {
-    description: "列出已注册的 workflow 与最近运行状态",
-    handler: async (_name: string, ctx: any) => {
+    description: "列出已注册 workflow 与最近运行；run 子命令: /workflows run <脚本路径|注册表名> [key=value ...]",
+    handler: async (args: string, ctx: any) => {
       const cwd = ctx.cwd ?? process.cwd()
+      const argv = args.trim().split(/\s+/).filter(Boolean)
+      if (argv[0] === "run") {
+        const parsed = parseWorkflowsRunArgs(argv.slice(1))
+        if (parsed.error || !parsed.scriptPath) {
+          ctx.ui.notify(parsed.error ?? "用法: /workflows run <脚本路径|注册表名> [key=value ...]", "warning")
+          return
+        }
+        // 复用 workflow 工具同一执行链（脚本解析/校验/journal/RunManager）；
+        // 命令层固定后台执行：前台会阻塞 TUI 数分钟，后台立返 runId，进度走 widget、结果经 deliver 回传
+        const tool = makeWorkflowTool({ ...makeDeps(cwd), deliver })
+        const r = await tool.execute("cmd", { scriptPath: parsed.scriptPath, args: parsed.args, background: true }, undefined, undefined, ctx)
+        ctx.ui.notify((r as any).content[0].text, "info")
+        return
+      }
       const lines: string[] = []
       try {
         const registry = loadRegistry(cwd)

@@ -49,6 +49,33 @@ function renderRunStatus(run: ReturnType<RunManager["status"]>): string {
   return lines.join("\n")
 }
 
+/**
+ * /workflows run 子命令参数解析：首个 token 为脚本路径或注册表工作流名，
+ * 其余 token 按 key=value 收进 args（值能 JSON.parse 则转类型，否则保持字符串）。
+ * 纯函数，命令层与测试共用。
+ */
+export function parseWorkflowsRunArgs(
+  argv: string[],
+): { scriptPath?: string; args?: Record<string, unknown>; error?: string } {
+  const [scriptPath, ...rest] = argv
+  if (!scriptPath) return { error: "缺少脚本路径或注册表工作流名" }
+  const args: Record<string, unknown> | undefined = rest.length ? {} : undefined
+  for (const token of rest) {
+    const eq = token.indexOf("=")
+    if (eq <= 0) return { error: `参数 "${token}" 不是 key=value 形式` }
+    const key = token.slice(0, eq)
+    const raw = token.slice(eq + 1)
+    let value: unknown = raw
+    try {
+      value = JSON.parse(raw)
+    } catch {
+      // 非 JSON 字面量保持字符串原样
+    }
+    args![key] = value
+  }
+  return { scriptPath, args }
+}
+
 /** workflow 工具定义（前台阻塞执行 + RunManager 注册供 workflow_control 查询/取消） */
 export function makeWorkflowTool(deps: WorkflowToolDeps) {
   const cwd = deps.cwd ?? process.cwd()
