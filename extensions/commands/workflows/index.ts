@@ -16,6 +16,7 @@ import { statusSubcommand } from "./status.js"
 import { cancelSubcommand } from "./cancel.js"
 import { registerSubcommand, unregisterSubcommand } from "./register.js"
 import { uiSubcommand } from "./navigator/index.js"
+import { watchSubcommand } from "./watch.js"
 import type { Subcommand, WorkflowsCommandDeps } from "./types.js"
 
 /** 路由表：cancel/stop、register/reg、unregister/unreg 为同义别名，各指向同一实现 */
@@ -30,6 +31,7 @@ const subcommands: Record<string, Subcommand> = {
   unregister: unregisterSubcommand,
   unreg: unregisterSubcommand,
   ui: uiSubcommand,
+  watch: watchSubcommand,
 }
 
 /** 帮助面板：固定首行 + 路由表 usage 行（同义子命令按实现对象去重） */
@@ -47,7 +49,7 @@ function helpText(): string {
 export function registerWorkflowsCommand(pi: ExtensionAPI, deps: WorkflowsCommandDeps): void {
   pi.registerCommand("workflows", {
     description:
-      "workflow 命令入口（无参数显示帮助）；ui 打开 Navigator 全屏面板；list 列出注册表；register|reg 注册脚本；unregister|unreg 注销；run <路径|名> [k=v...] 后台执行；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
+      "workflow 命令入口（无参数显示帮助）；ui 打开 Navigator 全屏面板；watch <runId> 单 run 专注视图；list 列出注册表；register|reg 注册脚本；unregister|unreg 注销；run <路径|名> [k=v...] 后台执行；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
     handler: async (args: string, ctx: any) => {
       const argv = args.trim().split(/\s+/).filter(Boolean)
       if (!argv.length) {

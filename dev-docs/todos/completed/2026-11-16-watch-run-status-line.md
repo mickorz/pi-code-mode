@@ -1,7 +1,14 @@
-# watchRun 式单 run 专注视图（P1）
+# watchRun 式单 run 专注视图（P1）—— 代码落地（2026-11-16），TUI 手工验收待执行
 
-> 状态：待启动　|　依据：TUI 能力对比文档 §2.3（小成本高感知）、2026-11-16 决策确认
-> 参考：`thirdparties/pi-dynamic-workflows/src/workflow-commands.ts` watchRun（:63-102，只读）
+> 状态：**代码完成，待 TUI 手工验收**　|　参考：`thirdparties/pi-dynamic-workflows/src/workflow-commands.ts` watchRun（只读）
+>
+> 落地：`extensions/commands/workflows/watch.ts`（watchRun 核心 + watch 子命令，路由表已接入）；
+> RunManager 事件驱动（progress 刷新单行、finished/stopped 收尾）；防泄漏三件套（settled + 退订 + 状态行必清理）；
+> watchRun 进程内幂等（watching 表 + resetWatchState 测试辅助）；终态详情 renderRunStatus 回传会话；
+> 非交互模式（hasUI=false）拒绝并提示替代命令；契约测试 5 例全绿。
+>
+> 裁剪说明：`/workflows run` 提交后不自动 watch（widget 已有全局汇总，保持显式关注语义）；
+> 多 run 并存 watch 依赖宿主 setStatus 多 key 能力，TUI 验收时确认。
 
 ## 目标
 
