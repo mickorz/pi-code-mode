@@ -116,6 +116,16 @@ pi install $REPO
 - 干净房间测试（跳过全部已装扩展，避免 billion-context 端口轮换干扰）：`pi -ne -e $REPO`。
 - 并发两个 pi 会话时 bili 代理（127.0.0.1:18787）会端口冲突，解法：关一个 / `ACP_PORT=18799` 起新会话 / `BILI_PI_INLINE=1`（不起代理）。
 
+## extensions 命令开发规范（强制）
+
+斜杠命令实现一律放 `extensions/commands/`，主入口 `extensions/pi-code-mode.ts` 只做装配（单例创建、依赖组装、工具注册、命令与 widget 挂载），不写命令逻辑：
+
+1. **一命令一文件/目录**：简单命令 `commands/<命令名>.ts`，导出 `registerXxxCommand(pi, deps)` 工厂；有子命令的命令用目录 `commands/<命令名>/`。Windows 下目录与同名 .ts 不能共存，目录形态入口必须 `index.ts`。
+2. **目录形态结构**：`index.ts` 路由表分发（无参数显示帮助、未知子命令报 usage）+ `types.ts` 契约（`Subcommand { usage, run(argv, ctx, deps) }`）+ 每子命令一文件；帮助面板从路由表 usage 行自动生成，同义别名指向同一实现对象自动去重。
+3. **命令不持全局态**：runManager 等单例由主入口创建，经 deps 显式注入；命令需要复用工具执行链时构造对应工具工厂调用（参考 workflows/run.ts 转发 workflow 工具）。
+4. **新增命令三步**：`commands/` 加文件（子命令 = 新文件 + index 路由表一行）→ 主入口一行接入 → `tests/contract/` 补路由/解析用例（无模型，fake pi + 真 RunManager）。
+5. **架构守卫**：`tests/contract/commands-structure.test.ts` 强制检查「每个命令被主入口装配、每个子命令文件被 index 路由引用」，漏接即测试失败——新增文件后先跑 `npm run test:contract`。
+
 ## 专项约定：pi 插件与工作流联调测试
 
 本项目是 pi agent 插件（workflow 编排引擎），联调测试涉及真实模型调用：
