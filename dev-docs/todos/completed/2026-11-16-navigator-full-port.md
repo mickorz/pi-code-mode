@@ -1,7 +1,14 @@
-# Navigator 全屏交互面板完整复刻（P0）
+# Navigator 全屏交互面板完整复刻（P0）—— 代码落地（2026-11-16），TUI 手工验收待执行
 
-> 状态：待启动　|　决策记录：2026-11-16（对比文档 §2.1，弃最小版改完整复刻）
-> 参考：`thirdparties/pi-dynamic-workflows/src/workflow-ui.ts`（~2400 行，只读）
+> 状态：**代码完成，待 TUI 手工验收**　|　参考：`thirdparties/pi-dynamic-workflows/src/workflow-ui.ts`（只读）
+>
+> 落地：`extensions/commands/workflows/navigator/`（keys/model/render/index 四文件），`/workflows ui` 打开；
+> overlay 通道 ctx.ui.custom（94%/92%/center）、四视图（runs/detail/saved/savedDetail）、
+> 三输入态（browse/filter/confirm 三重绑定）、盒式边框+主题+ANSI 感知截断（pi-tui 工具）、
+> 实时刷新复用 RunManager 事件出口；契约测试 10 例全绿。
+>
+> 裁剪说明：rename/save/pause/restart 等参考项目专属能力不适用（对比文档 §3）；
+> 跨会话历史 runs（journal 目录）未纳入，后续可在 runs 视图追加 journal 快照读取。
 
 ## 目标
 
