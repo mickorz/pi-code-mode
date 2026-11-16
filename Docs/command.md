@@ -6,7 +6,8 @@
 
 把 `/workflows` 想象成一个**后台车间的窗口**：
 
-- 裸命令 `/workflows` ≈ **仪表盘**：一眼看到车间里登记了哪些生产线（已注册工作流）、最近跑完了哪些订单（最近运行）。
+- `/workflows` ≈ **车间总控台的帮助面板**：列出这张控制台上所有可用的按钮。
+- `/workflows list` ≈ **仪表盘**：一眼看到车间里登记了哪些生产线（已注册工作流）、最近跑完了哪些订单（最近运行，含全部 runId）。
 - `/workflows run xxx.js` ≈ **投一张派工单**：立刻拿到工单号（runId），车间照图纸（脚本）自动流水作业，你不用守在车间；完工后成品会自动送回你的会话（结果回传），全过程记录归档（journal 落盘）。
 - `workflow_control` 工具 ≈ **车间控制台**：随时查看订单进度（status）、按下停机按钮（stop）；停机不报废——已完成工序记录在案，凭工单号可从断点续跑（resumeFromRunId）。
 
@@ -14,8 +15,8 @@
 
 | 命令 | 作用 | 执行方式 |
 |------|------|----------|
-| `/workflows` | 列出已注册工作流与最近运行状态（含全部 runId） | 立即返回 |
-| `/workflows list` | 同上（裸命令的显式别名） | 立即返回 |
+| `/workflows` | 显示所有子命令帮助 | 立即返回 |
+| `/workflows list` | 列出已注册工作流与最近运行状态（含全部 runId） | 立即返回 |
 | `/workflows run <脚本路径>` | 后台执行指定脚本 | 立即返回 runId，后台运行 |
 | `/workflows run <注册表名>` | 按注册表名执行（等价于脚本路径） | 同上 |
 | `/workflows run <路径或名> key=value ...` | 带参数执行，参数暴露给脚本的 `args` 全局 | 同上 |
@@ -26,13 +27,14 @@
 
 ## 各命令详解
 
-### 1. `/workflows` —— 查看状态
+### 1. `/workflows` / `/workflows list` —— 帮助与查看状态
 
 ```
-/workflows
+/workflows          显示所有子命令帮助（不传任何参数时的默认行为）
+/workflows list     列出已注册工作流与最近运行
 ```
 
-输出两部分：
+`/workflows list` 输出两部分：
 
 - **已注册工作流**：pi 启动时从 `.pi/workflows/`（及兼容目录 `.opencode-workflows/workflows/`）扫描注册的脚本，每行显示 `工作流名  描述`；
 - **最近运行**：本进程内的全部运行（在途 + 最近终态），每行显示 `状态  runId（标签）agents=数量`。
@@ -80,7 +82,7 @@
 心智模型很简单：**带 runId 操作单个，不带 runId 操作全部在途**。`cancel` 与 `stop` 完全同义，记哪个都行。
 
 - **停止不是报废**：停止时会一并取消在飞子会话，但 journal 保留；之后在对话里说「从 runId=xxx 续跑」（模型调 `workflow(resumeFromRunId=...)`）即可断点续跑，已完成节点零成本回放，只重跑变更后的节点。
-- 若 runId 不存在或已终态，命令会提示并用裸 `/workflows` 查看全部 runId。
+- 若 runId 不存在或已终态，命令会提示并用 `/workflows list` 查看全部 runId。
 
 ### 5. 配套工具：workflow_control
 

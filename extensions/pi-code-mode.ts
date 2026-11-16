@@ -125,22 +125,27 @@ export default function extension(pi: ExtensionAPI): void {
     },
   })
 
-  // /workflows：无参数（或 list）列出注册表工作流与最近运行（M2）；
-  // run/status/cancel|stop 子命令：后台执行、查详情、停单个/全部在途（结果与停止后经 deliver/runManager 回传或续跑）
+  // /workflows：无参数显示帮助；list 列出注册表工作流与最近运行（M2）；
+  // run/status/cancel|stop 子命令：后台执行、查详情、停单个/全部在途
   pi.registerCommand("workflows", {
     description:
-      "列出已注册 workflow 与最近运行；子命令: run <路径|名> [k=v...] 后台执行 / status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
+      "workflow 命令入口（无参数显示帮助）；list 列出已注册 workflow 与最近运行；run <路径|名> [k=v...] 后台执行；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
     handler: async (args: string, ctx: any) => {
       const cwd = ctx.cwd ?? process.cwd()
       const argv = args.trim().split(/\s+/).filter(Boolean)
       const usage = [
-        "用法:",
-        "  /workflows                             列出注册表工作流与最近运行（= list）",
+        "workflow 子命令:",
+        "  /workflows                             显示本帮助",
+        "  /workflows list                        列出注册表工作流与最近运行（含全部 runId）",
         "  /workflows run <路径|注册表名> [k=v...]  后台执行脚本，结果自动回传会话",
         "  /workflows status <runId>              查看某次运行详情",
         "  /workflows cancel <runId>              停止某次运行（= stop <runId>；journal 保留可续跑）",
         "  /workflows cancel                      停止全部在途运行（= stop）",
       ].join("\n")
+      if (!argv.length) {
+        ctx.ui.notify(usage, "info")
+        return
+      }
       if (argv[0] === "run") {
         const parsed = parseWorkflowsRunArgs(argv.slice(1))
         if (parsed.error || !parsed.scriptPath) {
@@ -156,7 +161,7 @@ export default function extension(pi: ExtensionAPI): void {
       }
       if (argv[0] === "status") {
         if (!argv[1]) {
-          ctx.ui.notify("用法: /workflows status <runId>；全部运行用 /workflows 或 /workflows list 查看", "warning")
+          ctx.ui.notify("用法: /workflows status <runId>；全部运行用 /workflows list 查看", "warning")
           return
         }
         ctx.ui.notify(renderRunStatus(runManager.status(argv[1])), "info")
@@ -169,7 +174,7 @@ export default function extension(pi: ExtensionAPI): void {
           ctx.ui.notify(
             ok
               ? `已停止 ${argv[1]}（在飞子会话一并取消）。已完成部分在 journal 中，可让模型用 workflow(resumeFromRunId="${argv[1]}") 续跑。`
-              : `未找到运行中的 run: ${argv[1]}（可能已完成、已停止或不存在）；用 /workflows 查看。`,
+              : `未找到运行中的 run: ${argv[1]}（可能已完成、已停止或不存在）；用 /workflows list 查看。`,
             ok ? "info" : "warning",
           )
           return
@@ -184,7 +189,7 @@ export default function extension(pi: ExtensionAPI): void {
         ctx.ui.notify(`已停止全部在途运行（${stopped}/${running.length}），journal 均保留可续跑`, "info")
         return
       }
-      if (argv.length && argv[0] !== "list") {
+      if (argv[0] !== "list") {
         ctx.ui.notify(`未知子命令: ${argv[0]}\n${usage}`, "warning")
         return
       }
