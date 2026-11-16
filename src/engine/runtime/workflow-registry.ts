@@ -2,11 +2,12 @@
  * Workflow Registry（P1 目录扫描；P2 起双模式）
  *
  * manifest 模式（显式注册，唯一管理入口）：<项目>/.pi/workflows/register.json
- *   - 由 /workflows register|unregister 指令写入（extensions/commands/workflows/register.ts），
- *     注册的工作流配置统一收敛在该文件，脚本副本统一存 .pi/workflows/workflows/
- *   - 条目：{ id, name, description?, file, sourcePath?, registeredAt }，file 为项目相对路径
+ *   - 由 /workflows register|unregister 指令写入（extensions/commands/workflows/register.ts）
+ *   - 注册不复制脚本：脚本保持原位，manifest 只记录其路径（file，项目相对优先、绝对兑底）
+ *   - 条目：{ id, name, description?, file, registeredAt }
  *   - manifest 文件存在即生效（排他）：目录扫描关闭——只能通过指令注册/移除
  *   - loadRegistry 不重新 parse 脚本（id/名称在 manifest 中显式存储）；脚本错误在注册时校验、执行时暴露
+ *   - 源文件移动/删除后 run 会报不可读，需重新 register
  *
  * fallback 模式（兼容存量）：manifest 文件不存在时按旧语义扫描 .opencode-workflows/workflows/*.js
  *
@@ -26,14 +27,12 @@ export interface RegisteredWorkflow {
   filePath: string
 }
 
-/** manifest 条目（register.json 内的持久化形态；file 为项目相对路径，兼容 / 分隔） */
+/** manifest 条目（register.json 内的持久化形态；file 为原位脚本路径，项目相对优先、绝对兑底，/ 分隔） */
 export interface ManifestEntry {
   id: string
   name: string
   description?: string
   file: string
-  /** 注册时的源脚本路径（追溯用，运行不依赖） */
-  sourcePath?: string
   registeredAt: string
 }
 
@@ -46,13 +45,9 @@ export function workflowsDir(directory: string): string {
   return path.join(directory, ".opencode-workflows", "workflows")
 }
 
-/** manifest 位置（pi 约定 .pi/workflows/）与受管脚本副本目录 */
+/** manifest 位置（pi 约定 .pi/workflows/） */
 export function registerJsonPath(directory: string): string {
   return path.join(directory, ".pi", "workflows", "register.json")
-}
-
-export function managedWorkflowsDir(directory: string): string {
-  return path.join(directory, ".pi", "workflows", "workflows")
 }
 
 /** 读 manifest；文件不存在返回 null（fallback 目录扫描），JSON 损坏/结构非法上抛根因 */

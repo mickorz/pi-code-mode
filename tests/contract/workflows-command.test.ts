@@ -105,7 +105,7 @@ test("路由: dispatch 到子命令（status 缺参 / cancel 无在途）", asyn
 
 // ---- register / unregister 子命令（真实临时目录文件系统，无模型） ----
 
-import { registerJsonPath, managedWorkflowsDir } from "../../src/engine/runtime/workflow-registry.js";
+import { registerJsonPath } from "../../src/engine/runtime/workflow-registry.js";
 
 const DEMO_SCRIPT = `export const meta = { id: "demo_wf", name: "demo_wf", description: "demo" }\nreturn { ok: true }`;
 
@@ -116,23 +116,29 @@ function makeProject() {
   return { projectDir, notifications, ctx, pi };
 }
 
-test("register: 校验+副本落盘+manifest 记录, 注册表可见; unregister 按 id 移除", async () => {
+test("register: 校验+manifest 记录原位路径(不复制), unregister 按 id 移除", async () => {
   const { projectDir, notifications, ctx } = makeProject();
   const deps = makeDepsStub();
-  const src = path.join(projectDir, "demo.js");
+  const src = path.join(projectDir, "sub", "demo.js"); // 子目录源文件，验证相对路径记录
+  fs.mkdirSync(path.dirname(src));
   fs.writeFileSync(src, DEMO_SCRIPT);
 
-  await registerSubcommand.run(["demo.js"], ctx, deps);
+  await registerSubcommand.run(["sub/demo.js"], ctx, deps);
   assert.match(notifications.at(-1)!.text, /已注册 workflow "demo_wf"/);
+  assert.match(notifications.at(-1)!.text, /脚本保持原位/);
   const manifest = JSON.parse(fs.readFileSync(registerJsonPath(projectDir), "utf-8"));
   assert.equal(manifest.workflows[0].id, "demo_wf");
-  assert.ok(fs.existsSync(path.join(projectDir, manifest.workflows[0].file))); // 副本在受管目录
-  assert.ok(loadRegistry(projectDir).has("demo_wf"));
+  assert.equal(manifest.workflows[0].file, "sub/demo.js"); // 原位相对路径, 非受管副本
+  assert.ok(fs.existsSync(src)); // 源文件未动
+  assert.ok(!fs.existsSync(path.join(projectDir, ".pi", "workflows", "workflows"))); // 不再产生副本目录
+  const reg = loadRegistry(projectDir);
+  assert.equal(reg.get("demo_wf")!.filePath, path.resolve(projectDir, "sub", "demo.js"));
 
   await unregisterSubcommand.run(["demo_wf"], ctx, deps); // 按 id 移除
   assert.match(notifications.at(-1)!.text, /已注销/);
+  assert.match(notifications.at(-1)!.text, /保留不动/);
   assert.equal(loadRegistry(projectDir).size, 0);
-  assert.equal(fs.readdirSync(managedWorkflowsDir(projectDir)).length, 0); // 副本同步删除
+  assert.ok(fs.existsSync(src)); // 源文件保留
 
   await unregisterSubcommand.run(["demo_wf"], ctx, deps); // 再删一次 -> 未找到
   assert.match(notifications.at(-1)!.text, /未找到/);

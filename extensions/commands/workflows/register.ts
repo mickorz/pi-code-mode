@@ -1,9 +1,10 @@
 /**
  * /workflows register|reg 与 unregister|unreg 子命令。
  *
- * 注册表 = <项目>/.pi/workflows/register.json（配置统一收敛），脚本副本统一存 .pi/workflows/workflows/<id>.js：
- *   register   校验脚本（meta 信封）→ 副本落盘 → manifest 追加条目（id 冲突拒绝）
- *   unregister manifest 移除条目 + 删除副本；按 id 或副本文件名匹配
+ * 注册表 = <项目>/.pi/workflows/register.json（配置统一收敛）；注册不复制脚本，脚本保持原位，
+ * manifest 只记录其路径（file：项目相对优先、绝对兑底；源文件移动/删除后需重新 register）。
+ *   register   校验脚本（meta 信封）→ id 冲突检查 → manifest 追加条目
+ *   unregister  manifest 移除条目；按 id 或原位路径 basename 匹配
  *
  * 双模式边界（与 loadRegistry 对齐）：register.json 存在即排他（只能通过指令注册/移除，
  * 手工放置的文件不生效）；manifest 不存在时项目处于旧目录扫描模式，unregister 保留
@@ -17,7 +18,6 @@ import {
   addToManifest,
   loadManifest,
   loadRegistry,
-  managedWorkflowsDir,
   removeFromManifest,
   workflowsDir,
   type ManifestEntry,
@@ -54,33 +54,27 @@ export const registerSubcommand: Subcommand = {
       ctx.ui.notify(`workflowId "${workflowId}" 已被占用: ${existing.filePath}（改名 meta.id/meta.name 后重试）`, "warning")
       return
     }
-    // 副本落盘：统一 .pi/workflows/workflows/<id>.js（file 字段存项目相对路径，/ 分隔利于跨机）
-    const safeId = workflowId.replace(/[^\w.-]/g, "_")
-    const storeRel = `.pi/workflows/workflows/${safeId}.js`
-    const storeAbs = path.resolve(cwd, storeRel)
-    if (fs.existsSync(storeAbs)) {
-      ctx.ui.notify(`受管副本已存在: ${storeAbs}（重命名 meta.id 或先 unregister）`, "warning")
-      return
-    }
-    fs.mkdirSync(path.dirname(storeAbs), { recursive: true })
-    fs.copyFileSync(srcPath, storeAbs)
+    // 不复制：脚本保持原位，file 记录原位路径（项目相对优先，绝对兑底，/ 分隔利于跨机）
+    const rel = path.relative(cwd, srcPath)
+    const fileField = path.isAbsolute(rel) || rel.startsWith("..") ? srcPath : rel.replace(/\\/g, "/")
     const entry: ManifestEntry = {
       id: workflowId,
       name: meta.name,
       description: meta.description,
-      file: storeRel,
-      sourcePath: srcPath,
+      file: fileField,
       registeredAt: new Date().toISOString(),
     }
     try {
       addToManifest(cwd, entry)
     } catch (e) {
-      // manifest 写入失败回滚副本，不留孤儿文件
-      fs.unlinkSync(storeAbs)
       ctx.ui.notify(`注册失败: ${String((e as Error)?.message ?? e)}`, "warning")
       return
     }
-    ctx.ui.notify(`已注册 workflow "${workflowId}"（配置 ${path.resolve(cwd, ".pi/workflows/register.json")}）；/workflows list 查看，执行用 /workflows run ${workflowId}`, "info")
+    ctx.ui.notify(
+      `已注册 workflow "${workflowId}"（配置 ${path.resolve(cwd, ".pi/workflows/register.json")}，脚本保持原位 ${srcPath}）。` +
+        `移动或删除源文件后需重新 register；/workflows list 查看，执行用 /workflows run ${workflowId}`,
+      "info",
+    )
   },
 }
 
@@ -108,9 +102,7 @@ export const unregisterSubcommand: Subcommand = {
         return
       }
       removeFromManifest(cwd, entry.id)
-      const storeAbs = path.resolve(cwd, entry.file)
-      if (fs.existsSync(storeAbs)) fs.unlinkSync(storeAbs)
-      ctx.ui.notify(`已注销 workflow "${entry.id}"（manifest 条目与副本 ${storeAbs} 均已移除）`, "info")
+      ctx.ui.notify(`已注销 workflow "${entry.id}"（已从 register.json 移除，原位脚本 ${path.resolve(cwd, entry.file)} 保留不动）`, "info")
       return
     }
 

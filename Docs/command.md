@@ -50,8 +50,8 @@
 /workflows unreg demo_wf                 unreg 为 unregister 同义词
 ```
 
-- **register**：校验脚本 meta 信封 → 检查 workflowId（`meta.id ?? meta.name`）冲突 → 脚本副本复制到 `.pi/workflows/workflows/<id>.js` → 配置条目写入 `.pi/workflows/register.json`。源文件后续删除不影响执行（副本自包含）。
-- **unregister**：从 register.json 移除条目并删除副本；按 workflowId 或副本文件名匹配。
+- **register**：校验脚本 meta 信封 → 检查 workflowId（`meta.id ?? meta.name`）冲突 → 配置条目写入 `.pi/workflows/register.json`。**不复制脚本**：manifest 只记录原位路径（项目相对优先、绝对兑底），源文件移动或删除后 run 会报不可读，需重新 register。
+- **unregister**：从 register.json 移除条目（原位脚本保留不动）；按 workflowId 或原位路径文件名匹配。
 - **排他边界**：一旦项目存在 register.json，注册表就以它为唯一事实源——手工往兼容目录放文件不会被识别，注册/移除只能通过这两个指令。
 - **兼容**：没有 register.json 的存量项目仍按旧目录扫描行为工作，可用 `reg` 把脚本纳入 manifest 管理。
 
