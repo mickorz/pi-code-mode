@@ -14,10 +14,15 @@
 
 | 命令 | 作用 | 执行方式 |
 |------|------|----------|
-| `/workflows` | 列出已注册工作流与最近运行状态 | 立即返回 |
+| `/workflows` | 列出已注册工作流与最近运行状态（含全部 runId） | 立即返回 |
+| `/workflows list` | 同上（裸命令的显式别名） | 立即返回 |
 | `/workflows run <脚本路径>` | 后台执行指定脚本 | 立即返回 runId，后台运行 |
 | `/workflows run <注册表名>` | 按注册表名执行（等价于脚本路径） | 同上 |
 | `/workflows run <路径或名> key=value ...` | 带参数执行，参数暴露给脚本的 `args` 全局 | 同上 |
+| `/workflows status <runId>` | 查看某次运行详情（节点状态/耗时/错误/结果预览） | 立即返回 |
+| `/workflows cancel <runId>` | 停止某次运行（在飞子会话一并取消；journal 保留可续跑） | 立即返回 |
+| `/workflows cancel` | 停止**全部在途**运行 | 立即返回 |
+| `/workflows stop ...` | `cancel` 的同义词，用法完全一致 | 立即返回 |
 
 ## 各命令详解
 
@@ -63,15 +68,29 @@
 - 值若能按 JSON 解析则自动转类型（`3` 转 number、`true` 转 boolean、`["a","b"]` 转 array），否则保持字符串（如 `topic=性能`）；
 - 全部收进 `args` 对象，脚本内通过全局 `args` 读取（如 `args.topic`）。
 
-### 4. 配套控制：workflow_control 工具
+### 4. `/workflows status <runId>` / `cancel` / `stop` —— 查看与控制
 
-`/workflows run` 提交后在对话中直接对模型说，或让模型调用 `workflow_control` 工具：
+```
+/workflows status run-1794794826036-abc123    查看某次运行详情
+/workflows cancel run-1794794826036-abc123    停止单个运行
+/workflows cancel                             停止全部在途运行
+/workflows stop                               同上（stop 与 cancel 同义）
+```
+
+心智模型很简单：**带 runId 操作单个，不带 runId 操作全部在途**。`cancel` 与 `stop` 完全同义，记哪个都行。
+
+- **停止不是报废**：停止时会一并取消在飞子会话，但 journal 保留；之后在对话里说「从 runId=xxx 续跑」（模型调 `workflow(resumeFromRunId=...)`）即可断点续跑，已完成节点零成本回放，只重跑变更后的节点。
+- 若 runId 不存在或已终态，命令会提示并用裸 `/workflows` 查看全部 runId。
+
+### 5. 配套工具：workflow_control
+
+除斜杠命令外，同样能力可通过对话让模型调用 `workflow_control` 工具完成（适合自然语言场景，如「把所有在途的 workflow 停掉」）：
 
 | 操作 | 说法示例 |
 |------|----------|
-| 查进度 | 「用 workflow_control 查一下 run-xxx 的状态」 |
-| 列出全部 | 「用 workflow_control 列出所有 workflow 运行」 |
-| 停止 | 「停止 run-xxx」（journal 保留） |
+| 查进度 | 「用 workflow_control 查一下 run-xxx 的状态」（= status） |
+| 列出全部 | 「用 workflow_control 列出所有 workflow 运行」（= list） |
+| 停止单个 | 「停止 run-xxx」（= cancel <runId>） |
 | 断点续跑 | 「用 workflow 工具从 runId=run-xxx 续跑」（最长未变前缀零成本回放，只重跑变更后的节点） |
 
 ## 执行模型（时序图）

@@ -30,8 +30,8 @@ export interface WorkflowToolDeps {
   resolveTier?: (tier: string) => string | undefined
 }
 
-/** 渲染 status 详情（agents 各节点状态行） */
-function renderRunStatus(run: ReturnType<RunManager["status"]>): string {
+/** 渲染 status 详情（agents 各节点状态行）；导出供 /workflows status 子命令复用 */
+export function renderRunStatus(run: ReturnType<RunManager["status"]>): string {
   if (!run) return "未找到该 runId（可能从未执行或已超出终态保留窗口）"
   const lines = [
     `runId: ${run.runId}`,
