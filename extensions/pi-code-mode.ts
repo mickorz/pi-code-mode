@@ -92,10 +92,12 @@ function installTaskWidget(pi: ExtensionAPI): void {
 }
 
 export default function extension(pi: ExtensionAPI): void {
-  // 后台 run / schedule run 完成回传主会话（M3 结果回传通道：pi.sendUserMessage）
+  // 后台 run / schedule run / watch 终态完成回传主会话（M3 结果回传通道：pi.sendUserMessage）
   const deliver = async (text: string) => {
     try {
-      await pi.sendUserMessage(text)
+      // Agent 回合处理中时排队为 followUp：默认直接投递会在回合中抛错导致回传丢失
+      // （2026-11-16 实测：watch 终态与 workflow 完成回传竞争时丢 [workflow 完成] 块）
+      await pi.sendUserMessage(text, { deliverAs: "followUp" })
     } catch (e) {
       // 会话已关闭等场景：后台 run 仍继续（对齐 opencode 版"不 kill"语义），回传失败静默
       console.error("[pi-code-mode] 后台结果回传失败:", String((e as Error)?.message ?? e))
