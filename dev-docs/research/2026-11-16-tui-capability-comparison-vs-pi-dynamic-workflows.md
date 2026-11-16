@@ -18,8 +18,8 @@
 
 | # | TUI 能力 | pi-dynamic-workflows | pi-code-mode | 差距评级 |
 |---|----------|---------------------|--------------|----------|
-| 1 | `/workflows` 裸命令 | 打开 **Navigator 全屏交互面板** | 输出文本帮助面板 | **大**（体验代差） |
-| 2 | 交互式 Navigator | overlay 面板（94% 宽/92% 高、右侧边栏锚点、browse/filter/rename/confirm 四态、runs 列表/详情钻取/已保存工作流视图、markdown 渲染、翻页、主题着色） | 无 | **大** |
+| 1 | `/workflows` 裸命令 | 打开 **Navigator 全屏交互面板** | 输出文本帮助面板 | **大**（已决策完整复刻，见 §2.1） |
+| 2 | 交互式 Navigator | overlay 面板（94% 宽/92% 高、右侧边栏锚点、browse/filter/rename/confirm 四态、runs 列表/详情钻取/已保存工作流视图、markdown 渲染、翻页、主题着色） | 无 | **大**（已决策完整复刻，见 §2.1） |
 | 3 | 进度 widget | 事件驱动（agentStart/agentEnd/phase/log/tokenUsage 事件 → 节流发布管线 + 微任务急行道），支持 compact/detailed 面板模式与 maxAgents 截断（设置持久化） | 2s `setInterval` 轮询 `runManager.list()`，单行 `label done/nodes` | **中**（机制代差：轮询 vs 事件） |
 | 4 | watch 状态行 | `ctx.ui.setStatus` 逐事件刷新单行进度，完成自动清理并回传结果 | 无 | **中** |
 | 5 | 结果回传 | `sendMessage({ customType: "workflows", display: true })` 自定义消息类型（宿主可注册专属渲染器） | `pi.sendUserMessage(纯文本)` | **小**（可等价，富渲染欠缺） |
@@ -37,11 +37,21 @@
 
 ## 2. 分项详述（值得追的部分）
 
-### 2.1 Navigator 全屏面板（差距最大，P1 候选）
+### 2.1 Navigator 全屏交互面板（已决策：完整复刻，P0）
 
-参考项目 `openWorkflowNavigator`（workflow-ui.ts，~2400 行）是一个完整的 overlay 组件：宿主 overlay 容器内自绘盒式边框，内部状态机有 browse/filter/rename/confirm 四种模式，视图分 runs 列表 / run 详情钻取 / saved 工作流详情，确认动作绑定上下文（cursor + filter + runId 三重校验防误删），支持右侧边栏锚点。
+> 决策记录（2026-11-16）：原建议为最小版（runs 列表 + 详情 + stop），改为**完整复刻**参考项目 Navigator，不做阉割版。
 
-本仓库对应物只有 `/workflows list`（纯文本）与 `/workflows status`（纯文本）。**建议**：不照搬 2400 行，做最小 Navigator（runs 列表 + 详情 + stop/确认），复用 `renderRunStatus` 渲染。
+复刻范围盘点（源自 `thirdparties/pi-dynamic-workflows/src/workflow-ui.ts`，~2400 行）：
+
+- **overlay 容器接入**：宿主 overlay 组件（94% 宽 / 92% maxHeight、center 或 right-center 60% 侧边栏锚点、margin 1），盒式边框 + 主题着色（accent/borderMuted/customMessageBg），视口高度按终端行数自适应，页脚随 pager 滚动不被截断
+- **状态机**：browse / filter / rename / confirm 四态流转
+- **视图层**：runs 列表、run 详情钻取（绑定不可变 frame runId）、saved 工作流详情（savedIdentity）
+- **确认体系**：ConfirmKind 确认动作 + pending 三重上下文绑定（cursor / filter / runId）防误操作，confirm / cancelConfirmation / executeConfirmed / notifyMutation
+- **渲染**：renderNavigatorFrame + renderCache、markdown 主题渲染、翻页滚动（pager）、truncateToWidth / visibleWidth 宽度感知截断
+- **交互**：act(data) 键盘输入分发
+- **数据源**：listRuns / snapshot——本仓库映射到 RunManager.list/status；已结束 run 的详情需接 journal 快照读取（参考项目走 run-persistence，本仓库机制不同）
+
+移植策略：workflow-ui.ts 与宿主 overlay/theme API 强耦合（ThemeLike/customMessageBg/tui.terminal），采用**逐组件改造移植**而非整文件复制；宿主 API 差异点（overlay options、setWidget、主题色名）先做映射清单再动手。工作分解见 `dev-docs/todos/2026-11-16-navigator-full-port.md`。
 
 ### 2.2 进度 widget 的事件驱动化（机制代差，P0 候选）
 
@@ -81,7 +91,7 @@
 | 优先级 | 项 | 依据 |
 |--------|----|------|
 | P0 | widget 事件驱动化（RunManager 事件回调替换 2s 轮询） | 机制代差 + 空闲开销 |
-| P1 | 最小 Navigator（runs 列表/详情/stop，复用 renderRunStatus） | 体验代差最大项 |
+| P0 | Navigator 全屏面板完整复刻（决策变更：不做最小版，工作分解见 `dev-docs/todos/2026-11-16-navigator-full-port.md`） | 体验代差最大项，已决策完整复刻 |
 | P1 | watchRun 式单 run 状态行（setStatus） | 小成本高感知 |
 | P2 | 回传升级 customType 富渲染 | 锦上添花，需验证 sendUserMessage 语义等价 |
 | P2 | `/workflows rm`（带确认；journal 仍可先归档） | 小 |
