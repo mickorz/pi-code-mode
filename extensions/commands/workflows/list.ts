@@ -14,8 +14,8 @@ export const listSubcommand: Subcommand = {
     try {
       const registry = loadRegistry(cwd)
       if (registry.size) {
-        lines.push(`已注册工作流（${registry.size}，目录 .pi/workflows/ 或兼容目录）:`)
-        for (const [id, wf] of registry) lines.push(`  - ${id}  ${wf.meta?.description ?? ""}`)
+        lines.push(`已注册工作流（${registry.size}，来源 .pi/workflows/register.json 或兼容目录扫描）:`)
+        for (const [id, wf] of registry) lines.push(`  - ${id}  ${wf.description ?? ""}`)
       } else {
         lines.push("注册表为空（项目内未发现可注册的 workflow 脚本）")
       }

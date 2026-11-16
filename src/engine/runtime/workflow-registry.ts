@@ -1,9 +1,16 @@
 /**
- * Workflow Registry（P1）
+ * Workflow Registry（P1 目录扫描；P2 起双模式）
  *
- * 目录约定：<项目>/.opencode-workflows/workflows/*.js
+ * manifest 模式（显式注册，唯一管理入口）：<项目>/.pi/workflows/register.json
+ *   - 由 /workflows register|unregister 指令写入（extensions/commands/workflows/register.ts），
+ *     注册的工作流配置统一收敛在该文件，脚本副本统一存 .pi/workflows/workflows/
+ *   - 条目：{ id, name, description?, file, sourcePath?, registeredAt }，file 为项目相对路径
+ *   - manifest 文件存在即生效（排他）：目录扫描关闭——只能通过指令注册/移除
+ *   - loadRegistry 不重新 parse 脚本（id/名称在 manifest 中显式存储）；脚本错误在注册时校验、执行时暴露
+ *
+ * fallback 模式（兼容存量）：manifest 文件不存在时按旧语义扫描 .opencode-workflows/workflows/*.js
+ *
  * workflowId = meta.id ?? meta.name（与现有脚本格式零冲突）
- *
  * Schedule 只依赖 workflowId，不依赖文件名/LLM 判断（需求文档第 7 节）。
  */
 
@@ -14,16 +21,98 @@ import { parseWorkflowScript } from "./vm.js"
 export interface RegisteredWorkflow {
   id: string
   name: string
+  description?: string
   /** 脚本绝对/项目相对路径 */
   filePath: string
+}
+
+/** manifest 条目（register.json 内的持久化形态；file 为项目相对路径，兼容 / 分隔） */
+export interface ManifestEntry {
+  id: string
+  name: string
+  description?: string
+  file: string
+  /** 注册时的源脚本路径（追溯用，运行不依赖） */
+  sourcePath?: string
+  registeredAt: string
+}
+
+export interface RegistryManifest {
+  version: 1
+  workflows: ManifestEntry[]
 }
 
 export function workflowsDir(directory: string): string {
   return path.join(directory, ".opencode-workflows", "workflows")
 }
 
-/** 扫描 workflows 目录；目录不存在返回空表 */
+/** manifest 位置（pi 约定 .pi/workflows/）与受管脚本副本目录 */
+export function registerJsonPath(directory: string): string {
+  return path.join(directory, ".pi", "workflows", "register.json")
+}
+
+export function managedWorkflowsDir(directory: string): string {
+  return path.join(directory, ".pi", "workflows", "workflows")
+}
+
+/** 读 manifest；文件不存在返回 null（fallback 目录扫描），JSON 损坏/结构非法上抛根因 */
+export function loadManifest(directory: string): RegistryManifest | null {
+  const file = registerJsonPath(directory)
+  if (!fs.existsSync(file)) return null
+  const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as RegistryManifest
+  if (raw.version !== 1 || !Array.isArray(raw.workflows)) {
+    throw new Error(`注册表 ${file} 结构非法（需要 { version: 1, workflows: [] }）`)
+  }
+  return raw
+}
+
+export function saveManifest(directory: string, manifest: RegistryManifest): void {
+  const file = registerJsonPath(directory)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(manifest, null, 2))
+}
+
+/** 追加条目（id 冲突上抛）；调用方负责脚本校验与副本落盘 */
+export function addToManifest(directory: string, entry: ManifestEntry): void {
+  const manifest = loadManifest(directory) ?? { version: 1 as const, workflows: [] }
+  if (manifest.workflows.some((w) => w.id === entry.id)) {
+    throw new Error(`workflowId "${entry.id}" 已注册（先 unregister 再重注册）`)
+  }
+  manifest.workflows.push(entry)
+  saveManifest(directory, manifest)
+}
+
+/** 按 id 移除条目并返回；manifest 不存在或 id 未找到返回 null */
+export function removeFromManifest(directory: string, id: string): ManifestEntry | null {
+  const manifest = loadManifest(directory)
+  if (!manifest) return null
+  const idx = manifest.workflows.findIndex((w) => w.id === id)
+  if (idx < 0) return null
+  const [removed] = manifest.workflows.splice(idx, 1)
+  saveManifest(directory, manifest)
+  return removed
+}
+
 export function loadRegistry(directory: string): Map<string, RegisteredWorkflow> {
+  // manifest 模式：显式注册表为唯一事实源（排他），不做目录扫描
+  const manifest = loadManifest(directory)
+  if (manifest) {
+    const result = new Map<string, RegisteredWorkflow>()
+    for (const entry of manifest.workflows) {
+      const existing = result.get(entry.id)
+      if (existing) {
+        throw new Error(`workflowId "${entry.id}" 在注册表中重复：${existing.filePath} 与 ${entry.file}（register.json 被手工改动，id 必须唯一）`)
+      }
+      result.set(entry.id, {
+        id: entry.id,
+        name: entry.name,
+        description: entry.description,
+        filePath: path.resolve(directory, entry.file),
+      })
+    }
+    return result
+  }
+  // fallback 模式：扫描 .opencode-workflows/workflows/*.js（无 manifest 的存量项目行为不变）
   const dir = workflowsDir(directory)
   const result = new Map<string, RegisteredWorkflow>()
   if (!fs.existsSync(dir)) return result
