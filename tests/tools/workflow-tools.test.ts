@@ -125,8 +125,8 @@ test("workflow 工具: background=true 立即返回 runId，后台完成后 deli
   const tool = makeWorkflowTool({ runManager: rm, adapterFactory: () => mockAdapter({ delayMs: 200 }), cwd: tmpDir(), deliver })
   const r = await (tool as any).execute("id", { script: `${META}
 await agent('bg')`, background: true }, undefined, undefined, {})
-  assert.match(r.content[0].text, /后台 run 已提交/)
   assert.match(r.content[0].text, /runId=/)
+  assert.match(r.content[0].text, /\/workflows watch run-/) // 提交文案带可直接复制的 watch 命令
   // 等后台完成 + deliver
   await new Promise((r) => setTimeout(r, 600))
   assert.equal(delivered.length, 1)

@@ -177,8 +177,9 @@ ${msg}
 已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。`)
           })
         return toolText(
-          `后台 run 已提交: runId=${runId}${resuming ? `（resume 自 ${params.resumeFromRunId}，复用其 journal 续跑）` : ""}
-用 workflow_control(action=list/status) 查询进度；停止用 action=stop。`,
+          `runId=${runId}${resuming ? `（resume 自 ${params.resumeFromRunId}，复用其 journal 续跑）` : ""}
+实时进度: /workflows watch ${runId}（状态行跟踪，完成自动回传）
+查询: /workflows status ${runId} ｜ 停止: /workflows cancel ${runId}`,
         )
       }
 
