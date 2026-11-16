@@ -2,8 +2,8 @@
  * pi-code-mode extension 入口（pi package manifest 指向本文件）
  *
  * 职责：装配——单例与依赖创建、工具注册、调度循环启动，然后逐个挂命令与 widget。
- * 斜杠命令实现放 extensions/commands/（一命令一文件）：
- *   - commands/workflows.ts  /workflows（list/run/status/cancel/stop）
+ * 斜杠命令实现放 extensions/commands/（一命令一文件/一目录）：
+ *   - commands/workflows/    /workflows（index 路由 + run/list/status/cancel 子命令文件）
  *   - commands/schedule.ts   /schedule
  *
  * 注册面（M1-M4 全量）：
@@ -28,7 +28,7 @@ import {
   type WorkflowToolDeps,
 } from "../src/tools/workflow-tools.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
-import { registerWorkflowsCommand } from "./commands/workflows.js"
+import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 
 const runManager = new RunManager(16)

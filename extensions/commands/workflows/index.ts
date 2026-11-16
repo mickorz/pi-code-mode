@@ -1,0 +1,60 @@
+/**
+ * /workflows 斜杠命令入口与路由（子命令实现见同目录各文件）。
+ *
+ * 分发规则：
+ *   - 无参数            -> 帮助面板（由路由表 usage 行汇总生成）
+ *   - 已知子命令        -> 转发剩余 argv
+ *   - 未知子命令        -> 警告 + 帮助
+ *
+ * 新增子命令：在目录内新建文件导出 Subcommand，加入下方路由表即可。
+ */
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { runSubcommand } from "./run.js"
+import { listSubcommand } from "./list.js"
+import { statusSubcommand } from "./status.js"
+import { cancelSubcommand } from "./cancel.js"
+import type { Subcommand, WorkflowsCommandDeps } from "./types.js"
+
+/** 路由表：cancel 与 stop 指向同一实现（同义子命令） */
+const subcommands: Record<string, Subcommand> = {
+  list: listSubcommand,
+  run: runSubcommand,
+  status: statusSubcommand,
+  cancel: cancelSubcommand,
+  stop: cancelSubcommand,
+}
+
+/** 帮助面板：固定首行 + 路由表 usage 行（同义子命令按实现对象去重） */
+function helpText(): string {
+  const seen = new Set<Subcommand>()
+  const lines = ["workflow 子命令:", "  /workflows                             显示本帮助"]
+  for (const sub of Object.values(subcommands)) {
+    if (seen.has(sub)) continue
+    seen.add(sub)
+    lines.push(`  /workflows ${sub.usage}`)
+  }
+  return lines.join("\n")
+}
+
+export function registerWorkflowsCommand(pi: ExtensionAPI, deps: WorkflowsCommandDeps): void {
+  pi.registerCommand("workflows", {
+    description:
+      "workflow 命令入口（无参数显示帮助）；list 列出已注册 workflow 与最近运行；run <路径|名> [k=v...] 后台执行；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
+    handler: async (args: string, ctx: any) => {
+      const argv = args.trim().split(/\s+/).filter(Boolean)
+      if (!argv.length) {
+        ctx.ui.notify(helpText(), "info")
+        return
+      }
+      const sub = subcommands[argv[0]]
+      if (!sub) {
+        ctx.ui.notify(`未知子命令: ${argv[0]}\n${helpText()}`, "warning")
+        return
+      }
+      await sub.run(argv.slice(1), ctx, deps)
+    },
+  })
+}
+
+export type { WorkflowsCommandDeps } from "./types.js"

@@ -47,3 +47,53 @@ test("status 渲染: 未知 runId 自防御, 已知 runId 含状态行", () => {
   assert.match(text, /runId: s1/);
   assert.match(text, /running/);
 });
+
+// ---- /workflows 路由层（fake pi + 真 RunManager，无模型） ----
+
+import { registerWorkflowsCommand } from "../../extensions/commands/workflows/index.js";
+
+function makeCapture() {
+  const notifications: Array<{ text: string; level: string }> = [];
+  const ctx = { cwd: "/tmp", ui: { notify: (text: string, level: string) => notifications.push({ text, level }) } };
+  const pi: any = { registerCommand: (_name: string, opts: any) => (pi.handler = opts.handler) };
+  return { notifications, ctx, pi };
+}
+
+function makeDepsStub() {
+  return {
+    runManager: new RunManager(2),
+    makeDeps: () => {
+      throw new Error("run 测试不应触达工具依赖");
+    },
+    deliver: async () => {},
+  };
+}
+
+test("路由: 无参数显示帮助, cancel/stop 同义去重为一行", async () => {
+  const { notifications, ctx, pi } = makeCapture();
+  registerWorkflowsCommand(pi, makeDepsStub());
+  await pi.handler("", ctx);
+  assert.equal(notifications[0].level, "info");
+  const helpLines = notifications[0].text.split("\n");
+  assert.equal(helpLines[0], "workflow 子命令:");
+  assert.equal(helpLines.filter((l) => l.includes("cancel")).length, 1); // stop 不重复出现
+});
+
+test("路由: 未知子命令 -> warning + 帮助", async () => {
+  const { notifications, ctx, pi } = makeCapture();
+  registerWorkflowsCommand(pi, makeDepsStub());
+  await pi.handler("foo", ctx);
+  assert.equal(notifications[0].level, "warning");
+  assert.match(notifications[0].text, /未知子命令: foo/);
+});
+
+test("路由: dispatch 到子命令（status 缺参 / cancel 无在途）", async () => {
+  const { notifications, ctx, pi } = makeCapture();
+  registerWorkflowsCommand(pi, makeDepsStub());
+  await pi.handler("status", ctx);
+  assert.match(notifications[0].text, /用法: \/workflows status/);
+  await pi.handler("cancel", ctx);
+  assert.match(notifications[1].text, /当前没有在途运行/);
+  await pi.handler("stop", ctx); // stop 同样路由到 cancel 实现
+  assert.match(notifications[2].text, /当前没有在途运行/);
+});
