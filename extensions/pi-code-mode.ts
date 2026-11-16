@@ -28,6 +28,7 @@ import {
   type WorkflowToolDeps,
 } from "../src/tools/workflow-tools.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
+import { createRenderScheduler } from "../src/manager/render-scheduler.js"
 import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 
@@ -45,7 +46,8 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
   }
 }
 
-/** workflow-tasks widget：在途 runs 实时摘要（2s 节流刷新，idle 零开销）
+/** workflow-tasks widget：在途 runs 实时摘要（事件驱动，idle 零开销）
+ *  数据源：RunManager.onEvent（lifecycle 微任务即时刷、progress 500ms 节流合并，替换原 2s 轮询）
  *  宿主 API：widget 挂在 ctx.ui（session_start 事件上下文），工厂期不可直接调用；
  *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 跳过注册 */
 function installTaskWidget(pi: ExtensionAPI): void {
@@ -75,11 +77,15 @@ function installTaskWidget(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) return
     ctx.ui.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
-      const timer = setInterval(() => tui.requestRender(), 2000)
-      ;(timer as { unref?: () => void }).unref?.()
+      // 事件驱动刷新：lifecycle 事件（started/finished/stopped）微任务即时，progress（attach）500ms 节流合并
+      const scheduler = createRenderScheduler(() => tui.requestRender())
+      const unsubscribe = runManager.onEvent((e) => scheduler.schedule(e.type === "progress" ? "progress" : "lifecycle"))
       return {
         render,
-        dispose: () => clearInterval(timer),
+        dispose: () => {
+          unsubscribe()
+          scheduler.dispose()
+        },
       }
     })
   })

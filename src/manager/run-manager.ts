@@ -15,6 +15,18 @@ import type { AgentRecord } from "../engine/types/index.js"
 
 export type RunStatus = "running" | "completed" | "failed" | "cancelled"
 
+/** run 事件类型：started=注册、progress=节点更新（attach）、finished=终态、stopped=手动取消 */
+export type RunEventType = "started" | "progress" | "finished" | "stopped"
+
+export interface RunEvent {
+  runId: string
+  type: RunEventType
+  /** finished 事件携带终态（其余类型省略） */
+  status?: RunStatus
+}
+
+type RunListener = (event: RunEvent) => void
+
 export interface ManagedRun {
   runId: string
   label?: string
@@ -34,11 +46,32 @@ const RECENT_KEEP = 20
 export class RunManager {
   private readonly runs = new Map<string, ManagedRun>()
   private readonly recent: ManagedRun[] = []
+  private readonly listeners = new Set<RunListener>()
   /** 全局 Agent 并发闸：wrap(adapter) 后所有 dispatch 过闸排队 */
   readonly gate: Limiter
 
   constructor(maxConcurrent = 16) {
     this.gate = createLimiter(maxConcurrent)
+  }
+
+  /**
+   * 订阅 run 事件（widget/navigator 实时刷新的数据源，替换轮询）；返回退订函数。
+   * listener 异常被隔离不击穿 run 流程（事件总线语义；与 widget render 自防御同理）。
+   */
+  onEvent(listener: RunListener): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private emit(type: RunEventType, runId: string, status?: RunStatus): void {
+    for (const listener of this.listeners) {
+      try {
+        listener({ runId, type, status })
+      } catch (e) {
+        // 监听器故障不得阻断编排主流程；根因由监听器自己暴露（console.error 由监听方负责）
+        console.error("[pi-code-mode] run 事件监听器异常:", String((e as Error)?.message ?? e))
+      }
+    }
   }
 
   /** 注册一个在途 run；externalSignal（如宿主会话中断）aborted 时联动取消 */
@@ -57,6 +90,7 @@ export class RunManager {
       else options.externalSignal.addEventListener("abort", () => controller.abort(), { once: true })
     }
     this.runs.set(runId, run)
+    this.emit("started", runId)
     return run
   }
 
@@ -67,6 +101,7 @@ export class RunManager {
     const idx = run.agents.findIndex((a) => a.id === record.id)
     if (idx >= 0) run.agents[idx] = record
     else run.agents.push(record)
+    this.emit("progress", runId)
   }
 
   /** run 终态：从在途表移到 recent（保留最近 RECENT_KEEP 条） */
@@ -80,6 +115,7 @@ export class RunManager {
     this.runs.delete(runId)
     this.recent.unshift(run)
     if (this.recent.length > RECENT_KEEP) this.recent.length = RECENT_KEEP
+    this.emit("finished", runId, run.status)
   }
 
   /** 全部 run（在途优先 + 终态 recent）摘要 */
@@ -106,6 +142,7 @@ export class RunManager {
     const run = this.runs.get(runId)
     if (!run) return false
     run.controller.abort()
+    this.emit("stopped", runId)
     return true
   }
 }

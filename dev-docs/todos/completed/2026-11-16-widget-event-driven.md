@@ -1,7 +1,12 @@
-# 进度 widget 事件驱动化（P0）
+# 进度 widget 事件驱动化（P0）—— 已完成（2026-11-16）
 
-> 状态：待启动　|　依据：TUI 能力对比文档 §2.2（机制代差：轮询 vs 事件）、2026-11-16 决策确认
+> 状态：**已完成**　|　依据：TUI 能力对比文档 §2.2（机制代差：轮询 vs 事件）、2026-11-16 决策确认
 > 参考：`thirdparties/pi-dynamic-workflows/src/workflow-progress.ts`（事件驱动发布管线，只读）
+>
+> 实施落地：RunManager 事件出口（started/progress/finished/stopped，listener 异常隔离）、
+> `src/manager/render-scheduler.ts` 两级调度器（lifecycle 微任务去重 / progress 节流合并）、
+> widget 改订阅制删除轮询；契约测试 6 例（事件时序/退订/节流合并/dispose/异常隔离）。
+> 可选后续（compact/detailed 双模式、maxAgents、设置持久化）未实施，待使用反馈再定。
 
 ## 目标
 
