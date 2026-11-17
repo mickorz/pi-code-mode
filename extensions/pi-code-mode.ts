@@ -19,6 +19,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { RunManager, withGlobalGate } from "../src/manager/run-manager.js"
 import { ModelPool } from "../src/engine/agent/model-pool.js"
+import { ensureModelTiersTemplate } from "../src/engine/agent/model-tiers.js"
 import { PiScheduleRunner } from "../src/manager/pi-schedule-runner.js"
 import { ScheduleRuntime } from "../src/engine/schedule/runtime.js"
 import { loadModelTiers } from "../src/engine/agent/model-tiers.js"
@@ -34,6 +35,15 @@ import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 
 const runManager = new RunManager(16)
+// tier 配置引导（可发现性）：全局 model-tiers.json 不存在时创建带中文说明的空模板
+// （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）
+try {
+  const created = ensureModelTiersTemplate()
+  if (created) console.log(`[pi-code-mode] 已创建 tier 配置模板: ${created}（tiers 为空，不改变默认行为；照文件内说明填写后生效）`)
+} catch (e) {
+  // 模板创建失败不阻断插件装载（目录只读等），根因打日志暴露
+  console.error("[pi-code-mode] tier 配置模板创建失败:", String((e as Error)?.message ?? e))
+}
 // tier 解析：~/.pi/workflows/model-tiers.json + 项目级合并（引擎 agent/model-tiers.ts）
 const tiers = loadModelTiers()
 // tier 模型池（v2 池化）：数组档位构建进程级池（每模型并发上限，acquire 溢出分配）；

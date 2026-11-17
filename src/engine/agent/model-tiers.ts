@@ -68,3 +68,42 @@ export function loadModelTiers(options: { globalFile?: string; projectDir?: stri
     : undefined
   return { ...readTierKeys(globalFile), ...readTierKeys(compatFile), ...readTierKeys(projectFile) }
 }
+
+/**
+ * 全局模板路径与内容（插件装配时调用：文件不存在则创建引导模板，幂等）。
+ *
+ * 模板 tiers 留空——行为与未配置完全等价（tier 回退会话默认模型），零语义副作用；
+ * __ 开头的中文说明字段被 readTierKeys 自然忽略（只读 tiers 键），文件本身即文档。
+ * 项目级配置不自动创建（用户按需建，同路径覆盖全局）。
+ */
+export const MODEL_TIERS_TEMPLATE: string = JSON.stringify(
+  {
+    __说明:
+      "tier 名 -> 模型池配置。workflow 脚本里 agent(提示词, { tier: 'fast' }) 按此档位路由；未列出的 tier 回退会话默认模型。填写时删除 __ 开头的说明字段，把条目写进 tiers。详细说明见插件 docs/configuration.md",
+    __示例_单模型: { tiers: { fast: "provider/model-a", big: "provider/model-b" } },
+    __示例_模型池: {
+      tiers: {
+        fast: [
+          { model: "provider/a", concurrency: 16 },
+          { model: "provider/b", concurrency: 8 },
+        ],
+      },
+    },
+    tiers: {},
+  },
+  null,
+  2,
+)
+
+export function modelTiersGlobalPath(): string {
+  return path.join(os.homedir(), ".pi", "workflows", "model-tiers.json")
+}
+
+/** 确保全局模板存在；返回创建路径，已存在返回 undefined（幂等，不覆盖用户配置） */
+export function ensureModelTiersTemplate(globalFile?: string): string | undefined {
+  const file = globalFile ?? modelTiersGlobalPath()
+  if (fs.existsSync(file)) return undefined
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, MODEL_TIERS_TEMPLATE)
+  return file
+}

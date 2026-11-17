@@ -7,7 +7,7 @@
 | Name | Type | Default | Description |
 |---|---|---|---|
 | Workflow script directory | Convention | `.pi/workflows/*.js` | Top-level scripts join the registry; `.opencode-workflows/workflows/` also scanned for compatibility |
-| model-tiers | JSON file | `~/.pi/workflows/model-tiers.json` | small/medium/big tiers mapped to `provider/modelId:thinking` |
+| model-tiers | JSON file | `~/.pi/workflows/model-tiers.json` | small/medium/big tiers mapped to `provider/modelId:thinking`; auto-created as a commented empty template at extension load if missing (empty `tiers` = fallback to session default model), plus a v2 pool form: a tier accepts an array of `{ model, concurrency }` entries — per-model concurrency caps with balanced overflow (e.g. fast = A×16 + B×8 serves 20 concurrent as 14/6 keeping the 16:8 ratio) |
 | inheritMainModel | Boolean | TBD | Agents without tier/model inherit the main session model |
 | State directory | Directory | `~/.pi/workflows/` | settings, runs, journals, saved workflows; redirect via `PI_CODING_AGENT_DIR` |
 
