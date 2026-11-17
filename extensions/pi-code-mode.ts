@@ -36,13 +36,14 @@ import { registerScheduleCommand } from "./commands/schedule.js"
 
 const runManager = new RunManager(16)
 // tier 配置引导（可发现性）：全局 model-tiers.json 不存在时创建带中文说明的空模板
-// （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）
+// （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）。
+// 创建结果通过 session_start 的 ui.notify 通知（TUI 吞掉扩展 console.log，工厂期无 ctx.ui 可用）
+let tiersTemplateCreated: string | undefined
+let tiersTemplateError: string | undefined
 try {
-  const created = ensureModelTiersTemplate()
-  if (created) console.log(`[pi-code-mode] 已创建 tier 配置模板: ${created}（tiers 为空，不改变默认行为；照文件内说明填写后生效）`)
+  tiersTemplateCreated = ensureModelTiersTemplate()
 } catch (e) {
-  // 模板创建失败不阻断插件装载（目录只读等），根因打日志暴露
-  console.error("[pi-code-mode] tier 配置模板创建失败:", String((e as Error)?.message ?? e))
+  tiersTemplateError = String((e as Error)?.message ?? e)
 }
 // tier 解析：~/.pi/workflows/model-tiers.json + 项目级合并（引擎 agent/model-tiers.ts）
 const tiers = loadModelTiers()
@@ -115,6 +116,22 @@ function installTaskWidget(pi: ExtensionAPI): void {
 }
 
 export default function extension(pi: ExtensionAPI): void {
+  // tier 模板创建结果通知（TUI 可见通道；工厂期无 ctx.ui，延迟到 session_start）
+  pi.on("session_start", (_event, ctx) => {
+    if (tiersTemplateCreated) {
+      const msg = `已创建 tier 配置模板: ${tiersTemplateCreated}（tiers 为空，不改变默认行为；照文件内说明填写后生效）`
+      if (ctx.hasUI) ctx.ui.notify(msg, "info")
+      else console.log(`[pi-code-mode] ${msg}`)
+      tiersTemplateCreated = undefined
+    }
+    if (tiersTemplateError) {
+      const msg = `tier 配置模板创建失败: ${tiersTemplateError}`
+      if (ctx.hasUI) ctx.ui.notify(msg, "warning")
+      else console.error(`[pi-code-mode] ${msg}`)
+      tiersTemplateError = undefined
+    }
+  })
+
   // 后台 run / schedule run / watch 终态完成回传主会话（M3 结果回传通道：pi.sendUserMessage）
   const deliver = async (text: string) => {
     try {
