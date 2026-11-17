@@ -1,3 +1,4 @@
+// 通道：子 Agent 调用（M2）——多 Agent 并行编排，各持不同 server 白名单；直调形态做不到模型级并行任务
 export const meta = {
   name: "mcp_parallel_test",
   description: "多 Agent 并行编排验收：两个 Agent 各自持不同 server 白名单并行调用 MCP",

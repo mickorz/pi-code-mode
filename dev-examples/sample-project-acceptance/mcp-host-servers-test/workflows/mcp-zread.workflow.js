@@ -1,3 +1,4 @@
+// 通道：子 Agent 调用（M2）——同上；确定性单点调用请改用直调形态（见 mcp-direct.workflow.js）
 export const meta = {
   name: "mcp_zread_test",
   description: "zread MCP 工具调用验收：Agent 按白名单读取 GitHub repo 结构",
