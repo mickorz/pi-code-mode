@@ -1,0 +1,54 @@
+{
+  "runId": "mcp-wf-zread",
+  "file": "mcp-zread.workflow.js",
+  "result": {
+    "repo": "The tool is now available. Let me call it:Done. I searched for the tool, loaded `mcp__zread__get_repo_structure`, and called it with repo_name `earendil-works/pi`.\n\nOne top-level entry name I saw: **`README.md`** (other top-level entries include `packages/`, `scripts/`, `apps/`, `AGENTS.md`, `LICENSE`, etc.)."
+  },
+  "toolCalls": [
+    {
+      "kind": "mcp-tool-call",
+      "toolName": "mcp__zread__get_repo_structure",
+      "status": "ok",
+      "argsBytes": 33,
+      "argsKeys": [
+        "repo_name"
+      ],
+      "durationMs": 3476,
+      "toolCallId": "call_208a9dce86a8411991ca7aab/1",
+      "parentToolCallId": "call_208a9dce86a8411991ca7aab"
+    }
+  ],
+  "entries": [
+    {
+      "key": "mcp-wf-zread:0",
+      "hash": "c6f6e62ebab3e442544d1e4db4c0193b9f4e2c1f89e8d67a4c72a0a1e3b953f2",
+      "result": "The tool is now available. Let me call it:Done. I searched for the tool, loaded `mcp__zread__get_repo_structure`, and called it with repo_name `earendil-works/pi`.\n\nOne top-level entry name I saw: **`README.md`** (other top-level entries include `packages/`, `scripts/`, `apps/`, `AGENTS.md`, `LICENSE`, etc.).",
+      "label": "zread 调用",
+      "sessionId": "01a1e8c9-d4ef-7391-bf66-e0abfcc3d004",
+      "prompt": "The tool mcp__zread__get_repo_structure is not declared yet. Use the tool_search tool to search \"repo structure\", load it, then call it with repo_name \"earendil-works/pi\". Return any one top-level entry name you saw.",
+      "outputType": "text",
+      "executionId": "mcp-wf-zread:0:1",
+      "attempt": 1,
+      "startedAt": 1794906903779,
+      "durationMs": 20238,
+      "usage": {
+        "inputTokens": 2257,
+        "outputTokens": 177
+      },
+      "toolCalls": [
+        {
+          "kind": "mcp-tool-call",
+          "toolName": "mcp__zread__get_repo_structure",
+          "status": "ok",
+          "argsBytes": 33,
+          "argsKeys": [
+            "repo_name"
+          ],
+          "durationMs": 3476,
+          "toolCallId": "call_208a9dce86a8411991ca7aab/1",
+          "parentToolCallId": "call_208a9dce86a8411991ca7aab"
+        }
+      ]
+    }
+  ]
+}

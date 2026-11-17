@@ -1,0 +1,54 @@
+{
+  "runId": "mcp-wf-reader",
+  "file": "mcp-web-reader.workflow.js",
+  "result": {
+    "page": "Example Domain"
+  },
+  "toolCalls": [
+    {
+      "kind": "mcp-tool-call",
+      "toolName": "mcp__web_reader__webReader",
+      "status": "ok",
+      "argsBytes": 29,
+      "argsKeys": [
+        "url"
+      ],
+      "durationMs": 275,
+      "toolCallId": "call_e3ae695caf8746a8a3271770/1",
+      "parentToolCallId": "call_e3ae695caf8746a8a3271770"
+    }
+  ],
+  "entries": [
+    {
+      "key": "mcp-wf-reader:0",
+      "hash": "dfc90679ae836adb3e47b310ac0b85e6eb3b9c4ebdc377a733ccff260540cdd0",
+      "result": "Example Domain",
+      "label": "web-reader 调用",
+      "sessionId": "01a1e8c9-ab52-7391-bf66-e0a9a736215c",
+      "prompt": "The tool mcp__web_reader__webReader is not declared yet. Use the tool_search tool to search \"webReader\", load it, then call it with url \"https://example.com\". Return only the page title you found.",
+      "outputType": "text",
+      "executionId": "mcp-wf-reader:0:1",
+      "attempt": 1,
+      "startedAt": 1794906893111,
+      "durationMs": 10595,
+      "usage": {
+        "inputTokens": 253,
+        "outputTokens": 4
+      },
+      "toolCalls": [
+        {
+          "kind": "mcp-tool-call",
+          "toolName": "mcp__web_reader__webReader",
+          "status": "ok",
+          "argsBytes": 29,
+          "argsKeys": [
+            "url"
+          ],
+          "durationMs": 275,
+          "toolCallId": "call_e3ae695caf8746a8a3271770/1",
+          "parentToolCallId": "call_e3ae695caf8746a8a3271770"
+        }
+      ]
+    }
+  ]
+}

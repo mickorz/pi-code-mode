@@ -1,0 +1,27 @@
+{
+  "runId": "mcp-wf-deny",
+  "file": "mcp-deny.workflow.js",
+  "result": {
+    "result": "The first search returned nothing. Let me try other search terms.No search results. Let me try describing the namespace and calling the tool directly.TOOL BLOCKED"
+  },
+  "toolCalls": [],
+  "entries": [
+    {
+      "key": "mcp-wf-deny:0",
+      "hash": "1b28f75699c41cb27b9f43a3dd699b8c7d7eda1508abb1824dd93da4db88cba4",
+      "result": "The first search returned nothing. Let me try other search terms.No search results. Let me try describing the namespace and calling the tool directly.TOOL BLOCKED",
+      "label": "被 deny 的 agent",
+      "sessionId": "01a1e8ca-243e-7391-bf66-e0ac240aa3af",
+      "prompt": "Try to call the mcp__web_reader__webReader tool with url \"https://example.com\". It may need loading via tool_search first. If the tool is not found or cannot be called, return exactly: TOOL BLOCKED. Otherwise return the page title.",
+      "outputType": "text",
+      "executionId": "mcp-wf-deny:0:1",
+      "attempt": 1,
+      "startedAt": 1794906924081,
+      "durationMs": 24546,
+      "usage": {
+        "inputTokens": 1853,
+        "outputTokens": 162
+      }
+    }
+  ]
+}
