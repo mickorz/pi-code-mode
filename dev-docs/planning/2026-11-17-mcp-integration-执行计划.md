@@ -4,6 +4,9 @@
 - 状态：M0 大部分实证已完成（本文档第一节），剩余实证项已锁定
 - 范围：本期只做 M0 + M1 + M2（Agent 调用 MCP），M3/M4 列为后续方向不展开
 - 上游方案：ChatGPT 调研稿（2026-11-17），经本仓库独立验证后修订
+- 修订记录：2026-11-17 v2 —— 按评审意见补充 5 个技术问题落点：M0-2/M0-5 加工具级与 hidden 实证（P0）、
+  M0-4 扩为 6 组对照实验、新增 M0-6（Journal 可观测范围，静态结论已先行完成）、M2 加两层权限优先级规则与
+  `toolCalls[]` 审计交付、风险表加信任边界与凭证保护；修正第五节关于 journal 的错误表述
 
 ---
 
@@ -68,7 +71,7 @@ pi-mcp 扩展文档原文：
 
 ## 二、M0 剩余实证项（运行时行为，需真实执行验证）
 
-F1-F11 是静态事实，以下 5 项是运行时行为，必须写实证脚本跑通后才允许进入 M1/M2。
+F1-F11 是静态事实，以下 6 项是运行时行为，必须写实证脚本跑通后才允许进入 M1/M2。
 统一放 `dev-examples/mcp-m0-verification/`（沙盒，验证通过后按 CLAUDE.md 毕业路径处理）。
 
 ### M0-1：显式装配 + 递归防护共存
@@ -77,27 +80,59 @@ F1-F11 是静态事实，以下 5 项是运行时行为，必须写实证脚本�
 - 验证：子会话能列出 MCP 工具（`session.getActiveToolNames()` 含 `mcp__*`），同时宿主其他扩展零加载（对照现有 recursive-guard 测试）。
 - **验收标准**：磁盘扩展路径数 = 0；`mcp__*` 工具按策略出现；`bindExtensions({})` 在 `prompt()` 前调用且不报错。
 
-### M0-2：`loadConfig` 注入过滤
+### M0-2：`loadConfig` 注入过滤（server 级 + 工具级）
 
 - 自定义 `loadConfig` 返回过滤后的 `LoadedMcpConfig`（只保留策略允许的 server，逐工具 exposure 覆盖）。
 - 验证：不在策略内的 server 不连接（日志无该 server 启动记录）；`autoEnableCodemode` 行为符合预期。
-- **验收标准**：策略过滤后的工具集合与预期完全一致；`errors` 数组正确透传配置错误。
+- **评审补充（P0）：工具级授权独立生效**——同一 server 连接的情况下，`allowTools` 只放行部分工具，
+  验证未授权工具被映射为 `toolExposure: "hidden"` 后模型声明中不可见、direct 声明不含它。
+  即「server 白名单 ≠ 工具白名单」两条过滤各自独立生效。
+- **验收标准**：策略过滤后的工具集合与预期完全一致（含工具级 allow/deny 交集）；`errors` 数组正确透传配置错误。
 
 ### M0-3：工具管线权限拦截实测
 
 - 给子会话注册一个 `beforeToolCall` 钩子拒绝某个 `mcp__*` 工具；再跑一个 codemode 脚本尝试调用同一工具。
 - **验收标准**：直接调用与 codemode 脚本内调用都被拦截，且拦截事件都出现在工具管线事件流中（验证 F9，不出现绕过通道）。
 
-### M0-4：并行会话连接复用语义（原方案风险点 2 的实证）
+### M0-4：并行会话连接生命周期（原方案风险点 2 的实证）
 
-- 并发起 4 个子会话，全部配置同一个 stdio server。
-- 验证：实际 stdio 进程数（预期为 4，每 session 独立连接）；并发调用是否互相干扰；dispose 后进程是否全部回收。
-- **验收标准**：进程数 = 会话数；无僵尸进程；无跨会话串扰。若成本不可接受，在 M2 中按现有并发上限（CLAUDE.md：长联调 ≤2 并发）自然限流，并在文档中注明「重量级共享 server 应改用 Streamable HTTP 部署」。
+对照实验矩阵（评审补充后共 6 组，stdio 4 组 + HTTP 2 组）：
 
-### M0-5：exposure 三模式实测
+| 实验 | 目的 |
+|---|---|
+| 4 Session + stdio 同一 server | 验证每 session 独立进程（预期进程数 = 4） |
+| 4 Session + HTTP 同一远端 | 验证共享远端服务（连接/会话对象仍是每 session 独立，需确认） |
+| 4 Session 并发调用同一工具 | 验证并发隔离与结果不串扰 |
+| 关闭其中 1 个 Session | 验证其余 Session 连接不受影响 |
+| 全部 dispose | 验证 stdio 进程全部回收、无僵尸 |
+| HTTP server 401/OAuth 缺凭证时的报错路径 | 验证失败不阻塞其他 server 连接 |
 
-- 同一 server 配置三种 exposure 各一个工具，验证：`direct` 出现在工具声明、`codemode` 只能脚本内 `searchTools()` 找到并调用、`deferred` 经 `tool_search` 按需加载。
-- **验收标准**：三种模式的模型可见性与调用路径与扩展文档描述一致。
+- **验收标准**：stdio 进程数 = 会话数、无僵尸进程、无跨会话串扰、单 session 关闭不影响他者；
+  HTTP 模式确认「远端服务可共享但 pi 侧连接对象不跨 session 共享」的生命周期语义并记录结论。
+  第一阶段不实现连接池。若 stdio 成本不可接受，在 M2 中按现有并发上限（CLAUDE.md：长联调 ≤2 并发）
+  自然限流，并在文档中注明「重量级共享 server 应改用 Streamable HTTP 部署」。
+
+### M0-5：exposure 四模式实测（含 hidden 不可达）
+
+- 同一 server 配置各 exposure 工具，验证：`direct` 出现在工具声明、`codemode` 只能脚本内 `searchTools()` 找到并调用、`deferred` 经 `tool_search` 按需加载。
+- **评审补充（P0）：hidden 彻底不可达**——被 `toolExposure: "hidden"` 的工具，验证模型声明不含它、
+  codemode `searchTools()` 搜不到、脚本内直接 `tools.mcp__<server>__<tool>()` 调用报错。
+  hidden 是 M1 工具级拒绝的实现机制，若存在任一绕过通道，M1 设计需重评。
+- **验收标准**：四种模式的模型可见性与调用路径与扩展文档描述一致；hidden 无任何调用通道。
+
+### M0-6：Journal 可观测范围实测（评审补充，静态结论已先行完成）
+
+静态验证已完成（2026-11-17，评审意见触发）：现有 journal entry 只含 `{hash, result, sessionId,
+usage?, executions[]}`，`AgentExecutionResult` 只携带 `{type, value, sessionId}`——**不含任何工具调用记录**；
+且子会话用 `SessionManager.inMemory()` 不落盘（`pi-agent-adapter.ts:78`），run 结束后工具调用完全不可观测。
+运行时补测两项：
+
+1. 实跑一个带 MCP 工具调用的 agent，确认 journal entry 与快照中确实无工具级条目（把静态结论钉死）。
+2. 枚举 `session.subscribe` 事件流中的工具事件类型与载荷，确认 Adapter 能拿到工具名/参数/结果/错误/耗时
+   ——这是 M2 最小审计记录方案的数据前提。
+
+- **验收标准**：M0 执行报告中明确现有可观测范围（agent 级结果 + usage，无工具级）；
+  事件流载荷清单足以支撑 M2 的 `mcp__*` 调用记录实现，或明确列出不满足项。
 
 **M0 交付物**：`dev-docs/progress-result/M0-执行报告.md`（实证脚本、运行证据、结论），并把结论回填本文档第一节。
 
@@ -113,12 +148,26 @@ F1-F11 是静态事实，以下 5 项是运行时行为，必须写实证脚本�
 // 输入：默认配置 + Agent 策略；输出：过滤后的 LoadedMcpConfig
 export interface McpPolicy {
   enabled: boolean;
-  servers?: string[];              // 白名单；undefined = 拒绝全部（默认拒绝原则）
-  allowTools?: string[];           // mcp__<server>__<tool> 或 <server>:<tool> 形式，支持通配符
-  denyTools?: string[];
+  servers?: string[];              // server 白名单；undefined = 拒绝全部（默认拒绝原则）
+  allowTools?: string[];           // 工具白名单，规范名 "<server>:<tool>"，"<server>:*" 全量，支持通配符
+  denyTools?: string[];            // 工具黑名单，规范名同上；优先级高于 allowTools
   exposure?: Record<string, McpExposure>;  // per-server 覆盖
 }
+```
 
+**权限三条铁律**（评审补充，M0-2/M0-5 实证）：
+
+1. **Server 授权 ≠ 工具授权**：`servers` 只控制是否连接；连接后 server 内每个工具仍需逐个过
+   allow/deny 计算。`allowTools` 未包含的工具一律映射为 `toolExposure: "hidden"`（不可达），
+   不因 server 已授权而默认开放。
+2. **deny 优先于 allow**：过滤顺序为先按 allow 求交集、再叠加 deny 剔除。
+3. **结构层匹配，永不解析字符串**：`filterMcpConfig` 拿到的 `LoadedMcpConfig.servers[]` 本身就是
+   结构化数据（server entry + 工具名列表），allow/deny 匹配直接在该结构上做，产出 toolExposure map；
+   不解析 `mcp__<server>__<tool>` 拼接名，从结构上消除 server 名含下划线/特殊字符的解析歧义
+   （不引入独立 McpToolIdentity 类型——`McpServerEntry` + 工具名已是结构化形态）。
+   `mcp__*` 拼接名只出现在 session 层 `excludeTools`（SDK 原生约定），见 M2 优先级规则。
+
+```ts
 export function filterMcpConfig(
   base: LoadedMcpConfig,
   policy: McpPolicy,
@@ -128,7 +177,7 @@ export function filterMcpConfig(
 - 配置来源直接复用 `loadMcpConfig()`（F8），**不另造配置格式**——用户在宿主里配好的 `~/.pi/agent/mcp.json` 与项目 `.pi/mcp.json` 直接生效。
 - 默认拒绝：`enabled: true` 且 `servers` 未配置时返回空集，而非全集。
 - 每个会话创建独立的 `createMcpExtension({ loadConfig: ... })` 实例（工厂是无状态函数，可多次调用；M0-4 同时验证多实例成本）。
-- **验收标准**：`tests/contract/mcp-policy.test.ts` 覆盖白名单/黑名单/通配符/默认拒绝/空策略五行 为；无模型依赖，纯函数可测。
+- **验收标准**：`tests/contract/mcp-policy.test.ts` 覆盖白名单/黑名单/通配符/默认拒绝/空策略五个行为；无模型依赖，纯函数可测。
 
 ## 四、M2：AgentAdapter 接入
 
@@ -149,6 +198,14 @@ interface ToolPolicy {
 2. `loadConfig` 闭包捕获该 Agent 的 `McpPolicy`，经 `filterMcpConfig` 注入。
 3. `session.bindExtensions({})` 在首次 `prompt()` 前调用（F5）；对无 MCP 的会话维持现有路径零改动。
 4. `codemode`/`tool_search` 的激活交给 MCP 扩展按 exposure 自动处理（F5），Adapter 不手工 `setActiveTools`，避免双写。
+5. **两层权限的优先级规则（评审补充，P0）**：`mcp` policy 在 loadConfig 层做硬过滤（结构层，hidden 工具不可达），
+   现有 `allowTools`/`excludeTools` 在 session 层按 SDK 语义过滤工具声明（含 `mcp__*` 名）。两层叠加、
+   **更严者胜**：任一层拒绝即不可用，不存在某层放开另一层拒绝的工具。文档口径：mcp policy 是
+   MCP 专用授权面，session 层白/黑名单是通用兜底，两者职责不合并。
+6. **`mcp__*` 工具调用写入 journal（评审补充，P1，M0-6 结论落地）**：现状 journal 无任何工具级记录
+   （见 M0-6 静态结论）。Adapter 在子会话 subscribe 事件流中提取 `mcp__*` 工具调用的
+   名称/参数摘要/状态/耗时，追加进该节点 journal entry（新增轻量 `toolCalls[]` 字段，封顶条数防膨胀）。
+   不引入独立 McpCallRecord 类型——工具名 `mcp__` 前缀已可辨来源。非 MCP 工具调用本期不记录。
 
 ### DSL 侧（workflow `agent()` 参数）
 
@@ -164,7 +221,9 @@ const result = await agent({
 
 - **验收标准**：
   - 契约测试：policy 含 `mcp` 时 loader 工厂装配正确、不含时与现状逐字节一致（回归保护）。
-  - 联调测试（遵守并发 ≤2、看门狗、证据落盘纪律）：真实 MCP server（建议用 `@modelcontextprotocol/server-filesystem` 或仓库内已有测试 server）经 codemode 被 Agent 调用成功；拒绝策略生效；journal 中工具调用记录含 `mcp__*` 条目。
+  - 联调测试（遵守并发 ≤2、看门狗、证据落盘纪律）：真实 MCP server（建议用 `@modelcontextprotocol/server-filesystem` 或仓库内已有测试 server）经 codemode 被 Agent 调用成功；拒绝策略生效；
+    journal entry 的 `toolCalls[]` 含该次 `mcp__*` 调用（名称/状态/耗时），与 M0-6 事件流载荷清单一致；
+    两层权限叠加语义（更严者胜）有显式测试用例。
 
 ---
 
@@ -172,7 +231,9 @@ const result = await agent({
 
 - `tool_search` deferred 模式的深度调优（M0-5 只验证行为存在）。
 - Workflow 直调 MCP（`mcp.call()` 注入 VM）：pi-mcp 的 `McpClient`（F10）证明技术可行，但副作用工具的 Replay Policy 语义需要独立设计，不混入本期。
-- MCP 调用的独立 Journal 记录类型：本期复用现有工具调用记录（`mcp__*` 天然出现在 AgentSession 工具事件流中，随 Agent result 入 journal），独立的 `McpCallRecord` 留给 M4。
+- MCP 调用的独立 Journal 记录类型（`McpCallRecord`）：本期以轻量 `toolCalls[]` 字段满足审计需求（M2 改造点 6），
+  独立类型与副作用 Replay Policy 联动留给 M4。~~本期复用现有工具调用记录~~（原表述有误，2026-11-17 修正：
+  经实证现有 journal 不含任何工具调用记录，子会话 inMemory 不落盘，见 M0-6）。
 - 人工审批（human-in-the-loop）工作流。
 
 ---
@@ -186,6 +247,8 @@ const result = await agent({
 | 宿主用户 mcp.json 里配置了不安全 server，被某个 Agent 策略意外放开 | 默认拒绝原则（第三节）；契约测试覆盖空策略返回空集 |
 | noExtensions 语义在未来 SDK 版本变化（F4 是实现细节而非文档承诺） | 升级依赖时跑 M0-1 回归；契约测试固化「工厂已装配 + 磁盘扩展为零」两条断言 |
 | codemode VM（QuickJS/WASM）与现有 workflow VM（node vm）混淆 | 文档口径固定：两者并存不同层，workflow VM 不获得 MCP 能力（M4 才考虑，且走 Runtime 受控代理） |
+| MCP 工具返回内容被当作可信指令（prompt injection）（评审补充） | 文档口径固定：工具返回一律视为不可信外部数据，仅作数据消费；工具结果不得变更 Agent 权限、不得为其他 MCP 工具授权；M0-3 的管线拦截验证是执行层兜底 |
+| 凭证泄露（评审补充） | 凭证继续走 SDK 原生路径（`mcp-auth.json`、env 展开的 header、OAuth），不复制进 policy/journal/日志；journal 的 `toolCalls[]` 参数摘要沿用现有 `redactValue` 脱敏（`agent-result.ts` REDACT_KEY）后再落盘 |
 
 ---
 
@@ -194,7 +257,7 @@ const result = await agent({
 | 里程碑 | 状态 | 交付物 |
 |---|---|---|
 | M0 静态实证（F1-F11） | **已完成**（本文档第一节） | 本文档 |
-| M0 运行时实证（M0-1 ~ M0-5） | 未开始 | 实证脚本 + `M0-执行报告.md` |
+| M0 运行时实证（M0-1 ~ M0-6） | 未开始 | 实证脚本 + `M0-执行报告.md` |
 | M1 MCP 策略层（薄） | 未开始 | `src/mcp/mcp-policy.ts` + 契约测试 |
 | M2 AgentAdapter 接入 | 未开始 | 类型扩展 + PiAgentAdapter 改造 + 联调证据 |
 | M3/M4 | 不在本期 | 另行立项 |
