@@ -11,6 +11,9 @@
   P0-2 默认 hidden 生成规则（官方 toolExposure 通配符语义直接支撑，新增 F12）、
   P1-1 toolCalls 脱敏收紧（redactValue 定位为展示用途非安全边界）、
   P1-2 toolCalls 完整数据通道（成功/失败 attempt 双落点）
+- 修订记录：2026-11-17 v4（终版，冻结）—— 收尾小修订：P0 失败 attempt 事件传递机制锁定
+  （throwForStatus 断点实证，采方案 A 事件侧实时上报，经 ctx.onEvent record 变体与 executionId 防重试混淆）、
+  P1 通配符两层交叉测试矩阵、P2 F1-F12 状态表与 DSL 表述修正。**本文档冻结，进入 M0 运行时实证。**
 
 ---
 
@@ -76,7 +79,7 @@ pi-mcp 扩展文档原文：
 
 ## 二、M0 剩余实证项（运行时行为，需真实执行验证）
 
-F1-F11 是静态事实，以下 6 项是运行时行为，必须写实证脚本跑通后才允许进入 M1/M2。
+F1-F12 是静态事实，以下 6 项是运行时行为，必须写实证脚本跑通后才允许进入 M1/M2。
 统一放 `dev-examples/mcp-m0-verification/`（沙盒，验证通过后按 CLAUDE.md 毕业路径处理）。
 
 ### M0-1：显式装配 + 递归防护共存
@@ -95,6 +98,8 @@ F1-F11 是静态事实，以下 6 项是运行时行为，必须写实证脚本�
 - **评审补充（P0，v3）：策略叠加反向测试**——server 级 `exposure: "direct"` 且某工具被 deny 时，
   验证该工具仍 hidden（官方语义：工具 exposure 取 `toolExposure` 条目，否则回落 server `exposure`，
   即 `getMcpToolExposure`，`mcp-servers.d.ts:111`）。验证的是叠加而非正常路径。
+- **评审补充（P1，v4）：通配符经真实 server 实测**——`allowTools` 模式转换后的 `toolExposure` key
+  在真实工具名上验证匹配行为（首个匹配获胜、精确名优先），不只靠策略层字符串单测（矩阵见 M1 验收）。
 - **验收标准**：策略过滤后的工具集合与预期完全一致（含工具级 allow/deny 交集、deny 压过 server direct）；`errors` 数组正确透传配置错误。
 
 ### M0-3：工具管线权限拦截实测
@@ -193,6 +198,19 @@ export function filterMcpConfig(
 - 每个会话创建独立的 `createMcpExtension({ loadConfig: ... })` 实例（工厂是无状态函数，可多次调用；M0-4 同时验证多实例成本）。
 - **验收标准**：`tests/contract/mcp-policy.test.ts` 覆盖六个行为：server 白名单/工具 allow 展开/deny 置首
   （含 deny 压过 server direct 与模式误匹配）/通配符/默认拒绝（空集 + server 默认 hidden）/空策略；无模型依赖，纯函数可测。
+- **通配符两层交叉测试矩阵（评审 v4 P1）**：策略层只做「规范名 → toolExposure key」转换
+  （剥 `<server>:` 前缀，取第一个冒号），匹配全部由 pi 执行——测试覆盖转换边界与 pi 匹配两层：
+
+  | 用例 | 预期 |
+  |---|---|
+  | 精确工具名 `game-server:get_rules` | 仅该工具开放 |
+  | `game-server:*` | 该 server 全部工具开放 |
+  | `game-server:get_*` | 前缀匹配工具开放 |
+  | 特殊字符工具名（含 `-` `.` `_` 等） | 前缀剥离与转换正确 |
+  | deny 精确名 + allow 通配符重叠 | deny 生效（精确名赢过模式，官方语义） |
+  | allow 两条重叠模式 | 排列顺序决定首个匹配获胜，deny 条目恒在前 |
+
+  M0-2 联调实测用真实 server 工具名验证，不只靠字符串单元测试。
 
 ## 四、M2：AgentAdapter 接入
 
@@ -225,27 +243,33 @@ interface ToolPolicy {
    现有 `allowTools`/`excludeTools` 在 session 层按 SDK 语义过滤工具声明（含 `mcp__*` 名）。两层叠加、
    **更严者胜**：任一层拒绝即不可用，不存在某层放开另一层拒绝的工具。文档口径：mcp policy 是
    MCP 专用授权面，session 层白/黑名单是通用兜底，两者职责不合并。
-7. **`mcp__*` 工具调用写入 journal（评审补充，v3 P1-2 重写：完整数据通道 + 双落点）**：现状 journal 无任何
-   工具级记录（M0-6 静态结论），且数据通道四环均缺字段——`AgentResult`（`types.ts:46-53`）、
-   `AgentExecutionResult`（`session-runner.ts:30-33`）、`JournalEntry`（`types/index.ts:154-173`）均无 toolCalls，
-   `AgentEvent` 无工具事件类型。**只订阅事件不建通道，数据到不了 journal。**
-   通道设计：
+7. **`mcp__*` 工具调用写入 journal（v4 P0 锁定失败路径：事件侧实时上报）**：现状 journal 无任何
+   工具级记录（M0-6 静态结论），且数据通道四环均缺字段。**v4 关键修正：失败路径不能走结果侧**——
+   `throwForStatus`（`agent-adapter.ts:19,81`，`:never` 签名）在 status 非 ok 时直接抛异常，
+   结果对象（含未来加的 `AgentResult.toolCalls`）整体被丢弃；取消/超时同样拿不到返回值。
+   因此采评审方案 A：**工具调用记录走事件侧实时上报，与 attempt 终态解耦**。
+   通道设计（基础设施均已存在，只补窄桥接）：
    ```
-   PiAgentAdapter（subscribe 采集 mcp__* 调用）
-     -> AgentResult.toolCalls（adapter/types.ts 新增）
-     -> agentAdapterToRunner() 映射 -> AgentExecutionResult.toolCalls（session-runner.ts 新增）
-     -> Workflow Runtime 分流：
-          成功 attempt -> onAgentJournal -> JournalEntry.toolCalls（append 路径，workflow-runtime.ts:627）
+   PiAgentAdapter（subscribe 采集 mcp__* 调用，调一次报一次）
+     -> ctx.onEvent({ type: "record", executionId, record: { kind: "mcp-tool-call", ... } })
+        （AgentEvent.record 通用变体现成，types.ts:58；ExecutionContext.onEvent 现成，types.ts:35）
+     -> AgentRunOptions 新增 onToolCall 窄回调，agentAdapterToRunner 经 chainOnEvent 桥接
+        （chainOnEvent 现成，agent-adapter.ts:100）
+     -> Workflow Runtime 按 executionId 收集（executionId = runId:callIndex:attempt，types/index.ts:27，
+        天然含 attempt 序号，重试不混淆新旧调用）
+     -> 分流落盘：
+          成功 attempt -> JournalEntry.toolCalls（append 路径，workflow-runtime.ts:627）
           失败/中止 attempt -> AgentExecutionRecord.toolCalls（executions[]，recordExecution 路径）
    ```
-   失败 attempt 必须同样落盘（评审 v3 补充）：agent 最终失败时已发生的 MCP 调用经 executions[] 保留，
-   不因只挂成功 entry 而丢失。记录内容收紧为**安全摘要**（v3 P1-1，见风险表）：工具名/状态/耗时/
+   失败/取消/超时的已发生 MCP 调用经事件流实时送达 Runtime，再经 executions[] 保留，
+   与 attempt 终态无关。记录内容收紧为**安全摘要**（v3 P1-1，见风险表）：工具名/状态/耗时/
    参数字节数与脱敏后键名列表，**不存完整参数、不存返回值**；错误信息经脱敏与限长。
    不引入独立 McpCallRecord 类型——工具名 `mcp__` 前缀已可辨来源；非 MCP 工具调用本期不记录。
 
 ### DSL 侧（workflow `agent()` 参数）
 
-透传 `tools.mcp`（AgentRequest 已有 tools 字段透传链路），workflow 脚本即可写：
+透传 `tools.mcp`（`AgentRequest` 已定义 tools 字段；本次 M2 补齐从 Workflow DSL 到 AgentRequest 的传递链路，
+见改造点 5），workflow 脚本即可写：
 
 ```js
 const result = await agent({
@@ -261,8 +285,9 @@ const result = await agent({
     逐环节断言 tools 到达 PiAgentAdapter；禁止只用「直调 `PiAgentAdapter.execute()`」充当透传证据——
     那条路径绕过了本次补齐的三个断点。
   - 联调测试（遵守并发 ≤2、看门狗、证据落盘纪律）：真实 MCP server（建议用 `@modelcontextprotocol/server-filesystem` 或仓库内已有测试 server）经 codemode 被 Agent 调用成功；拒绝策略生效（含 deny 压过 server direct 的反向用例）；
-    journal 落盘验证双路径：成功 attempt 的 `toolCalls[]` 与失败 attempt 的 `executions[].toolCalls` 均含
-    `mcp__*` 摘要（名称/状态/耗时，无完整参数）；两层权限叠加语义（更严者胜）有显式测试用例。
+    journal 落盘验证双路径：成功 attempt 的 `toolCalls[]` 与**失败/超时/取消 attempt** 的 `executions[].toolCalls`
+    均含 `mcp__*` 摘要（名称/状态/耗时，无完整参数），且重试的新旧 attempt 调用不混录；
+    两层权限叠加语义（更严者胜）有显式测试用例。
 
 ---
 
@@ -295,7 +320,7 @@ const result = await agent({
 
 | 里程碑 | 状态 | 交付物 |
 |---|---|---|
-| M0 静态实证（F1-F11） | **已完成**（本文档第一节） | 本文档 |
+| M0 静态实证（F1-F12） | **已完成**（本文档第一节） | 本文档 |
 | M0 运行时实证（M0-1 ~ M0-6） | 未开始 | 实证脚本 + `M0-执行报告.md` |
 | M1 MCP 策略层（薄） | 未开始 | `src/mcp/mcp-policy.ts` + 契约测试 |
 | M2 AgentAdapter 接入 | 未开始 | 类型扩展 + PiAgentAdapter 改造 + 联调证据 |
