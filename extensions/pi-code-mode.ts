@@ -17,6 +17,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import path from "node:path"
 import { RunManager, withGlobalGate } from "../src/manager/run-manager.js"
 import { ModelPool } from "../src/engine/agent/model-pool.js"
 import { ensureModelTiersTemplate } from "../src/engine/agent/model-tiers.js"
@@ -35,18 +36,20 @@ import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 
 const runManager = new RunManager(16)
-// tier 配置引导（可发现性）：全局 model-tiers.json 不存在时创建带中文说明的空模板
+// tier 配置引导（可发现性）：工程 .pi/workflows/model-tiers.json 不存在时创建带中文说明的空模板
 // （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）。
 // 创建结果通过 session_start 的 ui.notify 通知（TUI 吞掉扩展 console.log，工厂期无 ctx.ui 可用）
+// 层级设计：工程级为主配置位（随项目走）；全局 ~/.pi/workflows/model-tiers.json 仍可手动创建作机器级兑底
+const projectDir = process.cwd()
 let tiersTemplateCreated: string | undefined
 let tiersTemplateError: string | undefined
 try {
-  tiersTemplateCreated = ensureModelTiersTemplate()
+  tiersTemplateCreated = ensureModelTiersTemplate(path.join(projectDir, ".pi", "workflows", "model-tiers.json"))
 } catch (e) {
   tiersTemplateError = String((e as Error)?.message ?? e)
 }
-// tier 解析：~/.pi/workflows/model-tiers.json + 项目级合并（引擎 agent/model-tiers.ts）
-const tiers = loadModelTiers()
+// tier 解析：全局 ~/.pi/workflows/model-tiers.json + 项目级合并（项目同名键覆盖；引擎 agent/model-tiers.ts）
+const tiers = loadModelTiers({ projectDir })
 // tier 模型池（v2 池化）：数组档位构建进程级池（每模型并发上限，acquire 溢出分配）；
 // 字符串档位走 resolveTier 单模型路径（不建池）
 const tierPools = new Map<string, ModelPool>()
