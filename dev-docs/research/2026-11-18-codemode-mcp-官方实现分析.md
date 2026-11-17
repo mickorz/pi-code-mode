@@ -171,6 +171,22 @@ workflow 编排层的对应物：脚本间状态传递走我们的 `args`/`retur
 
 ---
 
+## 六、补充：pi-code-mode 与官方 code-mode 在「JS 中调用 MCP」上的区别（2026-11-18 补）
+
+前提澄清：pi-code-mode 不自建 JS 调 MCP 机制——子 Agent 会话内的 Codemode 就是官方 `createCodemodeExtension()` 那份代码，脚本写法（`searchTools()` → `tools.mcp__server__tool()`）一字不差。区别在调用主体、可达面、生命周期与审计：
+
+| 维度 | 官方 pi code-mode | pi-code-mode（M2 后） |
+|---|---|---|
+| 调用主体 | 同一个 harness 内的同一个模型：先写 codemode 脚本再调 MCP | 外层 **workflow JS**（node:vm，编排层，不调 MCP）发起 `agent()` → **新的子 AgentSession 里的另一个模型实例**去写 codemode JS 调 MCP；两层 JS 主体与目的不同（外层确定性编排 / 内层模型探索） |
+| JS 运行环境 | QuickJS WASM 沙箱（无 IO） | 子会话内同官方（QuickJS）；外层 workflow JS 在 node:vm（受控注入，无网络/FS） |
+| 可达面 | 宿主 mcp.json 全部已连接 server（单用户，无 per-agent 权限概念；仅 exposure 分级） | **被 Agent 级策略收窄**：`agent({ tools: { mcp } })` 声明白名单 → loadConfig 过滤 → codemode 的 searchTools/tools 只能见白名单内工具；同一份官方运行时，可达面由 policy 决定 |
+| 连接生命周期 | MCP 连接属于长驻宿主会话（/mcp 管理，跨调用复用） | 连接属于一次性子 AgentSession（stdio 每 session 独立进程，M0-4/F15：dispose 不回收） |
+| 审计 | 走工具管线（tool_call hooks），但无跨会话持久化（inMemory 会话丢弃） | 事件侧采集 → **journal toolCalls 双落点**（成功 entry / 失败 attempt），run 级可追溯 |
+| 嵌套深度 | 模型 → codemode JS → MCP（单层） | workflow JS → agent() → 子模型 → codemode JS → MCP（两层，但避开了文章批评的 Codemode-in-Codemode 反模式：外层不调 MCP，无双重转义，内层可正常走管线） |
+| store/load | session 内跨 codemode 调用保持 JSON 状态 | 子会话内同官方可用；跨 Agent 状态传递走编排层 return/args（不同层互补） |
+
+一句话：官方解决「模型怎么用 JS 调 MCP」，pi-code-mode 解决「多个各有权限边界的 Agent 在一次 workflow 里被编排去调 MCP」——内层调用机制完全复用官方，外层加了策略收窄、生命周期隔离与审计。
+
 ## 五、引用
 
 - 文章：Armin Ronacher, *What is Codemode*, https://lucumr.pocoo.org/2026/10/6/codemode/（2026-10-06）
