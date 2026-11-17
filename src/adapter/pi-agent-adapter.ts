@@ -19,8 +19,10 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import os from "node:os"
 import path from "node:path"
+import type { Model } from "@earendil-works/pi-ai"
 import type { AgentAdapter, AgentEvent, AgentRequest, AgentResult, ExecutionContext } from "./types.js"
 import { validateStructured } from "./structured.js"
+import { resolveModelSpec } from "./model-spec.js"
 
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent")
 
@@ -60,12 +62,24 @@ export class PiAgentAdapter implements AgentAdapter {
 
     let session: AgentSession
     try {
+      // tier/model 指定（P2 池化前置修复）：解析 provider/model[:thinking] -> Model，
+      // 查询不到回退会话默认模型（与 P1-3 回退语义一致）
+      let sessionModel: Model<any> | undefined
+      let thinkingLevel: string | undefined
+      if (request.model) {
+        const resolved = await resolveModelSpec(request.model)
+        sessionModel = resolved.model
+        thinkingLevel = resolved.thinkingLevel
+        if (resolved.warning) console.warn(`[pi-code-mode] ${resolved.warning}`)
+      }
       const created = await createAgentSession({
         cwd,
         agentDir: this.agentDir,
         sessionManager: SessionManager.inMemory(),
         settingsManager: SettingsManager.create(cwd, agentDir),
         resourceLoader: loader,
+        ...(sessionModel ? { model: sessionModel } : {}),
+        ...(thinkingLevel ? { thinkingLevel: thinkingLevel as never } : {}),
         ...(request.tools?.allowTools ? { tools: request.tools.allowTools } : {}),
         ...(policy.excludeTools ? { excludeTools: policy.excludeTools } : {}),
       })
