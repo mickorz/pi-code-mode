@@ -43,15 +43,38 @@ export function splitToolSpec(spec: string): { server: string; tool: string } | 
   return { server: spec.slice(0, idx), tool: spec.slice(idx + 1) }
 }
 
+/** 未声明 servers 白名单时的缺省语义：none=拒绝全部（默认），all=全部 enabled server */
+export type DefaultServersMode = "none" | "all"
+
 /**
  * 过滤默认 MCP 配置：按 Agent 策略产出 LoadedMcpConfig（McpExtensionOptions.loadConfig 注入用）。
  * 纯函数：不读文件、不发起连接、不改入参。
+ *
+ * defaultServers 语义（未写 servers 白名单时）：
+ *  - "none"（缺省，M2 子 Agent 场景）：默认拒绝——模型自主探索 + N×M 并发连接成本，需显式声明
+ *  - "all"（M4 workflow 直调场景）：默认全部 enabled server——作者在脚本里写死的同步调用，
+ *    且池为懒连接（只连实际调用的 server，F16 阻塞面=调用面）；要封锁特定工具用 denyTools
  */
-export function filterMcpConfig(base: LoadedMcpConfig, policy: McpPolicy): LoadedMcpConfig {
+export function filterMcpConfig(
+  base: LoadedMcpConfig,
+  policy: McpPolicy,
+  opts?: { defaultServers?: DefaultServersMode },
+): LoadedMcpConfig {
+  const defaultMode = opts?.defaultServers ?? "none"
   const errors: string[] = [...base.errors]
-  // 总开关关闭或未配 server 白名单 → 默认拒绝（空集）
-  if (!policy.enabled || !policy.servers || policy.servers.length === 0) {
+  // 总开关关闭 → 空集；未配白名单时按 defaultServers 决定缺省面
+  if (!policy.enabled) {
     return { servers: [], errors, autoEnableCodemode: base.autoEnableCodemode, projectConfig: base.projectConfig }
+  }
+  if (!policy.servers || policy.servers.length === 0) {
+    if (defaultMode === "none") {
+      return { servers: [], errors, autoEnableCodemode: base.autoEnableCodemode, projectConfig: base.projectConfig }
+    }
+    // "all"：全部 enabled server（meta.mcp 缺省 / { enabled: true } 均落入）
+    const servers = base.servers
+      .filter((e) => (e.config as unknown as { enabled?: unknown }).enabled !== false)
+      .map((e) => ({ ...e }))
+    return { servers, errors, autoEnableCodemode: base.autoEnableCodemode, projectConfig: base.projectConfig }
   }
 
   const wanted = new Set(policy.servers)

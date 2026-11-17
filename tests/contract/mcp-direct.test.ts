@@ -69,11 +69,19 @@ return { servers, names: tools.map((t) => t.name).sort() }`
   assert.deepEqual(out.names, ["echo"])
 })
 
-test("M4：未声明 meta.mcp → 默认拒绝（mcp.call 抛错）", async () => {
+test("M4：未声明 meta.mcp → 默认全量可用（宿主全部 enabled server，agentDir 隔离后即 fixture）", async () => {
   const script = `export const meta = { name: 'm4_none' }
+const r = await mcp.call('fix', 'echo', { text: 'open-by-default' })
+return r`
+  const result = await run(script, "m4-4")
+  assert.equal(String(result.result), "open-by-default")
+})
+
+test("M4：meta.mcp 显式 enabled:false → 拒绝桩（显式禁用语义）", async () => {
+  const script = `export const meta = { name: 'm4_disabled', mcp: { enabled: false } }
 const r = await mcp.call('fix', 'echo', {})
 return r`
-  await assert.rejects(run(script, "m4-4"), /未在 meta\.mcp 声明 MCP 权限/)
+  await assert.rejects(run(script, "m4-4b"), /显式声明了 enabled: false/)
 })
 
 test("M4：denyTools → hidden 拒绝（调用抛策略错误）", async () => {
@@ -87,23 +95,26 @@ test("M4：白名单外 server → 拒绝（默认拒绝原则）", async () => 
   const script = `export const meta = { name: 'm4_other', mcp: { enabled: true, servers: ['fix'] } }
 const r = await mcp.call('ghost', 'echo', {})
 return r`
-  await assert.rejects(run(script, "m4-6"), /不在本 workflow 的 mcp 白名单内/)
+  await assert.rejects(run(script, "m4-6"), /不在本 workflow 的 mcp 可达面内/)
 })
 
 test("M4：tools proxy 访问白名单外前缀 → TypeError（枚举走 mcp.listTools）", async () => {
   const script = `export const meta = { name: 'm4_proxy_deny', mcp: { enabled: true, servers: ['fix'] } }
 const r = await tools.mcp__ghost__echo({})
 return r`
-  await assert.rejects(run(script, "m4-7"), /tools\.mcp__ghost__echo is not a function/)
-  // 说明：tools 为宿主预生成的普通函数对象（node:vm 跨边界 Proxy 不可靠），未知名是 TypeError；
-  // 官方 prelude 的拼写建议 guard 在 QuickJS 内部，跨边界注入做不到。枚举工具用 mcp.listTools(server)
+  await assert.rejects(
+    run(script, "m4-7"),
+    /tools\.mcp__ghost__echo 不存在或不在本 workflow 的 mcp 可达面内.*可达 server：fix/,
+  )
+  // 说明：tools 为沙箱内 Proxy 按需解析（调用时才校验可达面），未知名报含可达列表的策略错误；
+  // 枚举工具用 mcp.listTools(server)
 })
 
 test("M4：非 mcp 前缀的 tools 访问 → TypeError（bash 走 runTool）", async () => {
   const script = `export const meta = { name: 'm4_nonmcp', mcp: { enabled: true, servers: ['fix'] } }
 const r = await tools.bash({ command: 'echo x' })
 return r`
-  await assert.rejects(run(script, "m4-8"), /tools\.bash is not a function/)
+  await assert.rejects(run(script, "m4-8"), /tools 只提供 MCP 工具.*runTool/)
 })
 
 test("M4：onMcpCall 审计回调收到每条调用的安全摘要", async () => {

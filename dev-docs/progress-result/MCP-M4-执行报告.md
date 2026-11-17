@@ -57,3 +57,14 @@ await mcp.listTools("zread")
 - 池为 run 级（每 runWorkflow 一池）——高频多 run 场景的跨 run 连接复用（连接池共享）留待后续迭代（首期优先隔离与简单）
 - `mcp.call` 的结果暂不写入 journal（走 `onMcpCall` 回调 + run 日志）——独立 `McpCallRecord` journal entry 形态与副作用 Replay Policy 联动仍在 M4 后续范围
 - OAuth：HTTP server 401 需认证场景不支持（F16：策略过滤层天然挡掉，直调池同样只连白名单内 server）
+
+## 七、补记（同日）：默认语义变更为「默认开启」（用户决策）
+
+用户明确要求「未声明 meta.mcp 时像官方一样直接可用」，已按此变更：
+
+- **workflow 直调（M4）**：未声明 `meta.mcp` → 可达面 = 宿主 mcp.json 全部 enabled server（默认开启）；`meta.mcp.enabled: false` 才禁用（拒绝桩）；声明了则按声明收敛（servers 白名单/denyTools/exposure）。
+- **实现**：`filterMcpConfig` 新增 `defaultServers` 模式参数（`"none"` 缺省 / `"all"`），池与 runtime 传 `"all"`；懒连接兜底 F16（只连实际调用的 server，阻塞面=调用面）。
+- **M2 子 Agent 保持默认拒绝**（信任模型不同）：子 Agent 是模型自主探索 + bindExtensions 全连（N×M 并发连接成本 + F16 阻塞），脚本要给子 Agent MCP 必须显式 servers 白名单。两条通道语义分叉已在报告中说明。
+- **`tools` 对象实现变更**：预生成枚举方案废弃（默认全量时每次 run 都枚举宿主全部 server，实测拖死引擎测试 600s+），改为**沙箱内 Proxy + 宿主同步桥**（`globalThis.tools = new Proxy(...)`，官方 prelude 挂 globalThis 的同款方式；调用时才校验可达面/连接，零枚举成本）。未知名报含可达 server 列表的策略错误。
+- 脚本作者注意事项：避免用 `tools`/`mcp` 作局部变量名（遮蔽注入对象）；`tools.<未知名>` 报含可达 server 列表的错误，枚举用 `mcp.listTools(server)`。
+- 测试：mcp-policy 17（新增 defaultServers "all" 3 条）、mcp-direct 11（未声明→全量可用、显式禁用、可达面文案）全绿；契约 95/引擎 206 零回归；宿主真实 server e2e 6/6。

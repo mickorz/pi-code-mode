@@ -4,9 +4,10 @@
  * 设计边界（执行计划第四节）：
  *  - Workflow VM 不直接持有 MCP Client/Node 网络能力——VM 内只见受控注入的 `mcp`/`tools` 对象，
  *    每次调用经本池的权限检查（filterMcpConfig 产出的 exposure 语义）与审计回调。
- *  - 权限：池按 root workflow 的 meta.mcp（McpPolicy）建白名单（默认拒绝）；脚本调用超出
- *    白名单的 server / hidden 工具一律抛错。
- *  - 生命周期：懒连接（首次访问该 server 才连）、run 结束 dispose()（M0-4/F15 教训：必须显式回收）。
+ *  - 权限：池按 root workflow 的 meta.mcp（McpPolicy）建可达面；defaultServers "all" 时
+ *    未声明白名单 = 全部宿主 enabled server（默认开启，用户决策 2026-11-18）；
+ *    懒连接兜底 F16（只连实际调用的 server，阻塞面=调用面）。
+ *  - 生命周期：懒连接、run 结束 dispose()（M0-4/F15 教训：stdio 子进程必须显式关闭）。
  *  - 复用：配置读取复用 readMcpConfigFiles + filterMcpConfig（M1/M2 同一策略链）；
  *    传输用 pi-mcp 的 StdioTransport / StreamableHttpTransport（F10）。
  */
@@ -27,7 +28,7 @@ import {
 
 import type { McpPolicy } from "../engine/types/index.js"
 import { readMcpConfigFiles } from "./mcp-config-loader.js"
-import { filterMcpConfig } from "./mcp-policy.js"
+import { filterMcpConfig, type DefaultServersMode } from "./mcp-policy.js"
 
 /** 与 pi 内建 getMcpToolExposure 等价的 exposure 判定（精确名 → 首个命中的模式 → server 默认） */
 function toolExposure(entry: McpServerEntry, toolName: string): McpServerEntry["config"]["exposure"] {
@@ -51,19 +52,32 @@ function namespaceOf(server: string): string {
 
 export interface McpClientPoolOptions {
   policy: McpPolicy
+  /** 未声明 servers 白名单时的缺省面（none=拒绝全部，all=全部 enabled server）；workflow 直调用 "all" */
+  defaultServers?: DefaultServersMode
   /** 宿主全局配置目录（读 mcp.json），缺省 ~/.pi/agent */
   agentDir?: string
   /** 项目目录（受信时读 .pi/mcp.json），缺省 process.cwd() */
   cwd?: string
   signal?: AbortSignal
-  /** 单请求超时毫秒；缺省 60000 */
+  /** 单请求超时毫秒；缺省 60000（须传到请求级，pi-mcp 内部默认 30s 会先行触发） */
   timeoutMs?: number
 }
 
 interface Connection {
   client: McpClient
   transport: { close(): Promise<void> }
-  tools?: Tool[]
+}
+
+/** MCP 直调审计记录（server 级；toolName 为 mcp__ 全名） */
+export interface McpDirectCallRecord {
+  server: string
+  qualifiedName: string
+  toolName: string
+  status: "ok" | "error"
+  argsBytes: number
+  argsKeys?: string[]
+  durationMs?: number
+  error?: string
 }
 
 /** 每个 run 一个池实例：懒连接、权限过滤、run 结束 dispose */
@@ -71,7 +85,7 @@ export class McpClientPool {
   private readonly entries: Map<string, McpServerEntry> = new Map()
   private readonly connections: Map<string, Connection> = new Map()
   private readonly toolsCache: Map<string, Tool[]> = new Map()
-  private timeoutMs: number
+  private readonly timeoutMs: number
   private readonly signal?: AbortSignal
   private disposed = false
 
@@ -81,19 +95,19 @@ export class McpClientPool {
     const agentDir = options.agentDir ?? path.join(os.homedir(), ".pi", "agent")
     const cwd = options.cwd ?? process.cwd()
     const base: LoadedMcpConfig = readMcpConfigFiles(agentDir, cwd, true)
-    const filtered = filterMcpConfig(base, options.policy)
+    const filtered = filterMcpConfig(base, options.policy, { defaultServers: options.defaultServers ?? "none" })
     for (const entry of filtered.servers) this.entries.set(entry.name, entry)
   }
 
-  /** 白名单内的 server 名（按策略过滤后） */
+  /** 可达面内的 server 名（按策略过滤后） */
   listServers(): string[] {
     return [...this.entries.keys()]
   }
 
   /**
-   * 解析 mcp__<server>__<tool> 形式的全名到白名单内的 server 与裸工具名。
-   * server 名中 "-" 以 "_" 出现在工具名（F14），按白名单逐个前缀匹配还原。
-   * 未命中（非白名单 server / 未知前缀）返回 null，由调用方抛权限错误。
+   * 解析 mcp__<server>__<tool> 形式的全名到可达面内的 server 与裸工具名。
+   * server 名中 "-" 以 "_" 出现在工具名（F14），按可达面逐个前缀匹配还原。
+   * 未命中（非可达 server / 未知前缀）返回 null，由调用方抛权限错误。
    */
   resolveQualifiedName(qualified: string): { server: string; entry: McpServerEntry; tool: string } | null {
     for (const [server, entry] of this.entries) {
@@ -105,10 +119,10 @@ export class McpClientPool {
     return null
   }
 
-  /** 白名单内 server 的工具清单（tools/list，结果缓存；hidden 工具不返回） */
+  /** 可达面内 server 的工具清单（tools/list，结果缓存；hidden 工具不返回） */
   async listTools(server: string): Promise<Tool[]> {
     const entry = this.entries.get(server)
-    if (!entry) throw new Error(`MCP server "${server}" 不在 workflow 的 mcp 白名单内`)
+    if (!entry) throw new Error(`MCP server "${server}" 不在 workflow 的 mcp 可达面内`)
     const cached = this.toolsCache.get(server)
     if (cached) return cached
     const conn = await this.connect(server)
@@ -121,12 +135,30 @@ export class McpClientPool {
   /** 调用工具：hidden 工具拒绝（与 pi exposure 语义一致）；返回 CallToolResult 原始结构 */
   async callTool(server: string, toolName: string, args?: Record<string, unknown>): Promise<CallToolResult> {
     const entry = this.entries.get(server)
-    if (!entry) throw new Error(`MCP server "${server}" 不在 workflow 的 mcp 白名单内`)
+    if (!entry) throw new Error(`MCP server "${server}" 不在 workflow 的 mcp 可达面内`)
     if (toolExposure(entry, toolName) === "hidden") {
       throw new Error(`MCP 工具 "${server}/${toolName}" 被 mcp 策略拒绝（hidden）`)
     }
     const conn = await this.connect(server)
     return conn.client.callTool(toolName, args ?? {}, { signal: this.timeoutSignal(), timeoutMs: this.timeoutMs })
+  }
+
+  /**
+   * 按全名（mcp__<server>__<tool>）调用：解析可达面（F14 namespace 映射）→ 校验 → 审计 → 调用。
+   * 供 workflow VM 的 tools 沙箱 Proxy 桥接（同步宿主函数，返回 Promise 跨边界）。
+   * 未知名/可达面外抛含可达 server 列表的错误（调用时才校验，零预枚举成本）。
+   */
+  callByName(qualified: string, args?: Record<string, unknown>): Promise<unknown> {
+    const resolved = this.resolveQualifiedName(qualified)
+    if (!resolved) {
+      const servers = this.listServers().join(", ") || "(无)"
+      throw new Error(
+        qualified.startsWith("mcp__")
+          ? `tools.${qualified} 不存在或不在本 workflow 的 mcp 可达面内。可达 server：${servers}（用 mcp.listTools(server) 查看工具）`
+          : `tools.${qualified} 不存在：workflow 内的 tools 只提供 MCP 工具（mcp__<server>__<tool>）。bash/文件等能力用 runTool() 或工具节点`,
+      )
+    }
+    return auditCall(resolved.server, qualified, args, () => this.callTool(resolved.server, resolved.tool, args))
   }
 
   /** 关闭全部连接（run 结束时调用；幂等）。stdio 子进程经 transport.close() 回收 */
@@ -171,7 +203,7 @@ export class McpClientPool {
     const existing = this.connections.get(server)
     if (existing) return existing
     const entry = this.entries.get(server)
-    if (!entry) throw new Error(`MCP server "${server}" 不在 workflow 的 mcp 白名单内`)
+    if (!entry) throw new Error(`MCP server "${server}" 不在 workflow 的 mcp 可达面内`)
     if (this.signal?.aborted) throw new Error(`workflow 已中止，跳过连接 MCP server "${server}"`)
 
     const client = new McpClient({ name: "pi-code-mode-workflow", version: "0.1.0" })
@@ -193,30 +225,63 @@ export class McpClientPool {
       })
     }
     await client.connect(transport as never)
-    const conn: Connection = { client, transport }
+    const conn: Connection = { client, transport: transport as { close(): Promise<void> } }
     this.connections.set(server, conn)
     return conn
   }
 }
 
-// ── Workflow VM 注入层（官方 codemode 同款调用形态） ──
-
-/** MCP 直调审计记录（server 级；toolName 为 mcp__ 全名） */
-export type McpDirectCallRecord = McpToolCallSummaryLike & { server: string; qualifiedName: string }
-
-interface McpToolCallSummaryLike {
-  toolName: string
-  status: "ok" | "error"
-  argsBytes: number
-  argsKeys?: string[]
-  durationMs?: number
-  error?: string
+/** 调用审计包装：摘要（不存参数值/返回值）+ 官方结果形态（structuredContent 优先，否则文本拼接） */
+async function auditCall(
+  server: string,
+  qualified: string,
+  args: unknown,
+  run: () => Promise<CallToolResult>,
+  onCall?: (record: McpDirectCallRecord) => void,
+): Promise<unknown> {
+  const startedAt = Date.now()
+  let argsStr = ""
+  try {
+    argsStr = JSON.stringify(args ?? {})
+  } catch {
+    argsStr = ""
+  }
+  try {
+    const result = await run()
+    onCall?.({
+      server,
+      qualifiedName: qualified,
+      toolName: qualified,
+      status: result.isError ? "error" : "ok",
+      argsBytes: Buffer.byteLength(argsStr, "utf8"),
+      argsKeys: Object.keys(args ?? {}),
+      durationMs: Date.now() - startedAt,
+    })
+    if (result.structuredContent !== undefined) return result.structuredContent
+    return result.content
+      .map((block) => (block.type === "text" ? block.text : JSON.stringify(block)))
+      .join("")
+  } catch (e) {
+    onCall?.({
+      server,
+      qualifiedName: qualified,
+      toolName: qualified,
+      status: "error",
+      argsBytes: Buffer.byteLength(argsStr, "utf8"),
+      argsKeys: Object.keys(args ?? {}),
+      durationMs: Date.now() - startedAt,
+      error: String((e as Error)?.message ?? e).slice(0, 300),
+    })
+    throw e
+  }
 }
+
+// ── Workflow VM 注入层（官方 codemode 同款调用形态） ──
 
 export interface McpInvokerOptions {
   /** 池（root 建立的白名单可达面） */
   pool: McpClientPool
-  /** 本 invocation 的 server 白名单收敛声明（meta.mcp.servers）；undefined = 拒绝全部 */
+  /** 本 invocation 的 server 白名单收敛声明（meta.mcp.servers）；undefined = 跟随池可达面 */
   localServers?: string[]
   /** 审计回调（每条调用实时发） */
   onCall?: (record: McpDirectCallRecord) => void
@@ -227,82 +292,53 @@ export interface McpInvokerOptions {
 export interface McpInvoker {
   /** mcp.call(server, tool, args) —— 结果形态对齐官方 codemode：structuredContent 优先，否则文本串；isError/被拒 reject */
   call(server: string, tool: string, args?: Record<string, unknown>): Promise<unknown>
-  /** mcp.listTools(server) —— 白名单 server 的可见工具清单（hidden 不返回） */
+  /** mcp.listTools(server) —— 可达面内 server 的可见工具清单（hidden 不返回） */
   listTools(server: string): Promise<Array<{ name: string; description?: string }>>
   /** mcp.listServers() —— 本 invocation 可达的 server 白名单 */
   listServers(): string[]
   /**
-   * 构建 tools 对象（官方 prelude 同款：宿主侧预生成普通函数注入，key 为 mcp__<server>__<tool>）。
-   * 不用跨边界 Proxy——node:vm contextify 会干扰 Proxy get trap（实测 "is not a function"）。
-   * 工具集以首次 listTools 快照为准（MCP server 工具集在连接后视为稳定）。
+   * 沙箱内 tools Proxy 的宿主桥（同步函数，返回 Promise 跨边界）。
+   * 官方 prelude 同款思路：tools 对象由沙箱内 Proxy 按需解析，零预枚举；
+   * 未知名抛含可达 server 列表的错误。
    */
-  buildToolsObject(): Promise<Record<string, (args?: Record<string, unknown>) => Promise<unknown>>>
+  callByName(qualified: string, args?: Record<string, unknown>): Promise<unknown>
 }
 
-/** 组装注入 workflow VM 的 mcp/tools 对象（每次 invocation 独立；server 面 = 池 ∩ localServers） */
+/** 组装注入 workflow VM 的 mcp/tools 桥（每次 invocation 独立；server 面 = 池 ∩ localServers） */
 export function makeMcpInvoker(options: McpInvokerOptions): McpInvoker {
   const { pool, onCall } = options
   const local = options.localServers ? new Set(options.localServers) : undefined
   const allowed = pool.listServers().filter((s) => !local || local.has(s))
-
-  const audit = (qualified: string, server: string, startedAt: number, args: unknown, run: () => Promise<CallToolResult>) =>
-    (async () => {
-      let argsStr = ""
-      try {
-        argsStr = JSON.stringify(args ?? {})
-      } catch {
-        argsStr = ""
-      }
-      try {
-        const result = await run()
-        onCall?.({
-          server,
-          qualifiedName: qualified,
-          toolName: qualified,
-          status: result.isError ? "error" : "ok",
-          argsBytes: Buffer.byteLength(argsStr, "utf8"),
-          argsKeys: Object.keys(args ?? {}),
-          durationMs: Date.now() - startedAt,
-        })
-        // 官方 codemode 结果形态：structuredContent 优先，否则文本拼接
-        if (result.structuredContent !== undefined) return result.structuredContent
-        return result.content
-          .map((block) => (block.type === "text" ? block.text : JSON.stringify(block)))
-          .join("")
-      } catch (e) {
-        onCall?.({
-          server,
-          qualifiedName: qualified,
-          toolName: qualified,
-          status: "error",
-          argsBytes: Buffer.byteLength(argsStr, "utf8"),
-          argsKeys: Object.keys(args ?? {}),
-          durationMs: Date.now() - startedAt,
-          error: String((e as Error)?.message ?? e).slice(0, 300),
-        })
-        throw e
-      }
-    })()
-
   const allowedServers = () => allowed.join(", ") || "(无——meta.mcp.servers 未声明或为空)"
 
-  const invoker: McpInvoker = {
+  const invoke = (qualified: string, args?: Record<string, unknown>): Promise<unknown> => {
+    options.onTouch?.()
+    const resolved = pool.resolveQualifiedName(qualified)
+    if (!resolved || (local && !local.has(resolved.server))) {
+      throw new Error(
+        qualified.startsWith("mcp__")
+          ? `tools.${qualified} 不存在或不在本 workflow 的 mcp 可达面内。可达 server：${allowedServers()}（用 mcp.listTools(server) 查看工具）`
+          : `tools.${qualified} 不存在：workflow 内的 tools 只提供 MCP 工具（mcp__<server>__<tool>）。bash/文件等能力用 runTool() 或工具节点`,
+      )
+    }
+    return auditCall(resolved.server, qualified, args, () => pool.callTool(resolved.server, resolved.tool, args), onCall)
+  }
+
+  return {
     async call(server, tool, args) {
       options.onTouch?.()
       if (!allowed.includes(server)) {
         throw new Error(
-          `mcp.call("${server}") 被拒绝：server 不在本 workflow 的 mcp 白名单内。可达 server：${allowedServers()}`,
+          `mcp.call("${server}") 被拒绝：server 不在本 workflow 的 mcp 可达面内。可达 server：${allowedServers()}`,
         )
       }
-      return audit(`mcp__${namespaceOf(server)}__${tool}`, server, Date.now(), args, () =>
-        pool.callTool(server, tool, args),
-      )
+      return auditCall(server, `mcp__${namespaceOf(server)}__${tool}`, args, () => pool.callTool(server, tool, args), onCall)
     },
     async listTools(server) {
       options.onTouch?.()
       if (!allowed.includes(server)) {
         throw new Error(
-          `mcp.listTools("${server}") 被拒绝：server 不在本 workflow 的 mcp 白名单内。可达 server：${allowedServers()}`,
+          `mcp.listTools("${server}") 被拒绝：server 不在本 workflow 的 mcp 可达面内。可达 server：${allowedServers()}`,
         )
       }
       const tools = await pool.listTools(server)
@@ -311,24 +347,8 @@ export function makeMcpInvoker(options: McpInvokerOptions): McpInvoker {
     listServers() {
       return [...allowed]
     },
-    async buildToolsObject() {
-      const obj: Record<string, (args?: Record<string, unknown>) => Promise<unknown>> = {}
-      for (const server of allowed) {
-        let tools: Array<{ name: string }> = []
-        try {
-          tools = await invoker.listTools(server)
-        } catch (e) {
-          console.warn(`[pi-code-mode] MCP server "${server}" 工具枚举失败，已跳过：${String((e as Error)?.message ?? e)}`)
-          continue
-        }
-        for (const tool of tools) {
-          const qualified = `mcp__${namespaceOf(server)}__${tool.name}`
-          obj[qualified] = (args?: Record<string, unknown>) =>
-            audit(qualified, server, Date.now(), args, () => pool.callTool(server, tool.name, args))
-        }
-      }
-      return obj
+    callByName(qualified, args) {
+      return invoke(qualified, args)
     },
   }
-  return invoker
 }

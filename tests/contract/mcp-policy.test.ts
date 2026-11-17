@@ -166,3 +166,21 @@ test("deny 对未白名单 server 的条目被忽略", () => {
   assert.equal(game.toolExposure, undefined)
   assert.equal(game.exposure, undefined)
 })
+
+test("defaultServers 'all'：未声明 servers → 全部 enabled server（workflow 直调默认开启语义）", () => {
+  const base = makeBase()
+  const out = filterMcpConfig(base, { enabled: true }, { defaultServers: "all" })
+  assert.deepEqual(out.servers.map((s) => s.name), ["game", "docs"])
+})
+
+test("defaultServers 'all'：disabled server 仍被排除", () => {
+  const base = makeBase()
+  ;(base.servers[0]!.config as Record<string, unknown>).enabled = false
+  const out = filterMcpConfig(base, { enabled: true }, { defaultServers: "all" })
+  assert.deepEqual(out.servers.map((s) => s.name), ["docs"])
+})
+
+test("defaultServers 'all'：声明了 servers 时仍按白名单过滤", () => {
+  const out = filterMcpConfig(makeBase(), { enabled: true, servers: ["docs"] }, { defaultServers: "all" })
+  assert.deepEqual(out.servers.map((s) => s.name), ["docs"])
+})

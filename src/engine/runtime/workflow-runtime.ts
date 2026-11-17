@@ -380,19 +380,23 @@ async function executeWorkflow(
 ): Promise<{ meta: ReturnType<typeof parseWorkflowScript>["meta"]; result: unknown }> {
   const { meta, body } = parseWorkflowScript(script)
 
-  // M4：workflow 直调 MCP——root meta.mcp 建池（默认拒绝）；child 声明收敛到 root 白名单；
-  // 本 invocation 未声明 meta.mcp.enabled 时 mcp/tools 调用抛错（默认拒绝原则）
+  // M4：workflow 直调 MCP——默认开启全部宿主 enabled server（懒连接兜底：只连实际调用的 server，
+  // F16 阻塞面=调用面）；声明了 meta.mcp 则按声明收敛（servers 白名单/denyTools/exposure）。
+  // child 声明收敛到 root 白名单 ∩ 自身声明；root 未声明而 child 声明时按 child 声明建池。
   let mcpInvoker: McpInvoker | undefined
-  if (meta.mcp?.enabled) {
+  const wantsMcp = meta.mcp?.enabled !== false // 未声明 = 默认开启；显式 enabled:false = 禁用
+  if (wantsMcp) {
+    const declared = meta.mcp?.enabled === true ? meta.mcp : undefined
     if (!scope.parent) {
       shared.mcpPool ??= new McpClientPool({
-        policy: meta.mcp,
+        policy: declared ?? { enabled: true },
+        defaultServers: "all",
         agentDir: shared.agentDir,
         cwd: shared.cwd,
         signal: shared.signal,
       })
-      shared.mcpPoolPolicy = meta.mcp
-    } else if (!shared.mcpPool || !shared.mcpPoolPolicy) {
+      shared.mcpPoolPolicy = declared ?? { enabled: true }
+    } else if (!shared.mcpPool) {
       throw new WorkflowError(
         `子 workflow "${meta.name}" 声明了 meta.mcp，但 root workflow 未声明（MCP 权限必须在 root meta.mcp 声明）`,
         WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
@@ -401,8 +405,8 @@ async function executeWorkflow(
     }
     mcpInvoker = makeMcpInvoker({
       pool: shared.mcpPool!,
-      // child 收敛：自身 servers 声明 ∩ root 白名单（池 entries 已按 root 过滤）
-      localServers: meta.mcp.servers,
+      // child 收敛：自身 servers 声明 ∩ root 白名单（池 entries 已按 root/defaultServers 过滤）
+      localServers: declared?.servers ?? meta.mcp?.servers,
       // M4：实际使用即计入确定性工具节点（纯 MCP workflow 合法，同 P4.1 runTool 语义）
       onTouch: () => {
         shared.toolCount++
@@ -475,10 +479,10 @@ async function executeWorkflow(
   const defaultAgentLabel = (phaseTitle: string | undefined, index: number): string =>
     phaseTitle ? `${phaseTitle} agent ${index}` : `agent ${index}`
 
-  /** M4：未声明 meta.mcp 的 workflow 的拒绝错误（默认拒绝原则） */
+  /** M4：meta.mcp 显式 enabled:false 时的拒绝错误（显式禁用语义） */
   const denyMcpError = (workflowName: string): WorkflowError =>
     new WorkflowError(
-      `workflow "${workflowName}" 未在 meta.mcp 声明 MCP 权限（默认拒绝）。需要直调 MCP 时在 meta 中声明：mcp: { enabled: true, servers: [...], allowTools: [...] }`,
+      `workflow "${workflowName}" 的 meta.mcp 显式声明了 enabled: false，MCP 直调已禁用`,
       WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
       { recoverable: false },
     )
@@ -1587,12 +1591,12 @@ async function executeWorkflow(
     retry,
     checkpoint,
     console: consoleShim,
-    // M4：workflow 直调 MCP（官方 prelude 同款：宿主侧预生成普通函数注入）
-    // 未声明 meta.mcp 时注入拒绝桩（默认拒绝原则）
+    // M4：workflow 直调 MCP——mcp 显式函数注入（零枚举成本）；tools 走沙箱内 Proxy + __mcpBridge（惰性，
+    // 调用时才校验可达面/连接；跨边界 Proxy 不可靠，故 Proxy 在 body 前的沙箱内创建，官方 prelude 同思路）
     ...(mcpInvoker
       ? {
           mcp: { call: mcpInvoker.call, listTools: mcpInvoker.listTools, listServers: mcpInvoker.listServers },
-          tools: await mcpInvoker.buildToolsObject(),
+          __mcpBridge: (qualified: string, args?: Record<string, unknown>) => mcpInvoker.callByName(qualified, args),
         }
       : {
           mcp: {
@@ -1600,17 +1604,30 @@ async function executeWorkflow(
             listTools: () => Promise.reject(denyMcpError(meta.name)),
             listServers: () => Promise.reject(denyMcpError(meta.name)),
           },
-          tools: new Proxy(
-            {},
-            {
-              get: () => () => Promise.reject(denyMcpError(meta.name)),
-            },
-          ),
+          __mcpBridge: () => {
+            throw denyMcpError(meta.name)
+          },
         }),
   }
 
   try {
-    const result = await runScriptInVm(body, scope.label, globals)
+    // M4：tools 沙箱内 Proxy prelude（跨边界 Proxy 不可靠，故 Proxy 在沙箱内创建；
+    // __mcpBridge 为宿主同步函数，返回 Promise 跨边界；调用时才校验可达面/连接——零预枚举成本）。
+    // 挂在 globalThis（非 const 声明）：脚本内 `const tools` 局部声明可合法遮蔽，与官方一致
+    const mcpPrelude = mcpInvoker
+      ? `
+globalThis.tools = new Proxy({}, {
+  get(_, prop) {
+    if (typeof prop !== "string" || prop === "then") return undefined
+    if (!prop.startsWith("mcp__")) {
+      throw new TypeError("tools 只提供 MCP 工具（mcp__<server>__<tool>）；bash/文件等能力用 runTool() 或工具节点")
+    }
+    return (args) => __mcpBridge(prop, args)
+  },
+});
+`
+      : ""
+    const result = await runScriptInVm(mcpPrelude + body, scope.label, globals)
     wfRecord.endedAt = Date.now()
     wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
     wfRecord.status = "ok"
