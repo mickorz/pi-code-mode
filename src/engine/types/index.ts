@@ -161,6 +161,12 @@ export interface WorkflowMeta {
   name: string
   description?: string
   phases?: Array<{ title: string }>
+  /**
+   * workflow 直调 MCP 权限声明（M4，默认拒绝）：声明后 VM 内可用 `mcp.call/listTools/listServers`
+   * 与官方同款 `tools.mcp__<server>__<tool>` proxy 直调 MCP；未声明时 mcp/tools 调用抛错。
+   * root 与 child 各自声明，可达面为与 root 池白名单的交集（child 不能超出 root）。
+   */
+  mcp?: McpPolicy
 }
 
 /** runWorkflow 的返回值 */

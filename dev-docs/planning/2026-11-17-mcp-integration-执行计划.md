@@ -1,8 +1,8 @@
 # pi-code-mode：MCP Tool Integration 执行计划
 
 - 日期：2026-11-17
-- 状态：**本期（M0 实证 + M1 + M2）已全部完成**（M3/M4 另行立项）
-- 范围：本期只做 M0 + M1 + M2（Agent 调用 MCP），M3/M4 列为后续方向不展开
+- 状态：**M0 实证 + M1 + M2 + M4 直调已全部完成**（M3 与 M4 剩余项另行立项）
+- 范围：M0 + M1 + M2 + M4 直调（Agent 调用 MCP + Workflow JS 直调 MCP）；M3/M4 剩余项列为后续方向
 - 上游方案：ChatGPT 调研稿（2026-11-17），经本仓库独立验证后修订
 - 修订记录：2026-11-17 v2 —— 按评审意见补充 5 个技术问题落点：M0-2/M0-5 加工具级与 hidden 实证（P0）、
   M0-4 扩为 6 组对照实验、新增 M0-6（Journal 可观测范围，静态结论已先行完成）、M2 加两层权限优先级规则与
@@ -14,6 +14,11 @@
 - 修订记录：2026-11-17 v4（终版，冻结）—— 收尾小修订：P0 失败 attempt 事件传递机制锁定
   （throwForStatus 断点实证，采方案 A 事件侧实时上报，经 ctx.onEvent record 变体与 executionId 防重试混淆）、
   P1 通配符两层交叉测试矩阵、P2 F1-F12 状态表与 DSL 表述修正。**本文档冻结，进入 M0 运行时实证。**
+- 修订记录：2026-11-18 M4 直调完成 —— 按用户明确预期交付「workflow JS 内直接调 MCP」（官方 code-mode 同款形态）：
+  受控 client 池（pi-mcp McpClient + 懒连接 + 请求级 60s 超时 + dispose 显式回收）、globals 注入
+  mcp.call/listTools/listServers 与官方 prelude 同款 tools 预生成函数对象（node:vm 跨边界 Proxy 不可靠，
+  改预生成）、meta.mcp 脚本级声明（默认拒绝 + child 收敛 root 白名单）、onMcpCall 审计 + toolCount 计入。
+  契约 10 断言 + 宿主真实 server e2e 6 断言全 PASS，详见 `dev-docs/progress-result/MCP-M4-执行报告.md`。
 - 修订记录：2026-11-18 M2 完成 —— M1 策略层（filterMcpConfig 三铁律）与 M2 AgentAdapter 接入
   （P0-1 透传链三断点补齐、executionId 贯通、事件侧 toolCalls 采集与成功/失败双落点）全部交付，
   端到端联调通过，详见 `dev-docs/progress-result/MCP-M2-执行报告.md`。**本期（M0/M1/M2）全部完成。**
@@ -342,7 +347,7 @@ const result = await agent({
 | M0 运行时实证（M0-1 ~ M0-6） | **已完成**（2026-11-18，57 断言全 PASS） | `dev-examples/mcp-m0-verification/` + `dev-docs/progress-result/MCP-M0-执行报告.md` |
 | M1 MCP 策略层（薄） | **已完成**（2026-11-18，14 契约断言） | `src/mcp/mcp-policy.ts` + `tests/contract/mcp-policy.test.ts` |
 | M2 AgentAdapter 接入 | **已完成**（2026-11-18，契约 81/引擎 206/端到端 19 断言全 PASS） | `MCP-M2-执行报告.md`（类型扩展 + PiAgentAdapter 改造 + runtime 双落点 + e2e） |
-| M3/M4 | 不在本期（另行立项） | 另行立项 |
+| M3/M4 | M4 直调核心已完成（2026-11-18）；M3 与 M4 剩余项另行立项 | `src/mcp/mcp-client-pool.ts` + `MCP-M4-执行报告.md` |
 
 ## 引用
 

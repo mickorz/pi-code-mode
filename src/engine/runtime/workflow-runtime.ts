@@ -39,10 +39,12 @@ import type {
   AgentUsage,
   CompositeRecord,
   JournalEntry,
+  McpPolicy,
   McpToolCallSummary,
   WorkflowExecutionRecord,
   WorkflowRunResult,
 } from "../types/index.js"
+import { McpClientPool, makeMcpInvoker, type McpInvoker } from "../../mcp/mcp-client-pool.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createNodeExecutor, compositeScopeStorage, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
@@ -127,6 +129,10 @@ export interface WorkflowRunOptions {
   onCompositeUpdate?: (record: CompositeRecord) => void
   /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
+  /** M4：workflow 直调 MCP 的审计回调（每条调用实时发）；宿主决定持久化（journal 文件或日志） */
+  onMcpCall?: (record: McpToolCallSummary & { server: string }) => void
+  /** M4：宿主全局配置目录（直调池读 mcp.json 用；缺省 ~/.pi/agent） */
+  agentDir?: string
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
   trigger?: {
     type: string
@@ -208,9 +214,16 @@ interface SharedRunContext {
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
   onAgentUpdate?: (record: AgentRecord) => void
   onCompositeUpdate?: (record: CompositeRecord) => void
-  /** 全部组合节点执行记录（P2-3 观测；TUI 组合层级树源） */
-  composites: CompositeRecord[]
-  cwd: string
+  composites: CompositeRecord[],
+  cwd: string,
+  /** M4：workflow 直调 MCP 的受控 client 池（root meta.mcp 声明时懒建；run 结束 dispose） */
+  mcpPool?: McpClientPool,
+  /** M4：root meta.mcp 声明（child 可达面 = root 白名单 ∩ 自身声明） */
+  mcpPoolPolicy?: McpPolicy,
+  /** M4：MCP 直调审计回调（每条调用实时发，宿主决定持久化） */
+  onMcpCall?: (record: McpToolCallSummary & { server: string }) => void
+  /** M4：宿主全局配置目录（池读 mcp.json 用） */
+  agentDir?: string
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
   /** 子 workflow 嵌套深度上限（分支 A） */
@@ -279,6 +292,8 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     onCompositeUpdate: options.onCompositeUpdate,
     composites: [],
     cwd: options.cwd ?? process.cwd(),
+    onMcpCall: options.onMcpCall,
+    agentDir: options.agentDir,
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
     phaseFailed: [],
     continueOnAgentFailure: options.continueOnAgentFailure ?? false,
@@ -321,7 +336,14 @@ export async function runWorkflow<T = unknown>(
       `trigger: ${t.type}${t.scheduleId ? ` schedule=${t.scheduleId}` : ""}${t.scheduledAt ? ` scheduledAt=${t.scheduledAt}` : ""}`,
     )
   }
-  const { meta, result } = await executeWorkflow(script, options.args, shared, rootScope)
+  const { meta, result } = await (async () => {
+    try {
+      return await executeWorkflow(script, options.args, shared, rootScope)
+    } finally {
+      // M4：直调 MCP 池随 run 结束回收（stdio 子进程显式关闭，F15 教训）
+      await shared.mcpPool?.dispose().catch(() => {})
+    }
+  })()
   // 阶段失败闸门终检（Bug1）：失败发生在最后一个 phase 且脚本正常 return 时，不允许静默成功
   if (shared.phaseFailed.length > 0) throw buildFailedGateError(shared.phaseFailed)
   // 纯编排合法：root run 级至少一次实际 dispatch（agent 含 child 内与 checkpoint；
@@ -357,6 +379,41 @@ async function executeWorkflow(
   scope: WorkflowScope,
 ): Promise<{ meta: ReturnType<typeof parseWorkflowScript>["meta"]; result: unknown }> {
   const { meta, body } = parseWorkflowScript(script)
+
+  // M4：workflow 直调 MCP——root meta.mcp 建池（默认拒绝）；child 声明收敛到 root 白名单；
+  // 本 invocation 未声明 meta.mcp.enabled 时 mcp/tools 调用抛错（默认拒绝原则）
+  let mcpInvoker: McpInvoker | undefined
+  if (meta.mcp?.enabled) {
+    if (!scope.parent) {
+      shared.mcpPool ??= new McpClientPool({
+        policy: meta.mcp,
+        agentDir: shared.agentDir,
+        cwd: shared.cwd,
+        signal: shared.signal,
+      })
+      shared.mcpPoolPolicy = meta.mcp
+    } else if (!shared.mcpPool || !shared.mcpPoolPolicy) {
+      throw new WorkflowError(
+        `子 workflow "${meta.name}" 声明了 meta.mcp，但 root workflow 未声明（MCP 权限必须在 root meta.mcp 声明）`,
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      )
+    }
+    mcpInvoker = makeMcpInvoker({
+      pool: shared.mcpPool!,
+      // child 收敛：自身 servers 声明 ∩ root 白名单（池 entries 已按 root 过滤）
+      localServers: meta.mcp.servers,
+      // M4：实际使用即计入确定性工具节点（纯 MCP workflow 合法，同 P4.1 runTool 语义）
+      onTouch: () => {
+        shared.toolCount++
+      },
+      onCall: (record) => {
+        shared.onMcpCall?.(record)
+        shared.toolCount++ // M4：MCP 直调计入确定性工具节点（纯 MCP workflow 合法，同 P4.1 runTool 语义）
+        shared.logs.push(`mcp: ${record.server}/${record.toolName} ${record.status} ${record.durationMs ?? "-"}ms`)
+      },
+    })
+  }
 
   // 路径身份链（v0.9）：root 补 [meta.name]/["root"]；child 在创建时已继承父链
   if (!scope.parent) {
@@ -417,6 +474,14 @@ async function executeWorkflow(
 
   const defaultAgentLabel = (phaseTitle: string | undefined, index: number): string =>
     phaseTitle ? `${phaseTitle} agent ${index}` : `agent ${index}`
+
+  /** M4：未声明 meta.mcp 的 workflow 的拒绝错误（默认拒绝原则） */
+  const denyMcpError = (workflowName: string): WorkflowError =>
+    new WorkflowError(
+      `workflow "${workflowName}" 未在 meta.mcp 声明 MCP 权限（默认拒绝）。需要直调 MCP 时在 meta 中声明：mcp: { enabled: true, servers: [...], allowTools: [...] }`,
+      WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+      { recoverable: false },
+    )
 
   const agent = (prompt: string, agentOptions: ScriptAgentOptions = {}): Promise<unknown> => {
     let call: Promise<unknown>
@@ -1522,6 +1587,26 @@ async function executeWorkflow(
     retry,
     checkpoint,
     console: consoleShim,
+    // M4：workflow 直调 MCP（官方 prelude 同款：宿主侧预生成普通函数注入）
+    // 未声明 meta.mcp 时注入拒绝桩（默认拒绝原则）
+    ...(mcpInvoker
+      ? {
+          mcp: { call: mcpInvoker.call, listTools: mcpInvoker.listTools, listServers: mcpInvoker.listServers },
+          tools: await mcpInvoker.buildToolsObject(),
+        }
+      : {
+          mcp: {
+            call: () => Promise.reject(denyMcpError(meta.name)),
+            listTools: () => Promise.reject(denyMcpError(meta.name)),
+            listServers: () => Promise.reject(denyMcpError(meta.name)),
+          },
+          tools: new Proxy(
+            {},
+            {
+              get: () => () => Promise.reject(denyMcpError(meta.name)),
+            },
+          ),
+        }),
   }
 
   try {
