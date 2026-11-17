@@ -28,6 +28,8 @@ export interface WorkflowToolDeps {
   deliver?: (text: string) => Promise<void>
   /** 模型分层解析：tier 名 -> provider/modelId（M4 tier 体系；未配置回退会话默认模型） */
   resolveTier?: (tier: string) => string | undefined
+  /** tier 名 -> 模型池（v2 池化；优先于 resolveTier，未配置返回 undefined） */
+  resolveTierPool?: (tier: string) => import("../engine/agent/model-pool.js").ModelPool | undefined
 }
 
 /** 渲染 status 详情（agents 各节点状态行）；导出供 /workflows status 子命令复用 */
@@ -153,6 +155,7 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         runId,
         concurrency: typeof params.concurrency === "number" ? params.concurrency : undefined,
         resolveTier: deps.resolveTier,
+        resolveTierPool: deps.resolveTierPool,
         resumeJournal,
         replayPolicy: "explicit" as const,
         confirm,

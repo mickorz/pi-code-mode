@@ -46,6 +46,7 @@ import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createNodeExecutor, compositeScopeStorage, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
 import { loadRegistry, workflowsDir } from "./workflow-registry.js"
+import type { ModelPool, PoolLease } from "../agent/model-pool.js"
 
 /** 运行时最大并发（与 Claude Code / Pi 一致） */
 export const MAX_CONCURRENCY = 16
@@ -100,6 +101,8 @@ export interface WorkflowRunOptions {
   runId?: string
   /** tier 名 -> "provider/modelId" 的解析器（由 tool 层从配置文件注入，测试可 fake；P1-3） */
   resolveTier?: (tier: string) => string | undefined
+  /** tier 名 -> 模型池（v2 池化：每模型并发上限，acquire 溢出分配；优先于 resolveTier） */
+  resolveTierPool?: (tier: string) => ModelPool | undefined
   /** resume：上一轮的 journal（root key 为 runId:callIndex，child key 为 runId:wfK:callIndex） */
   resumeJournal?: Map<string, JournalEntry>
   /**
@@ -194,6 +197,7 @@ interface SharedRunContext {
   agentTimeoutMs: number | null
   agentRetries?: number
   resolveTier?: (tier: string) => string | undefined
+  resolveTierPool?: (tier: string) => ModelPool | undefined
   confirm?: (promptText: string) => Promise<unknown>
   resumeJournal?: Map<string, JournalEntry>
   replayPolicy?: "prefix" | "explicit"
@@ -262,6 +266,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     agentTimeoutMs: options.agentTimeoutMs !== undefined ? options.agentTimeoutMs : null,
     agentRetries: options.agentRetries,
     resolveTier: options.resolveTier,
+    resolveTierPool: options.resolveTierPool,
     confirm: options.confirm,
     resumeJournal: options.resumeJournal,
     replayPolicy: options.replayPolicy,
@@ -439,16 +444,17 @@ async function executeWorkflow(
         ? scope.phasePrefix + assignedPhase
         : scope.phasePrefix.replace(/ \/$/, "")
       : assignedPhase
-    // 模型优先级：显式 model > tier（经 resolveTier）> 会话默认（P1-3）
+    // 模型优先级：显式 model > tier 池（v2，scheduler.run 内 acquire）> tier（经 resolveTier）> 会话默认
+    const tierPool = !scriptOptions.model && scriptOptions.tier ? shared.resolveTierPool?.(scriptOptions.tier) : undefined
     let modelSpec = scriptOptions.model
-    if (!modelSpec && scriptOptions.tier) {
+    if (!modelSpec && !tierPool && scriptOptions.tier) {
       const resolved = shared.resolveTier?.(scriptOptions.tier)
       if (resolved) {
         modelSpec = resolved
       } else if (!shared.warnedTiers.has(scriptOptions.tier)) {
         shared.warnedTiers.add(scriptOptions.tier)
         log(
-          `tier "${scriptOptions.tier}" 未配置，回退会话默认模型；配置见 ~/.config/opencode/workflows/model-tiers.json 或项目 .opencode-workflows/model-tiers.json`,
+          `tier "${scriptOptions.tier}" 未配置，回退会话默认模型；配置见 ~/.pi/workflows/model-tiers.json 或项目 .pi/workflows/model-tiers.json`,
         )
       }
     }
@@ -499,6 +505,13 @@ async function executeWorkflow(
     }
 
     return shared.scheduler.run(async () => {
+      // tier 池（P2）：acquire 决定最终 model；release 挂本层 finally（成功/失败/超时/abort 全覆盖）。
+      // 池等待不计入 durationMs（startedAt 在拿到槽位后才打，与排队等待不计时同哲学）
+      let lease: PoolLease | undefined
+      if (tierPool) {
+        lease = await tierPool.acquire()
+        modelSpec = lease.model
+      }
       // 真实执行才记起始时间戳（journal 回放上面已 return，不带此字段；TUI phase 耗时用）。
       // Bug2 修复：时间戳在拿到并发槽位后才打——排队等待期不计时、不计入 durationMs，
       // TUI 对 running 且无 startedAt 的排队节点自然不显示计时（nodeLine 判空已具备）；
@@ -673,6 +686,7 @@ async function executeWorkflow(
       } finally {
         // 无论成功/失败/超时/abort，都拆除 worktree（与 Pi 一致）
         if (worktree?.isolated) await removeWorktree(worktree)
+        lease?.release()
       }
     })
   }

@@ -18,11 +18,17 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-/** tier 名 -> "provider/modelId" 的映射表 */
-export type ModelTiers = Record<string, string>
+/** tier 名 -> "provider/modelId" 或模型池条目数组的映射表（v2 池化向后兼容 v1 字符串） */
+export type ModelTiers = Record<string, string | TierModelEntry[]>
+
+/** 池条目：模型 + 可选并发上限（v2） */
+export interface TierModelEntry {
+  model: string
+  concurrency?: number
+}
 
 interface TierConfigFile {
-  tiers?: Record<string, string>
+  tiers?: Record<string, string | TierModelEntry[]>
 }
 
 function readTierKeys(file: string | undefined): ModelTiers {
@@ -32,7 +38,15 @@ function readTierKeys(file: string | undefined): ModelTiers {
     if (raw && typeof raw === "object" && raw.tiers && typeof raw.tiers === "object") {
       const out: ModelTiers = {}
       for (const [tier, model] of Object.entries(raw.tiers)) {
-        if (typeof model === "string" && model.trim()) out[tier] = model.trim()
+        if (typeof model === "string" && model.trim()) {
+          out[tier] = model.trim()
+        } else if (Array.isArray(model)) {
+          // v2 池条目：过滤非法项，全非法则丢弃该档（告警由调用方 resolveTier 回退语义覆盖）
+          const entries = model
+            .filter((e) => e && typeof e === "object" && typeof (e as TierModelEntry).model === "string" && (e as TierModelEntry).model.trim())
+            .map((e) => ({ model: (e as TierModelEntry).model.trim(), concurrency: (e as TierModelEntry).concurrency }))
+          if (entries.length) out[tier] = entries
+        }
       }
       return out
     }

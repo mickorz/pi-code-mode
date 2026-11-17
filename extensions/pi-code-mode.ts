@@ -18,6 +18,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { RunManager, withGlobalGate } from "../src/manager/run-manager.js"
+import { ModelPool } from "../src/engine/agent/model-pool.js"
 import { PiScheduleRunner } from "../src/manager/pi-schedule-runner.js"
 import { ScheduleRuntime } from "../src/engine/schedule/runtime.js"
 import { loadModelTiers } from "../src/engine/agent/model-tiers.js"
@@ -35,14 +36,26 @@ import { registerScheduleCommand } from "./commands/schedule.js"
 const runManager = new RunManager(16)
 // tier 解析：~/.pi/workflows/model-tiers.json + 项目级合并（引擎 agent/model-tiers.ts）
 const tiers = loadModelTiers()
+// tier 模型池（v2 池化）：数组档位构建进程级池（每模型并发上限，acquire 溢出分配）；
+// 字符串档位走 resolveTier 单模型路径（不建池）
+const tierPools = new Map<string, ModelPool>()
+for (const [tier, entry] of Object.entries(tiers)) {
+  if (Array.isArray(entry)) tierPools.set(tier, new ModelPool(entry))
+}
 
 function makeDeps(cwd?: string): WorkflowToolDeps {
   return {
     runManager,
     adapterFactory: () => withGlobalGate(new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd() }), runManager.gate),
     cwd,
-    // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）
-    resolveTier: (tier: string) => tiers[tier],
+    // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）；
+    // 数组档位回退首模型（池缺失环境如 print 模式直调时的兼容面，正常链路走 resolveTierPool）
+    resolveTier: (tier: string) => {
+      const e = tiers[tier]
+      return typeof e === "string" ? e : Array.isArray(e) ? e[0]?.model : undefined
+    },
+    // 模型池解析（v2）：池内每模型并发上限 + 溢出分配（20 并发 = A16+B8 共用）
+    resolveTierPool: (tier: string) => tierPools.get(tier),
   }
 }
 
