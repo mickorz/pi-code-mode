@@ -10,6 +10,8 @@
 | REF-002 | pi-dynamic-workflows | https://github.com/QuintinShaw/pi-dynamic-workflows.git | thirdparties/pi-dynamic-workflows | 3f0d7e1c1b75536595e5a8bdcd69b5bd615a28ea | MIT | 集成范本：pi 平台接入方式（package manifest、createAgentSession 子会话、pi-tui widget）参考实现 | 2026-11-14 引入。pi 版动态工作流插件，本包的平台适配层参考来源 |
 | REF-003 | vercel-workflow | https://github.com/vercel/workflow.git | thirdparties/vercel-workflow | b1f92691b（HEAD 浮动，待固定窗口核定） | Apache-2.0 | 方法论参考：durable execution 工作流编排（hook/step 持久化语义、run 状态管理）；只读研究，集成前再评估 | 2026-11-14 引入。vercel 官方 AI 工作流编排 SDK，为 pi-code-mode 的 M2+ 恢复语义与后台 run 管理提供外部对照 |
 | REF-004 | pi-model-router | https://github.com/yeliu84/pi-model-router.git | thirdparties/pi-model-router | 9339ed067e666cedd0f3f44219c0558a0616bc5e | MIT | 方法论参考：pi 平台按回合模型分层路由（high/medium/low tier 启发式、成本预算、fallback 链、virtual model 注册）；只读研究，集成前再评估 | 2026-11-16 引入。与本包 model-tiers 分层解析（agent tier → provider/modelId）直接对标，为 tier 解析策略与意图分类启发式提供外部对照 |
+| REF-005 | pi（earendil-works） | https://github.com/earendil-works/pi.git | thirdparties/pi | 4afe78de1e51162c01c946dcf080e6a266685a01 | MIT | 官方上游参考：pi 平台本体（agent core / MCP 扩展 / codemode / tool_search 源码），MCP Tool Integration 计划的对标与上游 issue 反馈依据；只读研究 | 2026-11-18 引入。MCP 集成开发的上游对照（F15 dispose 泄漏、loadMcpConfig 未导出等待反馈项） |
+| REF-006 | pi-memory | https://github.com/jayzeng/pi-memory.git | thirdparties/pi-memory | 842727466171c9e50209ed6fe53463a952e5a5f6 | MIT | 方法论参考：pi 平台记忆管理扩展（记忆持久化与索引形态）；只读研究，集成前再评估 | 2026-11-18 引入。与本包 memory/持久化设计（journal、agent 记忆）对照参考 |
 
 ## Submodule 引入与登记流程
 

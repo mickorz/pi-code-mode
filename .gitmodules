@@ -13,3 +13,11 @@
 	path = thirdparties/pi-model-router
 	url = https://github.com/yeliu84/pi-model-router.git
 	branch = main
+[submodule "thirdparties/pi"]
+	path = thirdparties/pi
+	url = https://github.com/earendil-works/pi.git
+	branch = main
+[submodule "thirdparties/pi-memory"]
+	path = thirdparties/pi-memory
+	url = https://github.com/jayzeng/pi-memory.git
+	branch = main
