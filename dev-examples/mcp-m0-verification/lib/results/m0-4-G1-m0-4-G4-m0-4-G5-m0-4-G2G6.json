@@ -1,0 +1,84 @@
+{
+  "timestamp": "2026-11-17T07:59:16.597Z",
+  "cases": [
+    {
+      "name": "m0-4-G1",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "stdio server 进程数 = 4（每 session 独立进程）",
+          "pass": true,
+          "detail": "pids=72476,26468,35664,45500"
+        }
+      ]
+    },
+    {
+      "name": "m0-4-G4",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "session B 的 MCP 工具仍在声明中",
+          "pass": true,
+          "detail": "mcp__fix__echo,mcp__fix__get_time,mcp__fix__add,mcp__fix__slow"
+        },
+        {
+          "name": "session C 的 MCP 工具仍在声明中",
+          "pass": true,
+          "detail": "mcp__fix__echo,mcp__fix__get_time,mcp__fix__add,mcp__fix__slow"
+        },
+        {
+          "name": "[WARN] 发现：session.dispose 后 stdio server 进程不退出（MCP 扩展不杀子进程/不关 stdin）",
+          "pass": true,
+          "detail": "dead=(none) of 72476,26468,35664,45500；待验证：prompt 后 dispose 是否不同；M2 需补偿清理或上游修复"
+        },
+        {
+          "name": "隔离性：其余 session 的 server 进程独立存活（互不影响）",
+          "pass": true,
+          "detail": "alive=72476,26468,35664,45500"
+        }
+      ]
+    },
+    {
+      "name": "m0-4-G5",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "[WARN] 发现：全部 dispose 后 stdio server 进程仍存活（僵尸风险实铕，脚本退出后管道断裂会自然回收）",
+          "pass": true,
+          "detail": "alive=72476,26468,35664,45500 of total 4"
+        }
+      ]
+    },
+    {
+      "name": "m0-4-G2G6",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "HTTP fixture 已就绪",
+          "pass": true
+        },
+        {
+          "name": "[WARN] 发现：401 server 在 headless 会话中阻塞好 server 工具注册（60s 未出现）",
+          "pass": true,
+          "detail": "active=(none)；结论：需认证 server 必须靠 loadConfig 过滤掉，不能依赖失败不阻塞"
+        },
+        {
+          "name": "G2: HTTP server 进程数 = 1（远端共享）",
+          "pass": true,
+          "detail": "pid=53468"
+        },
+        {
+          "name": "G2: initialize 次数 = 5（G6 的 1 次 + G2 的 4 次）",
+          "pass": true,
+          "detail": "stats={\"initializes\":5,\"sessionIds\":[\"s-1794902235022-2m8a1b\",\"s-1794902295315-hwvgqa\",\"s-1794902295372-xphoan\",\"s-1794902295456-ai1e5s\",\"s-1794902295500-3hc4r9\"]}"
+        },
+        {
+          "name": "G2: mcp-session-id 全部独立（pi 侧连接对象不跨 session 共享）",
+          "pass": true,
+          "detail": "sessionIds=5"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

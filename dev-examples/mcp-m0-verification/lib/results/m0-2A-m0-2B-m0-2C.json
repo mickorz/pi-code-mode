@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-11-17T07:44:45.908Z",
+  "cases": [
+    {
+      "name": "m0-2A",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "白名单内 fix-a 已连接并注册工具",
+          "pass": true,
+          "detail": "read,bash,edit,write,codemode,tool_search,mcp__fix_a__echo,mcp__fix_a__get_time,mcp__fix_a__add,mcp__fix_a__slow"
+        },
+        {
+          "name": "未授权 fix-b 无任何工具",
+          "pass": true
+        },
+        {
+          "name": "fix-b 进程从未启动（PID log 为空）",
+          "pass": true,
+          "detail": "pidsB=[]"
+        },
+        {
+          "name": "fix-a 进程已启动（PID log 证据）",
+          "pass": true,
+          "detail": "pidsA=[\"pid=59664\"]"
+        }
+      ]
+    },
+    {
+      "name": "m0-2B",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "server 已连接（工具已发现）",
+          "pass": true,
+          "detail": "discovered=mcp__fix__echo,mcp__fix__get_time,mcp__fix__add,mcp__fix__slow"
+        },
+        {
+          "name": "显式开放的工具经 discovery 可达（注册层 codemode→deferred 映射，tools.js:25 toToolExposure）",
+          "pass": true,
+          "detail": "exposed=mcp__fix__echo,mcp__fix__get_time"
+        },
+        {
+          "name": "未授权工具 exposure=hidden（Server 授权 ≠ 工具授权）",
+          "pass": true,
+          "detail": "hidden=mcp__fix__add,mcp__fix__slow"
+        },
+        {
+          "name": "hidden 工具不出现在模型声明",
+          "pass": true,
+          "detail": "read,bash,edit,write,codemode,tool_search"
+        }
+      ]
+    },
+    {
+      "name": "m0-2C",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "被 deny 的工具在 server exposure=direct 下仍不可达",
+          "pass": true,
+          "detail": "deniedVisible=(none)"
+        },
+        {
+          "name": "未被 deny 的工具保持 direct 声明",
+          "pass": true,
+          "detail": "allowed=get_time,slow"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

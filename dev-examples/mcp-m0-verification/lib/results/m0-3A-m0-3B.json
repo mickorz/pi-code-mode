@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-11-17T08:02:46.749Z",
+  "cases": [
+    {
+      "name": "m0-3A",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "拦截扩展收到 echo 的 tool_call 事件",
+          "pass": true,
+          "detail": "[{\"toolName\":\"mcp__fix__echo\"}]"
+        },
+        {
+          "name": "模型被告知拦截原因",
+          "pass": true,
+          "detail": "reply=The tool call did not succeed. Here is exactly what was returned:\n\n```\nM0-3 policy: echo is denied for this agent\n```\n\nThe `mcp__fix__echo` call was blocked by a policy rule (\"M0-3\") that denies the `echo` tool for this agent, so no echo output was produced."
+        },
+        {
+          "name": "被 block 的调用未到达 server（call log 无 echo）",
+          "pass": true,
+          "detail": "calls=[]"
+        }
+      ]
+    },
+    {
+      "name": "m0-3B",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "codemode 脚本内的 echo 调用同样被拦截",
+          "pass": true,
+          "detail": "blocked=[{\"toolName\":\"mcp__fix__echo\",\"parentToolCallId\":\"call_0b579b7f503044aa8184eb57\"}]"
+        },
+        {
+          "name": "[WARN] codemode 内调用带 parentToolCallId 标识（嵌套调用可归因到脚本调用）",
+          "pass": true,
+          "detail": "viaScript=true"
+        },
+        {
+          "name": "模型被告知拦截原因（codemode 路径）",
+          "pass": true,
+          "detail": "reply=The script found the tool but its execution was blocked. Here's what happened:\n\n**Script logic:**\n1. `searchTools(\"echo\")` — succeeded; it located `mcp__fix__echo`\n2. `tools[\"mcp__fix__echo\"]({\"text\": \"hi\"})` — the call was made, but **rejected**\n\n**Exact return value:**\n```\nError: M0-3 policy: echo"
+        },
+        {
+          "name": "被 block 的脚本调用未到达 server",
+          "pass": true,
+          "detail": "calls=[]"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

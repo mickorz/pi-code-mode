@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-11-17T08:08:00.817Z",
+  "cases": [
+    {
+      "name": "m0-6A",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "事件流已收集",
+          "pass": true,
+          "detail": "总事件数=116"
+        },
+        {
+          "name": "事件流含工具级事件（M2 数据通道前提）",
+          "pass": true,
+          "detail": "工具事件=tool_execution_start,tool_execution_end"
+        }
+      ]
+    },
+    {
+      "name": "m0-6B",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "workflow 执行成功",
+          "pass": true,
+          "detail": "result={\"meta\":{\"name\":\"m0_6_probe\",\"description\":\"journal 粒度探针\"},\"result\":\"The exact output text is:\\n\\n```\\nm0-6-probe-output\\n```\",\"logs\":[],\"phases\":[],\"agents\":[{\"id\":\"m0-6-probe:0\",\"label\":\"agent 1\",\"s"
+        },
+        {
+          "name": "agent 输出含 bash 执行产物",
+          "pass": true,
+          "detail": "reply=The exact output text is:\n\n```\nm0-6-probe-output\n```"
+        },
+        {
+          "name": "journal 已有成功 entry",
+          "pass": true,
+          "detail": "entries=1"
+        },
+        {
+          "name": "静态结论钉死：journal entry 无工具级记录（无 toolCalls/toolExecution/工具名等字段）",
+          "pass": true,
+          "detail": "entryKeys=key,hash,result,model,label,workflowLabel,phase,agentType,sessionId,prompt,outputType,executionId,attempt,startedAt,durationMs,usage"
+        },
+        {
+          "name": "entry 含 agent 级结果（hash/result）",
+          "pass": true,
+          "detail": "keys=key,hash,result,model,label,workflowLabel,phase,agentType,sessionId,prompt,outputType,executionId,attempt,startedAt,durationMs,usage"
+        },
+        {
+          "name": "落盘 journal 文件同样无工具级条目（键名无 tool*、result 无 toolCallId 结构）",
+          "pass": true,
+          "detail": "disk keys=key,hash,result,label,sessionId,prompt,outputType,executionId,attempt,startedAt,durationMs,usage"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

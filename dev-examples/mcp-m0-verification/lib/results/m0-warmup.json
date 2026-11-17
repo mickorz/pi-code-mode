@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-11-17T08:01:30.175Z",
+  "cases": [
+    {
+      "name": "m0-warmup",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "模型返回响应",
+          "pass": true,
+          "detail": "reply=ok"
+        },
+        {
+          "name": "响应含 ok",
+          "pass": true,
+          "detail": "reply=ok"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

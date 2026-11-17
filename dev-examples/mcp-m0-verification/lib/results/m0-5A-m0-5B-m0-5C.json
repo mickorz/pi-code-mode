@@ -1,0 +1,54 @@
+{
+  "timestamp": "2026-11-17T08:04:42.954Z",
+  "cases": [
+    {
+      "name": "m0-5A",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "direct 工具调用成功（返回值出现在回复中）",
+          "pass": true,
+          "detail": "reply=The `mcp__fix__echo` tool returned the exact text:\n\n```\nhello-m0-5\n```\n\nThe echo worked correctly — the returned text matches the input argument exactly."
+        },
+        {
+          "name": "调用到达 server",
+          "pass": true,
+          "detail": "calls=[\"echo\"]"
+        }
+      ]
+    },
+    {
+      "name": "m0-5B",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "hidden 工具调用未到达 server",
+          "pass": true,
+          "detail": "calls=[]; reply=The script returned exactly this:\n\n```json\n[\n  {\n    \"step\": \"searchTools('echo')\",\n    \"resultsCount\": 0,\n    \"names\": [],\n    \"includesMcpFixEcho\": false\n  },\n  {\n    \"step\": \"execute\",\n    \"outcome\": \"tool not found via searchTools; cannot execute\"\n  }\n]\n```\n\n**Summary:**\n- **Search:** `searchToo"
+        },
+        {
+          "name": "searchTools 找不到或调用被拒（hidden 无可达通道）",
+          "pass": true,
+          "detail": "notFound=true denied=true; reply=The script returned exactly this:\n\n```json\n[\n  {\n    \"step\": \"searchTools('echo')\",\n    \"resultsCount\": 0,\n    \"names\": [],\n    \"includesMcpFixEcho\": false\n  },\n  {\n    \"step\": \"execute\",\n    \"outcome\": \"tool not found via searchTools; cannot execute\"\n  }\n]\n```\n\n**Summary:**\n- **Search:** `searchTools(\"echo\")` returned **0 results** — no tool matching \"echo\" was found, and specifically no tool nam"
+        }
+      ]
+    },
+    {
+      "name": "m0-5C",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "deferred 工具经 tool_search 加载后调用到达 server",
+          "pass": true,
+          "detail": "calls=[\"echo\"]; reply=The tool returned the exact text: **`deferred-ok`**\n\nSteps taken:\n1. Searched for \"echo\" via `tool_search` — loaded `mcp__fix__echo`\n2. Called it with `{\"text\":\"deferred-ok\"}` — it echoed back the same text"
+        },
+        {
+          "name": "调用结果正确",
+          "pass": true,
+          "detail": "reply=The tool returned the exact text: **`deferred-ok`**\n\nSteps taken:\n1. Searched for \"echo\" via `tool_search` — loaded `mcp__fix__echo`\n2. Called it with `{\"text\":\"deferred-ok\"}` — it echoed back the sam"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

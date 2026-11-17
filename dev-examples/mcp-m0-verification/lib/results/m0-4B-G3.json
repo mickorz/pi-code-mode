@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-11-17T08:09:05.563Z",
+  "cases": [
+    {
+      "name": "m0-4B-G3",
+      "pass": true,
+      "assertions": [
+        {
+          "name": "两个并发调用都成功返回",
+          "pass": true,
+          "detail": "r1=The `mcp__fix__slow` tool with `{\"ms\": 3000}` returned the exact text:\n\n```\ndone after 3000ms\n```; r2=The `mcp__fix__slow` tool with `{\"ms\": 3000}` returned exactly:\n\n```\ndone after 3000ms\n```"
+        },
+        {
+          "name": "两个并发调用都到达 server（call log 2 次 slow）",
+          "pass": true
+        },
+        {
+          "name": "[WARN] 并发时序观察（两个 3s 调用 + 模型往返总耗时）",
+          "pass": true,
+          "detail": "elapsed=11724ms（完全串行预期 >6000ms+模型往返）"
+        }
+      ]
+    }
+  ],
+  "allPass": true
+}

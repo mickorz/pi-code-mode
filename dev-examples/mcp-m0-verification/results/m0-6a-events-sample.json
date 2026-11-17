@@ -1,0 +1,22 @@
+[
+  {
+    "type": "tool_execution_start",
+    "keys": [
+      "type",
+      "toolCallId",
+      "toolName",
+      "args"
+    ]
+  },
+  {
+    "type": "tool_execution_end",
+    "keys": [
+      "type",
+      "toolCallId",
+      "toolName",
+      "result",
+      "isError",
+      "durationMs"
+    ]
+  }
+]

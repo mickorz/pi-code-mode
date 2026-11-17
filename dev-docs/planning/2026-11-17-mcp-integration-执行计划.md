@@ -14,11 +14,10 @@
 - 修订记录：2026-11-17 v4（终版，冻结）—— 收尾小修订：P0 失败 attempt 事件传递机制锁定
   （throwForStatus 断点实证，采方案 A 事件侧实时上报，经 ctx.onEvent record 变体与 executionId 防重试混淆）、
   P1 通配符两层交叉测试矩阵、P2 F1-F12 状态表与 DSL 表述修正。**本文档冻结，进入 M0 运行时实证。**
-- 修订记录：2026-11-17 v5（接口衔接修订，架构不变）—— P0 executionId 贯通：评审断言经源码证实
-  （Runtime `workflow-runtime.ts:562` 用 `${deltaKey}:${attempt}`，Adapter `agent-adapter.ts:53` 自造
-  randomUUID，runOptions 未传 executionId，两侧 ID 体系分裂）。修复：AgentRunOptions 新增 executionId
-  （Runtime 注入，脚本不可见）与 onToolCall 窄回调；P1 迟到事件竞态细则；P1 备选：成功 attempt 的
-  toolCalls 同步写入 executions[]。**v5 后不再接受架构轮次，直接执行 M0-1 ~ M0-6。**
+- 修订记录：2026-11-18 M0 完成 —— 运行时实证 M0-1 ~ M0-6 全部通过（57 断言 0 失败），详见
+  `dev-docs/progress-result/MCP-M0-执行报告.md`；新增实证事实 F13-F18（注册层 codemode→deferred 映射、
+  server 名 - 到 _ 替换、dispose 不回收 stdio 子进程、401 server 阻塞好 server、事件流工具载荷、
+  parentToolCallId 嵌套归因），对 M1/M2 的五条直接影响见执行报告第三节
 
 ---
 
@@ -84,7 +83,7 @@ pi-mcp 扩展文档原文：
 
 ## 二、M0 剩余实证项（运行时行为，需真实执行验证）
 
-F1-F12 是静态事实，以下 6 项是运行时行为，必须写实证脚本跑通后才允许进入 M1/M2。
+F1-F12 是静态事实；F13-F18 为 M0 运行时实证新增（见执行报告），以下 6 项运行时行为已全部跑通（2026-11-18）。
 统一放 `dev-examples/mcp-m0-verification/`（沙盒，验证通过后按 CLAUDE.md 毕业路径处理）。
 
 ### M0-1：显式装配 + 递归防护共存
@@ -152,7 +151,7 @@ usage?, executions[]}`，`AgentExecutionResult` 只携带 `{type, value, session
 - **验收标准**：M0 执行报告中明确现有可观测范围（agent 级结果 + usage，无工具级）；
   事件流载荷清单足以支撑 M2 的 `mcp__*` 调用记录实现，或明确列出不满足项。
 
-**M0 交付物**：`dev-docs/progress-result/M0-执行报告.md`（实证脚本、运行证据、结论），并把结论回填本文档第一节。
+**M0 交付物**：`dev-docs/progress-result/MCP-M0-执行报告.md`（实证脚本、运行证据、结论），并把结论回填本文档第一节。
 
 **M0 明确不做**：OAuth 流程实证（首期只用 stdio/带 header 的 HTTP）；`/mcp` 交互面板（子会话无 TUI）；cloudflare worker 版 codemode。
 
@@ -337,8 +336,8 @@ const result = await agent({
 | 里程碑 | 状态 | 交付物 |
 |---|---|---|
 | M0 静态实证（F1-F12） | **已完成**（本文档第一节） | 本文档 |
-| M0 运行时实证（M0-1 ~ M0-6） | 未开始 | 实证脚本 + `M0-执行报告.md` |
-| M1 MCP 策略层（薄） | 未开始 | `src/mcp/mcp-policy.ts` + 契约测试 |
+| M0 运行时实证（M0-1 ~ M0-6） | **已完成**（2026-11-18，57 断言全 PASS） | `dev-examples/mcp-m0-verification/` + `dev-docs/progress-result/MCP-M0-执行报告.md` |
+| M1 MCP 策略层（薄） | 未开始（前提已就绪） | `src/mcp/mcp-policy.ts` + 契约测试 |
 | M2 AgentAdapter 接入 | 未开始 | 类型扩展 + PiAgentAdapter 改造 + 联调证据 |
 | M3/M4 | 不在本期 | 另行立项 |
 
