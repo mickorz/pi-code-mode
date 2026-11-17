@@ -26,7 +26,7 @@ import {
   type Tool,
 } from "@earendil-works/pi-mcp"
 
-import type { McpPolicy } from "../engine/types/index.js"
+import type { McpPolicy, McpToolCallSummary } from "../engine/types/index.js"
 import { readMcpConfigFiles } from "./mcp-config-loader.js"
 import { filterMcpConfig, type DefaultServersMode } from "./mcp-policy.js"
 
@@ -66,18 +66,6 @@ export interface McpClientPoolOptions {
 interface Connection {
   client: McpClient
   transport: { close(): Promise<void> }
-}
-
-/** MCP 直调审计记录（server 级；toolName 为 mcp__ 全名） */
-export interface McpDirectCallRecord {
-  server: string
-  qualifiedName: string
-  toolName: string
-  status: "ok" | "error"
-  argsBytes: number
-  argsKeys?: string[]
-  durationMs?: number
-  error?: string
 }
 
 /** 每个 run 一个池实例：懒连接、权限过滤、run 结束 dispose */
@@ -237,7 +225,7 @@ async function auditCall(
   qualified: string,
   args: unknown,
   run: () => Promise<CallToolResult>,
-  onCall?: (record: McpDirectCallRecord) => void,
+  onCall?: (record: McpToolCallSummary) => void,
 ): Promise<unknown> {
   const startedAt = Date.now()
   let argsStr = ""
@@ -250,8 +238,7 @@ async function auditCall(
     const result = await run()
     onCall?.({
       server,
-      qualifiedName: qualified,
-      toolName: qualified,
+            toolName: qualified,
       status: result.isError ? "error" : "ok",
       argsBytes: Buffer.byteLength(argsStr, "utf8"),
       argsKeys: Object.keys(args ?? {}),
@@ -264,8 +251,7 @@ async function auditCall(
   } catch (e) {
     onCall?.({
       server,
-      qualifiedName: qualified,
-      toolName: qualified,
+            toolName: qualified,
       status: "error",
       argsBytes: Buffer.byteLength(argsStr, "utf8"),
       argsKeys: Object.keys(args ?? {}),
@@ -284,7 +270,7 @@ export interface McpInvokerOptions {
   /** 本 invocation 的 server 白名单收敛声明（meta.mcp.servers）；undefined = 跟随池可达面 */
   localServers?: string[]
   /** 审计回调（每条调用实时发） */
-  onCall?: (record: McpDirectCallRecord) => void
+  onCall?: (record: McpToolCallSummary) => void
   /** 实际使用 invoker 时触发（call/listTools；纯 MCP workflow 的 toolCount 依据） */
   onTouch?: () => void
 }

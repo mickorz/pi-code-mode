@@ -13,8 +13,8 @@
 
 import { randomUUID } from "node:crypto"
 import type { AgentRunOptions, AgentSessionRunner, AgentExecutionResult } from "../engine/agent/session-runner.js"
-import type { AgentUsage, McpToolCallSummary } from "../engine/types/index.js"
-import type { AgentAdapter, AgentRequest, ExecutionContext, AgentEvent, AgentResult, ToolPolicy } from "./types.js"
+import type { AgentUsage } from "../engine/types/index.js"
+import type { AgentAdapter, AgentRequest, ExecutionContext, AgentResult } from "./types.js"
 /** 把契约 status/error 转换为 Engine 可分类的 throw（runtime wrapError 依赖消息匹配） */
 function throwForStatus(result: AgentResult): never {
   if (result.status === "cancelled") {
@@ -60,25 +60,12 @@ export function agentAdapterToRunner(adapter: AgentAdapter): AgentSessionRunner 
         cwd: options?.directory,
         outputSchema: options?.schema,
         signal: options?.signal,
-        // M2 P0-1：工具策略透传（AgentRunTools 与 ToolPolicy 结构同构）
-        ...(options?.tools ? { tools: options.tools as ToolPolicy } : {}),
       }
       const ctx: ExecutionContext = {
         executionId,
         // AgentRunOptions 无 runId 字段（runtime 零修改原则）；Adapter 日志关联以 executionId 为准
         runId: "",
         phase: options?.phase,
-        ...(options?.onToolCall
-          ? {
-              // v5 P0：MCP 工具调用经 record 事件实时上报（失败/取消/超时已发生的调用不丢），
-              // 桥接为 onToolCall 窄回调；其他 record 事件原样透传给既有 onEvent 链
-              onEvent: (event: AgentEvent) => {
-                if (event.type === "record" && (event.record as { kind?: string })?.kind === "mcp-tool-call") {
-                  options!.onToolCall!(event.record as unknown as McpToolCallSummary)
-                }
-              },
-            }
-          : {}),
       }
       // F-20 对齐：Adapter 一建会话就回调 sessionId（经由 onEvent，见各 Adapter 实现）
       if (options?.onSessionCreated) {

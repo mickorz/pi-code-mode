@@ -20,6 +20,8 @@ export interface McpPolicy {
 export interface McpToolCallSummary {
   /** mcp__<server>__<tool> 全名（F14：server 名中 - 已替换为 _） */
   toolName: string
+  /** 所属 server 名（M4 直调审计用） */
+  server?: string
   status: "ok" | "error"
   /** 参数字节量（不存参数内容） */
   argsBytes: number
@@ -67,8 +69,6 @@ export interface AgentExecutionRecord {
   startedAt?: number
   durationMs?: number
   usage?: AgentUsageSplit
-  /** 本 attempt 已发生的 MCP 工具调用安全摘要（v5 P1-2：失败/中止 attempt 的审计不丢） */
-  toolCalls?: McpToolCallSummary[]
 }
 
 /** 子 workflow invocation 的执行记录（v0.9 Observability：wall-clock 统计与 TUI 树源）
@@ -211,6 +211,4 @@ export interface JournalEntry {
   usage?: AgentUsageSplit
   /** 历次尝试记录（追加式，保留最近 10 条；最后一条即最新执行；绝不影响 resume） */
   executions?: AgentExecutionRecord[]
-  /** 最新成功 attempt 的 MCP 工具调用安全摘要（M2 v5 P1-2；无 MCP 调用时缺省） */
-  toolCalls?: McpToolCallSummary[]
 }

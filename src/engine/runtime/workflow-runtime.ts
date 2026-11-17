@@ -32,7 +32,7 @@ import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
 import { createWorktree, removeWorktree, type WorktreeInfo } from "../isolation/worktree.js"
-import type { AgentSessionRunner, AgentRunOptions, AgentRunTools } from "../agent/session-runner.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../agent/session-runner.js"
 import type {
   AgentRecord,
   AgentExecutionRecord,
@@ -83,8 +83,6 @@ export interface ScriptAgentOptions {
    * 且指纹匹配）；缺省 false = 默认重跑（副作用安全的保守默认）。不进 hash 身份（策略非身份）。
    */
   replayable?: boolean
-  /** 工具策略透传（M2 P0-1：DSL → Runtime → Adapter；结构同 adapter ToolPolicy）；计入 hash 身份 */
-  tools?: AgentRunTools
 }
 
 /** workflow() 的 ref：字符串快捷方式或对象形式（label 为实例显示名） */
@@ -130,7 +128,7 @@ export interface WorkflowRunOptions {
   /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
   /** M4：workflow 直调 MCP 的审计回调（每条调用实时发）；宿主决定持久化（journal 文件或日志） */
-  onMcpCall?: (record: McpToolCallSummary & { server: string }) => void
+  onMcpCall?: (record: McpToolCallSummary) => void
   /** M4：宿主全局配置目录（直调池读 mcp.json 用；缺省 ~/.pi/agent） */
   agentDir?: string
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
@@ -221,7 +219,7 @@ interface SharedRunContext {
   /** M4：root meta.mcp 声明（child 可达面 = root 白名单 ∩ 自身声明） */
   mcpPoolPolicy?: McpPolicy,
   /** M4：MCP 直调审计回调（每条调用实时发，宿主决定持久化） */
-  onMcpCall?: (record: McpToolCallSummary & { server: string }) => void
+  onMcpCall?: (record: McpToolCallSummary) => void
   /** M4：宿主全局配置目录（池读 mcp.json 用） */
   agentDir?: string
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
@@ -639,9 +637,6 @@ async function executeWorkflow(
             inputTokens: (record.inputTokens ?? 0) - usageBaseIn,
             outputTokens: (record.outputTokens ?? 0) - usageBaseOut,
           })
-          // M2 v5 P0：本 attempt 的 MCP 工具调用缓冲（executionId 注入 Runner，onToolCall 实时收集；
-          // attempt 终结时冻结快照落盘，迟到事件因 executionId 不同不会串入下一 attempt）
-          const mcpCalls: McpToolCallSummary[] = []
           /** 失败/中止 attempt 的执行记录发射（FR-7）；成功路径不发，读端以 journal entry 本体为最新执行。
            *  同时把 executionId/attempt 回填 record：失败节点也要能在 Node Detail 显示尝试次数 */
           const emitExecution = (status: "failed" | "aborted", error?: string) => {
@@ -659,7 +654,6 @@ async function executeWorkflow(
                 startedAt: attemptStarted,
                 durationMs: Date.now() - attemptStarted,
                 usage: attemptUsage(),
-                ...(mcpCalls.length > 0 ? { toolCalls: mcpCalls.slice() } : {}),
               },
             })
           }
@@ -672,13 +666,8 @@ async function executeWorkflow(
               schema: scriptOptions.schema,
               directory: runDirectory,
               signal: attemptController.signal,
-              // v5 P0：Runtime 注入 executionId（与 mcpCalls 缓冲同 ID 体系）
+              // v5：Runtime 注入 executionId（Runtime 与 Adapter ID 体系统一）
               executionId,
-              // M2 P0-1：工具策略透传（DSL tools.mcp → Adapter 工厂装配）
-              ...(scriptOptions.tools ? { tools: scriptOptions.tools } : {}),
-              // v5 P0：MCP 工具调用实时收集（Adapter 事件侧上报；失败/取消/超时已发生的调用不丢）。
-              // 无条件挂载：采集与 DSL 策略解耦（未启用 MCP 时 Adapter 侧无 mcp__ 调用，缓冲自然为空）
-              onToolCall: (r: McpToolCallSummary) => mcpCalls.push(r),
               onUsage: (usage: AgentUsage) => {
                 record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
                 record.cost = (record.cost ?? 0) + (usage.cost ?? 0)
@@ -724,7 +713,6 @@ async function executeWorkflow(
                 startedAt: attemptStarted,
                 durationMs: Date.now() - attemptStarted,
                 usage: attemptUsage(),
-                ...(mcpCalls.length > 0 ? { toolCalls: mcpCalls.slice() } : {}),
               })
             }
             return value
@@ -1713,8 +1701,6 @@ function hashAgentCall(prompt: string, options: ScriptAgentOptions, phase: strin
     agentType: options.agentType ?? null,
     schema: options.schema ?? null,
     isolation: options.isolation ?? null,
-    // M2 P0-1：工具策略影响 agent 可用能力，计入 hash 身份（resume 指纹正确性）
-    tools: options.tools ?? null,
   })
   return createHash("sha256").update(identity).digest("hex")
 }
