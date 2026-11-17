@@ -14,6 +14,11 @@
 - 修订记录：2026-11-17 v4（终版，冻结）—— 收尾小修订：P0 失败 attempt 事件传递机制锁定
   （throwForStatus 断点实证，采方案 A 事件侧实时上报，经 ctx.onEvent record 变体与 executionId 防重试混淆）、
   P1 通配符两层交叉测试矩阵、P2 F1-F12 状态表与 DSL 表述修正。**本文档冻结，进入 M0 运行时实证。**
+- 修订记录：2026-11-17 v5（接口衔接修订，架构不变）—— P0 executionId 贯通：评审断言经源码证实
+  （Runtime `workflow-runtime.ts:562` 用 `${deltaKey}:${attempt}`，Adapter `agent-adapter.ts:53` 自造
+  randomUUID，runOptions 未传 executionId，两侧 ID 体系分裂）。修复：AgentRunOptions 新增 executionId
+  （Runtime 注入，脚本不可见）与 onToolCall 窄回调；P1 迟到事件竞态细则；P1 备选：成功 attempt 的
+  toolCalls 同步写入 executions[]。**v5 后不再接受架构轮次，直接执行 M0-1 ~ M0-6。**
 
 ---
 
@@ -248,19 +253,30 @@ interface ToolPolicy {
    `throwForStatus`（`agent-adapter.ts:19,81`，`:never` 签名）在 status 非 ok 时直接抛异常，
    结果对象（含未来加的 `AgentResult.toolCalls`）整体被丢弃；取消/超时同样拿不到返回值。
    因此采评审方案 A：**工具调用记录走事件侧实时上报，与 attempt 终态解耦**。
-   通道设计（基础设施均已存在，只补窄桥接）：
+   通道设计（基础设施均已存在，只补窄桥接；**v5 修正：executionId 由 Runtime 注入，不再自造**）：
    ```
+   Workflow Runtime（executionId = `${deltaKey}:${attempt}`，workflow-runtime.ts:562）
+     -> AgentRunOptions 新增 executionId（Runtime 注入内部字段，workflow 脚本不可见不可指定）
+        与 onToolCall 窄回调；agentAdapterToRunner 的 ctx.executionId 改用注入值
+        （现状 :53 自造 randomUUID 与 Runtime ID 体系分裂——v5 断点；保守 fallback：
+        options 缺省时保留 randomUUID 兼容其他调用方）
    PiAgentAdapter（subscribe 采集 mcp__* 调用，调一次报一次）
      -> ctx.onEvent({ type: "record", executionId, record: { kind: "mcp-tool-call", ... } })
         （AgentEvent.record 通用变体现成，types.ts:58；ExecutionContext.onEvent 现成，types.ts:35）
-     -> AgentRunOptions 新增 onToolCall 窄回调，agentAdapterToRunner 经 chainOnEvent 桥接
+     -> agentAdapterToRunner 经 chainOnEvent 桥接到 options.onToolCall
         （chainOnEvent 现成，agent-adapter.ts:100）
-     -> Workflow Runtime 按 executionId 收集（executionId = runId:callIndex:attempt，types/index.ts:27，
-        天然含 attempt 序号，重试不混淆新旧调用）
+     -> Workflow Runtime 按 executionId 收集（同一 ID 体系，重试不混淆新旧 attempt）
      -> 分流落盘：
           成功 attempt -> JournalEntry.toolCalls（append 路径，workflow-runtime.ts:627）
           失败/中止 attempt -> AgentExecutionRecord.toolCalls（executions[]，recordExecution 路径）
    ```
+   **迟到事件与竞态细则（v5 P1）**：Runtime 按 executionId 分缓冲（每 attempt 独立）；attempt 终结时
+   冻结快照落盘；迟到事件因 executionId 不同天然不会写入下一次 attempt，对已冻结缓冲直接丢弃并计数。
+   start/end 事件经工具调用 ID 配对，只记终态一条防重复计数；attempt 终结时未配对的 start 记为
+   cancelled。事件形态（start/end 是否成对、超时后底层 Session 是否真正停止）以 M0-6 实测为准。
+   **P1 备选（成功 attempt 历史归属）**：成功 attempt 的 toolCalls 同步经 recordExecution 写入
+   executions[]（journal.ts:59 已有同 executionId 去重），Node Inspector 可展示完整重试历史；
+   JournalEntry.toolCalls 仍只存最新成功摘要。实现成本低则默认做，验收不强制。
    失败/取消/超时的已发生 MCP 调用经事件流实时送达 Runtime，再经 executions[] 保留，
    与 attempt 终态无关。记录内容收紧为**安全摘要**（v3 P1-1，见风险表）：工具名/状态/耗时/
    参数字节数与脱敏后键名列表，**不存完整参数、不存返回值**；错误信息经脱敏与限长。
