@@ -7,6 +7,10 @@
 - 修订记录：2026-11-17 v2 —— 按评审意见补充 5 个技术问题落点：M0-2/M0-5 加工具级与 hidden 实证（P0）、
   M0-4 扩为 6 组对照实验、新增 M0-6（Journal 可观测范围，静态结论已先行完成）、M2 加两层权限优先级规则与
   `toolCalls[]` 审计交付、风险表加信任边界与凭证保护；修正第五节关于 journal 的错误表述
+- 修订记录：2026-11-17 v3 —— 按评审意见补 4 项（均已源码验证）：P0-1 DSL 透传链补齐三处断点、
+  P0-2 默认 hidden 生成规则（官方 toolExposure 通配符语义直接支撑，新增 F12）、
+  P1-1 toolCalls 脱敏收紧（redactValue 定位为展示用途非安全边界）、
+  P1-2 toolCalls 完整数据通道（成功/失败 attempt 双落点）
 
 ---
 
@@ -64,6 +68,7 @@ pi-mcp 扩展文档原文：
 | F9 | MCP 工具调用走统一工具管线，权限钩子对 MCP 工具同样生效 | `extensions/mcp/index.d.ts` 头注释 |
 | F10 | pi-mcp@1.3.0 独立导出 `McpClient` / `StdioTransport` / `StreamableHttpTransport` / OAuth —— M4 的 workflow 直调通道无需起会话 | `pi-mcp/dist/index.d.ts` |
 | F11 | 参考项目 pi-dynamic-workflows 的 agent frontmatter 同样声明了 `mcp` 字段但 "Parsed-but-ignored" —— 子代理 MCP 接入是同类项目共同空白点 | `thirdparties/pi-dynamic-workflows/src/agent-registry.ts:21` |
+| F12 | `toolExposure` key 支持通配符模式（`*` 匹配任意字符）；**精确名优先于模式，模式间首个匹配获胜**；`hidden` 直接移除工具。官方原话给出目标范式：`"exposure": "hidden"` 加少量工具覆盖 = 只开放那些工具 —— 「默认隐藏、显式开放」无需枚举全部工具 | `dist/core/mcp-servers.d.ts:32-38`（v3 评审触发新增） |
 
 **结论：原方案的三个核心前提（SDK API 存在、显式装配可行、noExtensions 可保持）全部实证通过。**
 
@@ -87,7 +92,10 @@ F1-F11 是静态事实，以下 6 项是运行时行为，必须写实证脚本�
 - **评审补充（P0）：工具级授权独立生效**——同一 server 连接的情况下，`allowTools` 只放行部分工具，
   验证未授权工具被映射为 `toolExposure: "hidden"` 后模型声明中不可见、direct 声明不含它。
   即「server 白名单 ≠ 工具白名单」两条过滤各自独立生效。
-- **验收标准**：策略过滤后的工具集合与预期完全一致（含工具级 allow/deny 交集）；`errors` 数组正确透传配置错误。
+- **评审补充（P0，v3）：策略叠加反向测试**——server 级 `exposure: "direct"` 且某工具被 deny 时，
+  验证该工具仍 hidden（官方语义：工具 exposure 取 `toolExposure` 条目，否则回落 server `exposure`，
+  即 `getMcpToolExposure`，`mcp-servers.d.ts:111`）。验证的是叠加而非正常路径。
+- **验收标准**：策略过滤后的工具集合与预期完全一致（含工具级 allow/deny 交集、deny 压过 server direct）；`errors` 数组正确透传配置错误。
 
 ### M0-3：工具管线权限拦截实测
 
@@ -157,12 +165,18 @@ export interface McpPolicy {
 
 **权限三条铁律**（评审补充，M0-2/M0-5 实证）：
 
-1. **Server 授权 ≠ 工具授权**：`servers` 只控制是否连接；连接后 server 内每个工具仍需逐个过
-   allow/deny 计算。`allowTools` 未包含的工具一律映射为 `toolExposure: "hidden"`（不可达），
-   不因 server 已授权而默认开放。
-2. **deny 优先于 allow**：过滤顺序为先按 allow 求交集、再叠加 deny 剔除。
+1. **Server 授权 ≠ 工具授权；默认隐藏、显式开放（v3 锁定生成规则）**：`servers` 只控制是否连接。
+   工具不可在配置阶段枚举（工具是连接后动态发现的），因此拒绝用「逐工具列 hidden」实现默认拒绝，
+   改用 F12 的官方范式：`filterMcpConfig` 产出规则——
+   - server 级 `exposure` 默认写 `"hidden"`（policy.exposure 有显式覆盖时用覆盖值）；
+   - `allowTools` 展开（去掉 `<server>:` 前缀，取 server 视角裸工具名）写入 `toolExposure`，
+     显式名条目在前、`"xxx_*"` 模式条目在后，exposure 值取 `policy.exposure[server] ?? "codemode"`；
+   - `denyTools` 展开为**精确名 hidden 条目置于 `toolExposure` 首位**——官方语义「精确名赢过模式、
+     模式间首个匹配获胜」保证 deny 恒压过 allow（含模式误匹配场景）与 server exposure；
+   - 未被 allow 命中的工具继承 server 默认 hidden，无需枚举（F12 原话：`"exposure": "hidden"` 加少量覆盖 = 只开放那些）。
+2. **deny 优先于 allow**：由铁律 1 的 toolExposure 排列顺序结构化保证，不依赖遍历后过滤。
 3. **结构层匹配，永不解析字符串**：`filterMcpConfig` 拿到的 `LoadedMcpConfig.servers[]` 本身就是
-   结构化数据（server entry + 工具名列表），allow/deny 匹配直接在该结构上做，产出 toolExposure map；
+   结构化数据（server entry + 配置），allow/deny 匹配直接在该结构上做；
    不解析 `mcp__<server>__<tool>` 拼接名，从结构上消除 server 名含下划线/特殊字符的解析歧义
    （不引入独立 McpToolIdentity 类型——`McpServerEntry` + 工具名已是结构化形态）。
    `mcp__*` 拼接名只出现在 session 层 `excludeTools`（SDK 原生约定），见 M2 优先级规则。
@@ -177,7 +191,8 @@ export function filterMcpConfig(
 - 配置来源直接复用 `loadMcpConfig()`（F8），**不另造配置格式**——用户在宿主里配好的 `~/.pi/agent/mcp.json` 与项目 `.pi/mcp.json` 直接生效。
 - 默认拒绝：`enabled: true` 且 `servers` 未配置时返回空集，而非全集。
 - 每个会话创建独立的 `createMcpExtension({ loadConfig: ... })` 实例（工厂是无状态函数，可多次调用；M0-4 同时验证多实例成本）。
-- **验收标准**：`tests/contract/mcp-policy.test.ts` 覆盖白名单/黑名单/通配符/默认拒绝/空策略五个行为；无模型依赖，纯函数可测。
+- **验收标准**：`tests/contract/mcp-policy.test.ts` 覆盖六个行为：server 白名单/工具 allow 展开/deny 置首
+  （含 deny 压过 server direct 与模式误匹配）/通配符/默认拒绝（空集 + server 默认 hidden）/空策略；无模型依赖，纯函数可测。
 
 ## 四、M2：AgentAdapter 接入
 
@@ -198,14 +213,35 @@ interface ToolPolicy {
 2. `loadConfig` 闭包捕获该 Agent 的 `McpPolicy`，经 `filterMcpConfig` 注入。
 3. `session.bindExtensions({})` 在首次 `prompt()` 前调用（F5）；对无 MCP 的会话维持现有路径零改动。
 4. `codemode`/`tool_search` 的激活交给 MCP 扩展按 exposure 自动处理（F5），Adapter 不手工 `setActiveTools`，避免双写。
-5. **两层权限的优先级规则（评审补充，P0）**：`mcp` policy 在 loadConfig 层做硬过滤（结构层，hidden 工具不可达），
+5. **DSL 透传链路补齐（评审 v3 P0-1，源码已证实断点）**：评审断言经逐文件验证属实——
+   `AgentRequest.tools` 存在（`adapter/types.ts:22`）、`PiAgentAdapter` 已消费（`pi-agent-adapter.ts:83-84`），
+   但中间两环缺失：`ScriptAgentOptions` 无 tools（`workflow-runtime.ts:61-86`）、
+   `AgentRunOptions` 无 tools（`session-runner.ts:16-32`）、`agentAdapterToRunner()` 构造 request 时
+   丢弃 tools（`agent-adapter.ts:55-61`，只透传 prompt/model/cwd/outputSchema/signal）。
+   **不补则集成测试直调 Adapter 全绿、workflow 脚本实际调用时 tools.mcp 静默丢失。**
+   补齐三处：`ScriptAgentOptions.tools?: ToolPolicy` → `AgentRunOptions.tools?: ToolPolicy` →
+   request 构造加 `tools: options?.tools`。不改 Runtime 执行语义，纯配置沿现有调用链下传。
+6. **两层权限的优先级规则（评审补充，P0）**：`mcp` policy 在 loadConfig 层做硬过滤（结构层，hidden 工具不可达），
    现有 `allowTools`/`excludeTools` 在 session 层按 SDK 语义过滤工具声明（含 `mcp__*` 名）。两层叠加、
    **更严者胜**：任一层拒绝即不可用，不存在某层放开另一层拒绝的工具。文档口径：mcp policy 是
    MCP 专用授权面，session 层白/黑名单是通用兜底，两者职责不合并。
-6. **`mcp__*` 工具调用写入 journal（评审补充，P1，M0-6 结论落地）**：现状 journal 无任何工具级记录
-   （见 M0-6 静态结论）。Adapter 在子会话 subscribe 事件流中提取 `mcp__*` 工具调用的
-   名称/参数摘要/状态/耗时，追加进该节点 journal entry（新增轻量 `toolCalls[]` 字段，封顶条数防膨胀）。
-   不引入独立 McpCallRecord 类型——工具名 `mcp__` 前缀已可辨来源。非 MCP 工具调用本期不记录。
+7. **`mcp__*` 工具调用写入 journal（评审补充，v3 P1-2 重写：完整数据通道 + 双落点）**：现状 journal 无任何
+   工具级记录（M0-6 静态结论），且数据通道四环均缺字段——`AgentResult`（`types.ts:46-53`）、
+   `AgentExecutionResult`（`session-runner.ts:30-33`）、`JournalEntry`（`types/index.ts:154-173`）均无 toolCalls，
+   `AgentEvent` 无工具事件类型。**只订阅事件不建通道，数据到不了 journal。**
+   通道设计：
+   ```
+   PiAgentAdapter（subscribe 采集 mcp__* 调用）
+     -> AgentResult.toolCalls（adapter/types.ts 新增）
+     -> agentAdapterToRunner() 映射 -> AgentExecutionResult.toolCalls（session-runner.ts 新增）
+     -> Workflow Runtime 分流：
+          成功 attempt -> onAgentJournal -> JournalEntry.toolCalls（append 路径，workflow-runtime.ts:627）
+          失败/中止 attempt -> AgentExecutionRecord.toolCalls（executions[]，recordExecution 路径）
+   ```
+   失败 attempt 必须同样落盘（评审 v3 补充）：agent 最终失败时已发生的 MCP 调用经 executions[] 保留，
+   不因只挂成功 entry 而丢失。记录内容收紧为**安全摘要**（v3 P1-1，见风险表）：工具名/状态/耗时/
+   参数字节数与脱敏后键名列表，**不存完整参数、不存返回值**；错误信息经脱敏与限长。
+   不引入独立 McpCallRecord 类型——工具名 `mcp__` 前缀已可辨来源；非 MCP 工具调用本期不记录。
 
 ### DSL 侧（workflow `agent()` 参数）
 
@@ -221,9 +257,12 @@ const result = await agent({
 
 - **验收标准**：
   - 契约测试：policy 含 `mcp` 时 loader 工厂装配正确、不含时与现状逐字节一致（回归保护）。
-  - 联调测试（遵守并发 ≤2、看门狗、证据落盘纪律）：真实 MCP server（建议用 `@modelcontextprotocol/server-filesystem` 或仓库内已有测试 server）经 codemode 被 Agent 调用成功；拒绝策略生效；
-    journal entry 的 `toolCalls[]` 含该次 `mcp__*` 调用（名称/状态/耗时），与 M0-6 事件流载荷清单一致；
-    两层权限叠加语义（更严者胜）有显式测试用例。
+  - **透传链端到端测试（v3 P0-1，P0 级）**：用例必须从 **workflow 脚本**发起（`agent({ tools: { mcp } })`），
+    逐环节断言 tools 到达 PiAgentAdapter；禁止只用「直调 `PiAgentAdapter.execute()`」充当透传证据——
+    那条路径绕过了本次补齐的三个断点。
+  - 联调测试（遵守并发 ≤2、看门狗、证据落盘纪律）：真实 MCP server（建议用 `@modelcontextprotocol/server-filesystem` 或仓库内已有测试 server）经 codemode 被 Agent 调用成功；拒绝策略生效（含 deny 压过 server direct 的反向用例）；
+    journal 落盘验证双路径：成功 attempt 的 `toolCalls[]` 与失败 attempt 的 `executions[].toolCalls` 均含
+    `mcp__*` 摘要（名称/状态/耗时，无完整参数）；两层权限叠加语义（更严者胜）有显式测试用例。
 
 ---
 
@@ -231,7 +270,7 @@ const result = await agent({
 
 - `tool_search` deferred 模式的深度调优（M0-5 只验证行为存在）。
 - Workflow 直调 MCP（`mcp.call()` 注入 VM）：pi-mcp 的 `McpClient`（F10）证明技术可行，但副作用工具的 Replay Policy 语义需要独立设计，不混入本期。
-- MCP 调用的独立 Journal 记录类型（`McpCallRecord`）：本期以轻量 `toolCalls[]` 字段满足审计需求（M2 改造点 6），
+- MCP 调用的独立 Journal 记录类型（`McpCallRecord`）：本期以轻量 `toolCalls[]` 字段满足审计需求（M2 改造点 7），
   独立类型与副作用 Replay Policy 联动留给 M4。~~本期复用现有工具调用记录~~（原表述有误，2026-11-17 修正：
   经实证现有 journal 不含任何工具调用记录，子会话 inMemory 不落盘，见 M0-6）。
 - 人工审批（human-in-the-loop）工作流。
@@ -248,7 +287,7 @@ const result = await agent({
 | noExtensions 语义在未来 SDK 版本变化（F4 是实现细节而非文档承诺） | 升级依赖时跑 M0-1 回归；契约测试固化「工厂已装配 + 磁盘扩展为零」两条断言 |
 | codemode VM（QuickJS/WASM）与现有 workflow VM（node vm）混淆 | 文档口径固定：两者并存不同层，workflow VM 不获得 MCP 能力（M4 才考虑，且走 Runtime 受控代理） |
 | MCP 工具返回内容被当作可信指令（prompt injection）（评审补充） | 文档口径固定：工具返回一律视为不可信外部数据，仅作数据消费；工具结果不得变更 Agent 权限、不得为其他 MCP 工具授权；M0-3 的管线拦截验证是执行层兜底 |
-| 凭证泄露（评审补充） | 凭证继续走 SDK 原生路径（`mcp-auth.json`、env 展开的 header、OAuth），不复制进 policy/journal/日志；journal 的 `toolCalls[]` 参数摘要沿用现有 `redactValue` 脱敏（`agent-result.ts` REDACT_KEY）后再落盘 |
+| 凭证泄露（评审补充） | 凭证继续走 SDK 原生路径（`mcp-auth.json`、env 展开的 header、OAuth），不复制进 policy/journal/日志。**v3 P1-1 收紧：`redactValue` 不作为安全脱敏器**——它是展示用途（`agent-result.ts` 头注释自述），且递归超深度上限（4 层）直接返回原值，深层敏感子树原样保留；键名匹配也识别不了字符串形态的凭证。`toolCalls[]` 落盘规则：只存工具名/状态/耗时/参数字节数/脱敏后键名列表，**不存完整参数与返回值**；错误信息脱敏后限长（复用 truncateUtf8ByBytes）。若后续需要完整参数审计，另建专用安全模块，不复用展示层实现 |
 
 ---
 
