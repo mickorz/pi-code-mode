@@ -5,12 +5,15 @@
  * Engine 侧实际依赖的缝是 engine/agent/session-runner.ts 的 AgentSessionRunner，
  * 由 agent-adapter.ts 的 agentAdapterToRunner() 做契约桥接；本文件是契约的标准定义。
  */
+import type { McpPolicy } from "../engine/types/index.js"
 
-/** 工具策略：excludeTools 支持通配符（pi SDK 原生，M0 实测）；noExtensions 默认 true 防递归 */
+/** 工具策略：excludeTools 支持通配符（pi SDK 原生）；noExtensions 默认 true 防递归；mcp 为 Agent 级 MCP 授权（M2） */
 export type ToolPolicy = {
   excludeTools?: string[]
   noExtensions?: boolean
   allowTools?: string[]
+  /** Agent 级 MCP 权限（M2）；enabled 时装配 MCP 扩展并经 loadConfig 过滤（见 src/mcp/mcp-policy.ts） */
+  mcp?: McpPolicy
 }
 
 export interface AgentRequest {

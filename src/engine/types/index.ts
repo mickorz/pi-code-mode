@@ -2,6 +2,38 @@
  * 共享类型定义
  */
 
+/** Agent 级 MCP 权限策略（纯数据；实现见 src/mcp/mcp-policy.ts 的 filterMcpConfig） */
+export interface McpPolicy {
+  /** 总开关；false 时该 Agent 不装配任何 MCP 能力 */
+  enabled: boolean
+  /** server 白名单；undefined = 拒绝全部（默认拒绝原则，M0-2A 实证：未授权 server 零连接） */
+  servers?: string[]
+  /** 工具白名单，规范名 "<server>:<tool>"，支持 "<server>:*" / "<server>:get_*"；未命中者 hidden */
+  allowTools?: string[]
+  /** 工具黑名单，规范名同上；优先级高于 allowTools 与 server exposure（F12 官方匹配语义保证） */
+  denyTools?: string[]
+  /** per-server exposure 覆盖（pi 原生语义）；缺省时开放工具按 codemode 处理 */
+  exposure?: Record<string, "direct" | "codemode" | "deferred" | "hidden">
+}
+
+/** MCP 工具调用安全摘要（M2 审计；不存完整参数与返回值，v3 P1-1） */
+export interface McpToolCallSummary {
+  /** mcp__<server>__<tool> 全名（F14：server 名中 - 已替换为 _） */
+  toolName: string
+  status: "ok" | "error"
+  /** 参数字节量（不存参数内容） */
+  argsBytes: number
+  /** 脱敏后的参数键名列表（REDACT_KEY 命中键替换后仍列出键名） */
+  argsKeys?: string[]
+  durationMs?: number
+  /** 错误摘要（脱敏限长后） */
+  error?: string
+  /** pi 内部调用 id（start/end 事件配对） */
+  toolCallId?: string
+  /** codemode 脚本内调用时的父调用 id（F18：可归因到脚本调用） */
+  parentToolCallId?: string
+}
+
 /** 单个 agent 的 token 用量（由 Adapter 从 prompt 响应中提取） */
 export interface AgentUsage {
   input?: number
@@ -35,6 +67,8 @@ export interface AgentExecutionRecord {
   startedAt?: number
   durationMs?: number
   usage?: AgentUsageSplit
+  /** 本 attempt 已发生的 MCP 工具调用安全摘要（v5 P1-2：失败/中止 attempt 的审计不丢） */
+  toolCalls?: McpToolCallSummary[]
 }
 
 /** 子 workflow invocation 的执行记录（v0.9 Observability：wall-clock 统计与 TUI 树源）
@@ -171,4 +205,6 @@ export interface JournalEntry {
   usage?: AgentUsageSplit
   /** 历次尝试记录（追加式，保留最近 10 条；最后一条即最新执行；绝不影响 resume） */
   executions?: AgentExecutionRecord[]
+  /** 最新成功 attempt 的 MCP 工具调用安全摘要（M2 v5 P1-2；无 MCP 调用时缺省） */
+  toolCalls?: McpToolCallSummary[]
 }

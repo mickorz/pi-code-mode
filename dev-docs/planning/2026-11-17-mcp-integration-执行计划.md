@@ -1,7 +1,7 @@
 # pi-code-mode：MCP Tool Integration 执行计划
 
 - 日期：2026-11-17
-- 状态：M0 大部分实证已完成（本文档第一节），剩余实证项已锁定
+- 状态：**本期（M0 实证 + M1 + M2）已全部完成**（M3/M4 另行立项）
 - 范围：本期只做 M0 + M1 + M2（Agent 调用 MCP），M3/M4 列为后续方向不展开
 - 上游方案：ChatGPT 调研稿（2026-11-17），经本仓库独立验证后修订
 - 修订记录：2026-11-17 v2 —— 按评审意见补充 5 个技术问题落点：M0-2/M0-5 加工具级与 hidden 实证（P0）、
@@ -14,6 +14,9 @@
 - 修订记录：2026-11-17 v4（终版，冻结）—— 收尾小修订：P0 失败 attempt 事件传递机制锁定
   （throwForStatus 断点实证，采方案 A 事件侧实时上报，经 ctx.onEvent record 变体与 executionId 防重试混淆）、
   P1 通配符两层交叉测试矩阵、P2 F1-F12 状态表与 DSL 表述修正。**本文档冻结，进入 M0 运行时实证。**
+- 修订记录：2026-11-18 M2 完成 —— M1 策略层（filterMcpConfig 三铁律）与 M2 AgentAdapter 接入
+  （P0-1 透传链三断点补齐、executionId 贯通、事件侧 toolCalls 采集与成功/失败双落点）全部交付，
+  端到端联调通过，详见 `dev-docs/progress-result/MCP-M2-执行报告.md`。**本期（M0/M1/M2）全部完成。**
 - 修订记录：2026-11-18 M0 完成 —— 运行时实证 M0-1 ~ M0-6 全部通过（57 断言 0 失败），详见
   `dev-docs/progress-result/MCP-M0-执行报告.md`；新增实证事实 F13-F18（注册层 codemode→deferred 映射、
   server 名 - 到 _ 替换、dispose 不回收 stdio 子进程、401 server 阻塞好 server、事件流工具载荷、
@@ -337,9 +340,9 @@ const result = await agent({
 |---|---|---|
 | M0 静态实证（F1-F12） | **已完成**（本文档第一节） | 本文档 |
 | M0 运行时实证（M0-1 ~ M0-6） | **已完成**（2026-11-18，57 断言全 PASS） | `dev-examples/mcp-m0-verification/` + `dev-docs/progress-result/MCP-M0-执行报告.md` |
-| M1 MCP 策略层（薄） | 未开始（前提已就绪） | `src/mcp/mcp-policy.ts` + 契约测试 |
-| M2 AgentAdapter 接入 | 未开始 | 类型扩展 + PiAgentAdapter 改造 + 联调证据 |
-| M3/M4 | 不在本期 | 另行立项 |
+| M1 MCP 策略层（薄） | **已完成**（2026-11-18，14 契约断言） | `src/mcp/mcp-policy.ts` + `tests/contract/mcp-policy.test.ts` |
+| M2 AgentAdapter 接入 | **已完成**（2026-11-18，契约 81/引擎 206/端到端 19 断言全 PASS） | `MCP-M2-执行报告.md`（类型扩展 + PiAgentAdapter 改造 + runtime 双落点 + e2e） |
+| M3/M4 | 不在本期（另行立项） | 另行立项 |
 
 ## 引用
 

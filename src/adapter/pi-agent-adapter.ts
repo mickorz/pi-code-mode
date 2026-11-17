@@ -12,19 +12,42 @@
 
 import {
   createAgentSession,
+  createCodemodeExtension,
+  createMcpExtension,
+  createToolSearchExtension,
   DefaultResourceLoader,
   SessionManager,
   SettingsManager,
   type AgentSession,
+  type LoadedMcpConfig,
 } from "@earendil-works/pi-coding-agent"
 import os from "node:os"
 import path from "node:path"
 import type { Model } from "@earendil-works/pi-ai"
+import type { McpPolicy, McpToolCallSummary } from "../engine/types/index.js"
+import { redactValue, truncateUtf8ByBytes } from "../engine/runtime/agent-result.js"
+import { filterMcpConfig } from "../mcp/mcp-policy.js"
+import { readMcpConfigFiles } from "../mcp/mcp-config-loader.js"
 import type { AgentAdapter, AgentEvent, AgentRequest, AgentResult, ExecutionContext } from "./types.js"
 import { validateStructured } from "./structured.js"
 import { resolveModelSpec } from "./model-spec.js"
 
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent")
+
+/**
+ * MCP loadConfig 注入（M2）：读宿主用户/项目 mcp.json 后按 Agent 策略过滤。
+ * 注意：pi 1.3.0 的 loadMcpConfig 函数未从包主入口导出，读取由 readMcpConfigFiles 实现
+ * （复刻官方 override 语义）；loadConfig 返回值与默认实现走扩展内同一下游（startConnection）。
+ * projectTrusted=true：子会话由宿主（已通过项目信任确认）发起，信任决定继承宿主。
+ * F16 实证依据：需认证/故障 server 会阻塞同会话其他 server，必须在过滤层挡掉——
+ * 默认拒绝由 filterMcpConfig 保证（未列白名单的 server 不会出现在产出配置中）。
+ */
+function makeMcpLoadConfig(agentDir: string, cwd: string, policy: McpPolicy) {
+  return (): LoadedMcpConfig => {
+    const base = readMcpConfigFiles(agentDir, cwd, true)
+    return filterMcpConfig(base, policy)
+  }
+}
 
 export interface PiAgentAdapterOptions {
   /** pi 全局配置目录，默认 ~/.pi/agent */
@@ -56,8 +79,23 @@ export class PiAgentAdapter implements AgentAdapter {
     const emit = (event: AgentEvent) => ctx.onEvent?.(event)
 
     // noExtensions 默认 true：子会话不加载宿主扩展，递归编排通道关闭（M0 recursive-guard PASS）
+    // M2：policy.mcp.enabled 时显式装配 MCP/Codemode/ToolSearch 三工厂（F4：inline 工厂不受 noExtensions 影响）
     const agentDir = this.agentDir ?? DEFAULT_AGENT_DIR
-    const loader = new DefaultResourceLoader({ cwd, agentDir, noExtensions: policy.noExtensions !== false })
+    const mcpEnabled = policy.mcp?.enabled === true
+    const extensionFactories = mcpEnabled
+      ? [
+          createMcpExtension({ loadConfig: makeMcpLoadConfig(agentDir, cwd, policy.mcp!) }),
+          // codemode/tool_search 注册后默认 inactive，由 MCP 扩展按 exposure 自动激活（F5），不双写
+          createCodemodeExtension(),
+          createToolSearchExtension(),
+        ]
+      : []
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      noExtensions: policy.noExtensions !== false,
+      ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
+    })
     await loader.reload()
 
     let session: AgentSession
@@ -88,6 +126,15 @@ export class PiAgentAdapter implements AgentAdapter {
       return fail("session", `子会话创建失败: ${String((e as Error)?.message ?? e)}`)
     }
 
+    // F5：MCP 扩展在 session_start 连接 server，prompt 前必须 bindExtensions（M0-1 实证顺序）
+    if (mcpEnabled) {
+      try {
+        await session.bindExtensions({})
+      } catch (e) {
+        return fail("session", `MCP 扩展绑定失败: ${String((e as Error)?.message ?? e)}`, session.sessionId)
+      }
+    }
+
     this.inflight.set(ctx.executionId, session)
     emit({ type: "session-created", executionId: ctx.executionId, sessionId: session.sessionId })
 
@@ -112,7 +159,61 @@ export class PiAgentAdapter implements AgentAdapter {
 
       let text = ""
       let usage: { inputTokens: number; outputTokens: number } | undefined
+      // M2 v5 P0：MCP 工具调用事件侧实时采集（start 记摘要，end 组装安全摘要后经 record 事件上报）
+      const mcpInflight = new Map<
+        string,
+        { toolName: string; argsBytes: number; argsKeys: string[]; parentToolCallId?: string }
+      >()
+      const emitMcpSummary = (s: McpToolCallSummary) => {
+        emit({ type: "record", executionId: ctx.executionId, record: { kind: "mcp-tool-call", ...s } })
+      }
+      // v4：attempt 终结时未配对的 start（工具还在跑就被取消/超时）记为 error 摘要，不丢已发生调用
+      const flushUnpaired = () => {
+        for (const [, started] of mcpInflight) {
+          emitMcpSummary({
+            toolName: started.toolName,
+            status: "error",
+            argsBytes: started.argsBytes,
+            argsKeys: started.argsKeys,
+            error: "cancelled or interrupted before completion",
+            parentToolCallId: started.parentToolCallId,
+          })
+        }
+        mcpInflight.clear()
+      }
       const unsub = session.subscribe((e: any) => {
+        if (e.type === "tool_execution_start" && typeof e.toolName === "string" && e.toolName.startsWith("mcp__")) {
+          const args = e.args
+          let argsStr = ""
+          try {
+            argsStr = JSON.stringify(args ?? {})
+          } catch {
+            argsStr = ""
+          }
+          mcpInflight.set(String(e.toolCallId), {
+            toolName: e.toolName,
+            argsBytes: Buffer.byteLength(argsStr, "utf8"),
+            argsKeys: Object.keys(args ?? {}),
+            parentToolCallId: typeof e.parentToolCallId === "string" ? e.parentToolCallId : undefined,
+          })
+        }
+        if (e.type === "tool_execution_end" && mcpInflight.has(String(e.toolCallId))) {
+          const started = mcpInflight.get(String(e.toolCallId))!
+          mcpInflight.delete(String(e.toolCallId))
+          const isError = e.isError === true
+          emitMcpSummary({
+            toolName: started.toolName,
+            status: isError ? "error" : "ok",
+            argsBytes: started.argsBytes,
+            argsKeys: started.argsKeys,
+            durationMs: typeof e.durationMs === "number" ? e.durationMs : undefined,
+            error: isError
+              ? truncateUtf8ByBytes(String(redactValue(String(JSON.stringify(e.result ?? "")))), 200)
+              : undefined,
+            toolCallId: typeof e.toolCallId === "string" ? e.toolCallId : undefined,
+            parentToolCallId: started.parentToolCallId,
+          })
+        }
         if (e.type === "message_end" && e.message?.role === "assistant") {
           for (const c of e.message.content ?? []) {
             if (c.type === "text") text += c.text
@@ -140,6 +241,7 @@ export class PiAgentAdapter implements AgentAdapter {
           validation = validateStructured(text, request.outputSchema)
         }
         unsub()
+        flushUnpaired()
 
         if (cancelled || request.signal?.aborted) {
           return { status: "cancelled", output: { type: "text", value: "" }, sessionId: session.sessionId }
@@ -157,6 +259,7 @@ export class PiAgentAdapter implements AgentAdapter {
       }
 
       unsub()
+      flushUnpaired()
 
       if (cancelled) {
         return { status: "cancelled", output: { type: "text", value: "" }, sessionId: session.sessionId }
