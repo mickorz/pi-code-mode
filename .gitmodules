@@ -9,3 +9,7 @@
 [submodule "thirdparties/vercel-workflow"]
 	path = thirdparties/vercel-workflow
 	url = https://github.com/vercel/workflow.git
+[submodule "thirdparties/pi-model-router"]
+	path = thirdparties/pi-model-router
+	url = https://github.com/yeliu84/pi-model-router.git
+	branch = main
