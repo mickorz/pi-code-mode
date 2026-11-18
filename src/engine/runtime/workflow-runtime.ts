@@ -45,6 +45,7 @@ import type {
   WorkflowRunResult,
 } from "../types/index.js"
 import { McpClientPool, makeMcpInvoker, type McpInvoker } from "../../mcp/mcp-client-pool.js"
+import type { BudgetGate } from "../governance/budget-gate.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createNodeExecutor, compositeScopeStorage, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
@@ -131,6 +132,8 @@ export interface WorkflowRunOptions {
   onMcpCall?: (record: McpToolCallSummary) => void
   /** M4：宿主全局配置目录（直调池读 mcp.json 用；缺省 ~/.pi/agent） */
   agentDir?: string
+  /** M2：预算闸（可选注入——旧脚本零改动；未注入时不限预算） */
+  budgetGate?: BudgetGate
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
   trigger?: {
     type: string
@@ -222,6 +225,8 @@ interface SharedRunContext {
   onMcpCall?: (record: McpToolCallSummary) => void
   /** M4：宿主全局配置目录（池读 mcp.json 用） */
   agentDir?: string
+  /** M2：预算闸（run 级；未注入时不限预算） */
+  budgetGate?: BudgetGate
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
   /** 子 workflow 嵌套深度上限（分支 A） */
@@ -292,6 +297,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     cwd: options.cwd ?? process.cwd(),
     onMcpCall: options.onMcpCall,
     agentDir: options.agentDir,
+    budgetGate: options.budgetGate,
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
     phaseFailed: [],
     continueOnAgentFailure: options.continueOnAgentFailure ?? false,
@@ -657,6 +663,30 @@ async function executeWorkflow(
               },
             })
           }
+          // M2：预算闸（硬预算前拦截 + 软预算原子预留）；未注入时零影响
+          const gate = shared.budgetGate
+          let budgetDecision: ReturnType<BudgetGate["beforeDispatch"]> | undefined
+          if (gate) {
+            budgetDecision = gate.beforeDispatch(effectivePrompt, executionId)
+            if (budgetDecision.degraded) {
+              shared.logs.push(
+                `预算降级：${budgetDecision.degraded.from} → ${budgetDecision.degraded.to}（${budgetDecision.degraded.reason}）`,
+              )
+            }
+            if (!budgetDecision.allow) {
+              const violation = budgetDecision.violation
+              record.status = "failed"
+              record.error = violation?.message ?? "预算拒绝 dispatch"
+              record.durationMs = Date.now() - agentStarted
+              emitExecution("failed", record.error)
+              shared.onAgentUpdate?.(record)
+              log(`agent "${label}" 被预算拦截: ${record.error}`)
+              // 硬预算属不可恢复（结构性），直接终止该节点
+              throw new WorkflowError(`预算拦截：${record.error}`, WorkflowErrorCode.AGENT_LIMIT_EXCEEDED, {
+                recoverable: false,
+              })
+            }
+          }
           try {
             const runOptions: AgentRunOptions = {
               label,
@@ -683,6 +713,16 @@ async function executeWorkflow(
               attemptController.abort(),
             )
             const value = execution.value
+            // M2：结算软预算（真实 usage 优先；缺失时按估算并标记）
+            if (gate) {
+              gate.afterDispatch(
+                budgetDecision?.reservationId,
+                { ...(record.inputTokens !== undefined ? { input: attemptUsage().inputTokens } : {}), ...(record.outputTokens !== undefined ? { output: attemptUsage().outputTokens } : {}) },
+                "ok",
+              )
+              const deg = gate.maybeDegradeOnSoftLimit()
+              if (deg) shared.logs.push(`预算降级：${deg.from} → ${deg.to}（${deg.reason}）`)
+            }
             record.status = "ok"
             record.durationMs = Date.now() - agentStarted
             record.model = modelSpec
@@ -718,12 +758,14 @@ async function executeWorkflow(
             return value
           } catch (error) {
             if (isAborted()) {
+              if (gate) gate.afterDispatch(budgetDecision?.reservationId, undefined, "cancelled")
               record.status = "aborted"
               record.durationMs = Date.now() - agentStarted
               emitExecution("aborted")
               shared.onAgentUpdate?.(record)
               throw wrapError(error)
             }
+            if (gate) gate.afterDispatch(budgetDecision?.reservationId, undefined, "failed")
             const workflowError = wrapError(error)
             if (!workflowError.recoverable) {
               record.status = "failed"
@@ -1579,6 +1621,11 @@ async function executeWorkflow(
     retry,
     checkpoint,
     console: consoleShim,
+    // M2-T5：budget.remaining() —— 脚本可查询余量并自主降级（未注入预算闸时返回空对象）
+    budget: {
+      remaining: () => (shared.budgetGate ? shared.budgetGate.remaining() : {}),
+      totals: () => (shared.budgetGate ? shared.budgetGate.totals() : { inputTokens: 0, outputTokens: 0, agents: 0, retries: 0, estimated: false, reservations: 0 }),
+    },
     // M4：workflow 直调 MCP——mcp 显式函数注入（零枚举成本）；tools 走沙箱内 Proxy + __mcpBridge（惰性，
     // 调用时才校验可达面/连接；跨边界 Proxy 不可靠，故 Proxy 在 body 前的沙箱内创建，官方 prelude 同思路）
     ...(mcpInvoker
