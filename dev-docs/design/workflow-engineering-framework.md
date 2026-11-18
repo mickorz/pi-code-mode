@@ -446,22 +446,32 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 
 **Workflow Execution Trace**（静态分析 + 动态执行观测关联）为跨阶段能力：M1 起分阶段建设（M1 先做静态 Analyzer 并读取已有 Journal 关联数据；M2/M3/M5 逐步完善），不为它提前重构 Runtime——详见执行计划"五点五"节。
 
-### 任务恢复模型（M3 设计约束）
+### 任务恢复模型（M3 设计约束，四轮评审同步为六项指纹）
 
 产物复用判定使用**分层指纹**，整体 scriptHash 只用于审计：
 
 ```
 workflowId
   └── taskKey
-       ├── taskDefinitionHash   # 任务定义
-       ├── inputHash            # 输入数据指纹
-       ├── promptHash           # 最终 prompt 指纹
-       └── modelConfigHash      # 模型配置指纹
+       ├── taskDefinitionHash        # 任务定义（prompt 模板/调用形态）
+       ├── inputHash                 # 输入数据指纹
+       ├── promptHash                # 最终 prompt 指纹
+       ├── modelConfigHash           # 模型 ID + 关键参数及一切影响输出的配置（不能只比模型名称）
+       ├── executionContractVersion  # 输出契约版本（输出结构变化 → 旧产物不能被新下游安全消费）
+       └── externalDepsHash          # 外部依赖指纹（**按任务实际依赖逐项计算**：客户端任务只含客户端代码快照；
+                                     #   规则检查任务只含规则文档指纹——客户端变化不失效规则任务）
 ```
 
-- **taskFingerprint** = taskKey + 四项 hash → 判定单个任务产物是否可复用（改一行日志不失效全部产物）
+- **taskFingerprint** = hash({ taskKey, 六项指纹 }) → 判定单个任务产物是否可复用（改一行日志不失效全部产物；改无关外部依赖不失效其他任务）
 - **workflowVersionHash**（整体 scriptHash）→ 仅审计与 Plan 过期检测
 - **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性——避免崩溃后重复发布
+
+**Registry 与 Checkpoint 的一致性（四轮评审补）**：
+
+1. **Checkpoint 是任务是否完成的最终事实源**；TaskRegistry 状态可从 Checkpoint 重建或校正
+2. 产物写入采用**临时文件 + 原子替换**，避免半成品
+3. Checkpoint 提交前必须验证 `resultRef` 对应的产物确实存在且完整
+4. 副作用状态独立管理——**Checkpoint 已提交不等于外部操作一定成功**（文件系统原子替换与外部 API 副作用不是同一种事务）
 
 ### 配置优先级链（M2 设计约束）
 

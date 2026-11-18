@@ -62,19 +62,20 @@
 
 ## 二、开发任务（T0 ~ T8，全部 P0）
 
-### T0：基线与测试样本
+### T0：基线与测试样本（真实性能基线，M1 最重要的交付）
 
 **工作内容**
 
 - 检查当前 Analyzer 相关基础设施
 - 确认 Acorn AST 能力与现有 VM 解析逻辑的复用边界
-- 建立 Workflow 测试样本
-- 收集 PrdGameSkill 中长耗时 Workflow 的实际脚本
-- 保存优化前的运行数据
+- **真实样本收集**：PrdGameSkill 的 S8（8-difference-review）、S10（10-unified-spec）、game-prd-check 等真实 Workflow
+- **执行数据还原**：从现有 Journal 与执行报告提取 per-Agent 耗时、Token、失败、重试、并发情况
+- **原子测试集**：串行依赖 / 动态循环 / 重复上下文 / 并行波次 / 子 Workflow 五类测试样本
+- **优化效果基线**：固定输入规模、模型配置、质量标准，保存优化前数据——**必须记录质量指标**（需求覆盖率/证据映射），否则后续无法证明优化未损害质量
 
-**交付物**：`dev-docs/design/m1-baseline.md`、`tests/analyzer/fixtures/`、`dev-docs/benchmark/m1-baseline.json`
+**交付物**：`dev-docs/design/m1-baseline.md`、`tests/analyzer/fixtures/`、`dev-docs/benchmark/m1-baseline.json`、真实 Workflow 性能基线报告
 
-**验收**：能够使用真实 Workflow 重现至少三种性能风险。
+**验收**：能够使用真实 Workflow 重现至少三种性能风险；基线含质量指标（否则 token 降低 50% 也无法证明 PRD 需求覆盖率未受损）。
 
 ### T1：Workflow Plan
 
@@ -82,28 +83,24 @@
 
 - 定义 Plan JSON Schema（**Definition 与 Profile 分离落地，评审 P1-2**）
 - 定义指纹字段（统一命名）：`source.scriptHash`（JS 内容指纹）/ `planHash`（Plan 内容指纹）/ `planVersion`（Plan 版本）/ `analyzedAt`（分析时间，属报告元数据）
+- **planHash 计算规则（评审 P0-4，防自引用）**：`planHash = SHA256(canonicalJSON(Plan without planHash))`——剔除 planHash 字段后对剩余内容做 canonical JSON 再哈希：
+
+  | 字段 | 参与 planHash 计算 |
+  | --- | --- |
+  | planVersion | 是 |
+  | source.scriptHash | 是 |
+  | source.analyzedAt | **否** |
+  | definition | 是 |
+  | profiles | 是 |
+  | planHash | **否**（自引用排除） |
+
+  相同 Plan 内容 → 稳定 Hash
+- **activeProfile**：run 级字段，记录当前 Run 选择的 Profile 名（同一 Plan 可在不同 Run 使用不同 Profile）；`profileHash`（当前 Profile 独立指纹）随 run 记录，用于精确追踪运行配置
 - 实现 Plan Loader / Plan Validator
 - 实现 Plan 与 Workflow JS 的关联
 - 支持旧 Workflow 没有 Plan 的情况
 
-**Schema 结构（`workflow.plan.json`）**：
-
-```json
-{
-  "planVersion": "1.0",
-  "planHash": "sha256:...",
-  "source": { "scriptPath": "...", "scriptHash": "sha256:...", "analyzedAt": "..." },
-  "definition": {
-    "stages": [ ... ],          // Stage 与任务定义只有一份
-    "dependencies": [ ... ]
-  },
-  "profiles": {
-    "fast":     { "concurrency": 8,  "modelPolicy": { "analysis": "fast" } },
-    "balanced": { "concurrency": 4 },
-    "quality":  { "concurrency": 4, "requiredValidation": true }
-  }
-}
-```
+**Schema 结构（`workflow.plan.json`）**：**以架构基线 2.2 节的 Definition/Profile Schema 为唯一事实源**（`definition`（stages/quality 强制项）+ `profiles`（fast/balanced/quality 差异化执行策略，嵌套 execution/modelPolicy/budget）），本节不再单独定义字段结构，避免两文档漂移。
 
 - fast/balanced/quality 是同一 Definition 的 Profile，**只覆盖执行策略，不复制 stages**
 - **Profile 不能降低安全预算约束，也不能自动关闭强制性的质量验证**（`requiredValidation: true` 为 Definition 级强制项）
@@ -383,7 +380,9 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
           └── externalDepsHash          # 外部依赖指纹（知识库/MCP server/代码库快照变化 → 缓存失效）
    ```
 
-   - **taskFingerprint** = hash(taskKey + 上述五项) → 判断单个任务产物是否可复用；修改无关任务不影响其他任务的产物复用
+   - **taskFingerprint** = hash({ taskKey, taskDefinitionHash, inputHash, promptHash, modelConfigHash, executionContractVersion, externalDepsHash }) → 判断单个任务产物是否可复用；修改无关任务不影响其他任务的产物复用
+   - `externalDepsHash` **按任务实际依赖逐项计算**（客户端任务只含客户端代码快照指纹；规则检查任务只含规则文档指纹）——客户端代码变化不应失效无关的规则检查任务
+   - `modelConfigHash` 含模型 ID + 关键参数及一切影响输出的配置，不能只比较模型名称
    - **workflowVersionHash**（整体 scriptHash）仅用于审计与 Plan 过期检测，不参与产物复用判定
    - **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性（副作用类任务须有独立幂等键）——任务"执行完成"不等于"副作用已提交"，避免崩溃后重复发布
 
@@ -474,7 +473,7 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 | M4-T2 公共上下文提取 | 前置合并（agent 或确定性 dedup）→ 引用传递（`ctx.common`） | common-context 执行器 | 重复注入 token 下降（对照 Benchmark） |
 | M4-T3 AdaptiveScheduler | 第一版基于 **M2/M3 已有运行观测数据**建立轻量级任务耗时画像（无历史样本时静态调度）；长任务先发；M5 完成后接入正式性能基线 | `adaptive-scheduler.ts` | 混合长短任务的墙钟优于静态调度；无历史样本时行为正确 |
 | M4-T4 ModelPool 自适应 | 429/超时信号 → 池内降档；恢复 → 升档 | model-pool 增强 | 人为注入 429 时自动切换且任务不失败 |
-| M4-T5 mode 策略执行器 | fast/balanced/quality 的验证增减、冗余评审配置化 | mode 策略执行器 | 三模式产生可观测的策略差异 |
+| M4-T5 mode 策略执行器 | **Effective Validation = Required Validation UNION Profile Validation**（Profile 只能增加或调整非强制验证，不能删除 Definition 强制项，详见架构基线 2.2）：fast 减少非必要验证与冗余评审（可提并发），quality 增加交叉验证与重复评审 | mode 策略执行器 | 三模式产生可观测的策略差异；三模式下 Required Validation 全部执行（PrdGameSkill：需求覆盖检查/关键结算规则验证/最终交付质量检查不可跳过） |
 | M4-T6 Benchmark | 分片前后 token 对比、自适应 vs 静态调度墙钟对比、质量不降级验证 | `dev-docs/benchmark/m4-*.json` | 见验收指标 |
 
 ### 验收指标
@@ -549,6 +548,26 @@ PrdGameSkill 的核心痛点（跑 60 分钟失败却不知道慢在哪）**不�
 
 最终形态 **Workflow Performance Analyzer**：代码结构与真实执行数据关联，输出——哪个 Stage 最慢、哪个 Agent 消耗 Token 最多、哪些任务在等待、哪些可并行、哪些重复传递上下文、哪些失败后重复执行。让 Analyzer 真正回答"为什么慢、改哪里、改后是否变快"。
 
+**统一关联 ID（评审 P1，五级层级）**——静态分析的 Agent 节点与真实执行调用靠它对应，避免各阶段自造关联字段：
+
+```
+workflowId
+  └── runId
+       └── stageId
+            └── taskKey
+                 └── agentCallId   # 一次实际 Agent 调用
+```
+
+| ID | 职责 |
+| --- | --- |
+| workflowId | 标识工作流 |
+| runId | 标识一次执行 |
+| stageId | 标识执行阶段 |
+| taskKey | 标识逻辑任务 |
+| agentCallId | 标识一次实际 Agent 调用 |
+
+M1-T0 先确认五级 ID 与现有 Journal（runId:callIndex/attempt）的兼容映射；M2/M3 在各自采集与登记中使用同一层级，不另发明字段。
+
 ## 六、跨阶段注意事项
 
 1. **Runtime 挂钩点以可选 options 注入**（M2 budget-gate、M3 task 登记、M4 调度回调），旧脚本零改动可跑——每阶段回归跑 `tests/engine/`（206 断言）确保兼容。
@@ -567,7 +586,7 @@ PrdGameSkill 的核心痛点（跑 60 分钟失败却不知道慢在哪）**不�
 | M2 | 超限拦截率 / Plan 兼容性 / 指标完整性 | 100% / 100% / 100% |
 | M3 | 已完成任务重跑率 / 跨 run 恢复成功率 | 0% / 100% |
 | M4 | 重复上下文 token 降低 / 质量不降级 | ≥30% / 通过率不降 |
-| M5 | 偏差率收敛 / 优化闭环案例 / 建议有效率 | 3 轮递减 / ≥1 例 / ≥80% |
+| M5 | 同类任务估算误差基线 / 回归检测 / 优化闭环 / 建议有效率 | 建立可量化基线 / 注入可检出+误报率 / ≥1 例 / ≥80% |
 
 ## 引用
 
