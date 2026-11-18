@@ -582,32 +582,6 @@ workflowId
 
 M1-T0 先确认五级 ID 与现有 Journal（runId:callIndex/attempt）的兼容映射；M2/M3 在各自采集与登记中使用同一层级，不另发明字段。
 
-## 五点五、跨阶段能力：Workflow Execution Trace（评审新增）
-
-PrdGameSkill 的核心痛点（跑 60 分钟失败却不知道慢在哪）**不是静态分析能完全回答的**——静态分析知道有 3 个并行任务，但不知道服务端任务 480s/32K token 才是真正瓶颈。
-
-新增跨阶段能力 **Workflow Execution Trace**（静态分析 + 动态执行观测关联），分阶段演进、**不为它提前重构 Runtime**：
-
-| 阶段 | Execution Trace 交付 |
-| --- | --- |
-| M1 | 静态 Analyzer + **读取已有 Journal 与执行报告，关联已有数据** |
-| M2 | 结构化运行指标采集完善（per-agent 耗时/Token/失败） |
-| M3 | 关联 TaskCheckpoint（任务级执行记录） |
-| M5 | 跨 Run 正式性能基线 |
-
-最终形态 **Workflow Performance Analyzer**：代码结构与真实执行数据关联，输出——哪个 Stage 最慢、哪个 Agent 消耗 Token 最多、哪些任务在等待、哪些可并行、哪些重复传递上下文、哪些失败后重复执行。让 Analyzer 真正回答"为什么慢、改哪里、改后是否变快"。
-
-**统一关联 ID（五级层级）**——静态分析的 Agent 节点与真实执行调用靠它对应，避免各阶段自造关联字段：
-
-```
-workflowId
-  └── runId
-       └── stageId
-            └── taskKey
-                 └── agentCallId   # 一次实际 Agent 调用
-```
-
-M1-T0 先确认五级 ID 与现有 Journal（runId:callIndex/attempt）的兼容映射；M2/M3 在各自采集与登记中使用同一层级，不另发明字段。
 
 ## 六、跨阶段注意事项
 
