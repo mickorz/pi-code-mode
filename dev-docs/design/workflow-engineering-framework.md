@@ -98,45 +98,39 @@ Analyzer 可以提出优化建议，但不能把静态估算当成真实耗时�
 
 ```json
 {
-  "schemaVersion": "1.0",
+  "planVersion": "1.0",
+  "planHash": "sha256:...",
   "workflowId": "game_difference_review",
   "name": "游戏差异审查",
 
   "source": {
     "scriptPath": ".pi/workflows/game-requirement-audit/8-difference-review.js",
     "scriptHash": "sha256:...",
-    "analyzedAt": "2026-11-18"
+    "analyzedAt": "2026-11-18"          // 报告元数据，不属于 Plan 身份
   },
 
-  "execution": {
-    "mode": "balanced",
-    "concurrency": { "max": 4 },
-    "modelPolicy": {
-      "analysis": "fast",
-      "writing": "default"
+  "definition": {                        // Plan Definition：长期维护，Stage 只有一份
+    "stages": [
+      { "id": "scan", "name": "差异扫描", "type": "parallel", "dependsOn": [], "estimatedAgents": 8, "estimatedInputTokens": 50000 },
+      { "id": "review", "name": "差异复核", "type": "parallel", "dependsOn": ["scan"], "estimatedAgents": 8 },
+      { "id": "summary", "name": "汇总", "type": "sequential", "dependsOn": ["review"], "estimatedAgents": 1 }
+    ],
+    "quality": {
+      "requiredValidation": true,        // 强制项：Profile 不可关闭
+      "acceptanceCriteria": [
+        "所有输入分片均有处理结果",
+        "关键差异具有来源证据"
+      ]
     }
   },
 
-  "budget": {
-    "maxAgents": 20,
-    "maxDurationMs": 1800000,
-    "maxInputTokens": 200000,
-    "maxOutputTokens": 50000,
-    "maxRetries": 5
-  },
-
-  "stages": [
-    { "id": "scan", "name": "差异扫描", "type": "parallel", "dependsOn": [], "estimatedAgents": 8, "estimatedInputTokens": 50000 },
-    { "id": "review", "name": "差异复核", "type": "parallel", "dependsOn": ["scan"], "estimatedAgents": 8 },
-    { "id": "summary", "name": "汇总", "type": "sequential", "dependsOn": ["review"], "estimatedAgents": 1 }
-  ],
-
-  "quality": {
-    "requiredValidation": true,
-    "acceptanceCriteria": [
-      "所有输入分片均有处理结果",
-      "关键差异具有来源证据"
-    ]
+  "profiles": {                          // Plan Profile：只覆盖执行策略，不复制 stages
+    "balanced": {
+      "execution": { "mode": "balanced", "concurrency": { "max": 4 } },
+      "modelPolicy": { "analysis": "fast", "writing": "default" },
+      "budget": { "maxAgents": 20, "maxDurationMs": 1800000, "maxInputTokens": 200000, "maxOutputTokens": 50000, "maxRetries": 5 }
+    },
+    "fast":     { "execution": { "mode": "fast", "concurrency": { "max": 8 } } }
   }
 }
 ```
@@ -449,6 +443,8 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 | 基于历史表现的自适应调度 | M4（消费 M2/M3 数据，不依赖 M5） |
 
 原则：**下游阶段不得依赖上游尚未建立的数据能力**（M4/M5 依赖倒置的教训，见陷阱 8）。
+
+**Workflow Execution Trace**（静态分析 + 动态执行观测关联）为跨阶段能力：M1 起分阶段建设（M1 先做静态 Analyzer 并读取已有 Journal 关联数据；M2/M3/M5 逐步完善），不为它提前重构 Runtime——详见执行计划"五点五"节。
 
 ### 任务恢复模型（M3 设计约束）
 

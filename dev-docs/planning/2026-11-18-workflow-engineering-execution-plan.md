@@ -4,7 +4,8 @@
 - 架构基线：`dev-docs/design/workflow-engineering-framework.md`（五层框架、三条原则、六条陷阱约束——本文档全部任务受其约束）
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
 - 依赖修正（2026-11-18 评审 P0-1）
-- 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认：**M4 自适应调度消费 M2/M3 已有的运行观测数据（轻量耗时画像），不依赖 M5 的正式性能基线**——M5 在 M4 之后完善长期数据，消除依赖倒置
+- 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认
+- 修订记录：2026-11-18 三轮评审修订——P0：taskFingerprint 补 executionContractVersion/modelConfigHash 细化/externalDepsHash，TaskCheckpoint 增加 lease 并发安全与原子提交（四规则），外部副作用幂等键；P0：M4 上下文三层（Shared/Task/Evidence Reference），质量验收扩展证据覆盖率；P1：M1-T1 Plan Definition/Profile Schema 落地 + hash 命名统一，M1-T2 动态循环/动态分发处理边界，M1 指标限定为静态可确定节点；修正 M4 范围/M3 指标/M5 汇总表三处文档不一致；新增跨阶段能力 Execution Trace：**M4 自适应调度消费 M2/M3 已有的运行观测数据（轻量耗时画像），不依赖 M5 的正式性能基线**——M5 在 M4 之后完善长期数据，消除依赖倒置
 - 数据能力分层（评审 P0-1 修正依据）：当前 Run 实时数据→M2；多 Run 基础记录→M2/M3；简单历史统计→M4 消费；正式基线/趋势/回归检测→M5。原则：下游阶段不得依赖上游尚未建立的数据能力
 
 ---
@@ -79,15 +80,37 @@
 
 **工作内容**
 
-- 定义 Plan JSON Schema
-- 定义 sourceHash
+- 定义 Plan JSON Schema（**Definition 与 Profile 分离落地，评审 P1-2**）
+- 定义指纹字段（统一命名）：`source.scriptHash`（JS 内容指纹）/ `planHash`（Plan 内容指纹）/ `planVersion`（Plan 版本）/ `analyzedAt`（分析时间，属报告元数据）
 - 实现 Plan Loader / Plan Validator
 - 实现 Plan 与 Workflow JS 的关联
 - 支持旧 Workflow 没有 Plan 的情况
 
+**Schema 结构（`workflow.plan.json`）**：
+
+```json
+{
+  "planVersion": "1.0",
+  "planHash": "sha256:...",
+  "source": { "scriptPath": "...", "scriptHash": "sha256:...", "analyzedAt": "..." },
+  "definition": {
+    "stages": [ ... ],          // Stage 与任务定义只有一份
+    "dependencies": [ ... ]
+  },
+  "profiles": {
+    "fast":     { "concurrency": 8,  "modelPolicy": { "analysis": "fast" } },
+    "balanced": { "concurrency": 4 },
+    "quality":  { "concurrency": 4, "requiredValidation": true }
+  }
+}
+```
+
+- fast/balanced/quality 是同一 Definition 的 Profile，**只覆盖执行策略，不复制 stages**
+- **Profile 不能降低安全预算约束，也不能自动关闭强制性的质量验证**（`requiredValidation: true` 为 Definition 级强制项）
+
 **交付物**：`src/engine/plan/`、`tests/plan/`
 
-**验收**：合法 Plan 可读取；非法 Plan 可定位错误；JS 修改后能发现 Plan 过期；没有 Plan 的旧 Workflow 正常工作。
+**验收**：合法 Plan 可读取；非法 Plan 可定位错误；JS 修改后能发现 Plan 过期；Profile 切换不影响 Definition；没有 Plan 的旧 Workflow 正常工作。
 
 > **开发顺序说明（评审建议五）**：不等 T4 全部完成才验证 Analyzer 有效性——**T2/T3 即用 PrdGameSkill 的 S8、S10 做阶段性验证**，尽早暴露"AST 分析能力不足以支持真实 Workflow（大量动态代码无法识别）"的风险。
 
@@ -100,6 +123,16 @@
 - 识别 workflow 子流程调用
 - 提取调用参数和代码位置
 - 建立 Call Graph 与依赖关系
+- **动态代码处理边界（评审 P1-1，必做）**：
+
+   | 代码形态 | 输出 |
+   | --- | --- |
+   | 静态可确定（字面量调用） | 输出精确节点 |
+   | 动态循环（`for (const t of tasks) await agent(t.prompt)`） | 输出动态节点及上下界；上下界无法确定则不估算 |
+   | 动态分发（`handlers[type](input)`） | 标记 Unknown |
+   | 运行时补充 | 后续由 M2 的执行观测补充实际调用数量 |
+
+   不为满足"识别率 100%"伪造无法静态推断的数据
 
 **交付物**：`src/engine/analyzer/ast-parser.ts`、`call-graph.ts`、`dependency-analyzer.ts`
 
@@ -245,7 +278,7 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 
 | 指标 | 目标 |
 | --- | --- |
-| 已支持 DSL 节点识别率 | 100% |
+| 静态可确定节点的 DSL 识别率 | 100%（动态循环/动态分发按边界规则标注，不伪造） |
 | 直接依赖关系识别 | 测试样本 100% |
 | 已知风险规则测试通过率 | 100% |
 | 关键风险代码定位准确率 | ≥95% |
@@ -337,20 +370,40 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 
 1. **TaskRegistry**：任务清单持久化——静态可枚举任务（Plan stages/分片清单）+ 运行时动态登记任务（并行 batches 运行时注册）
 2. **BatchExecutor**：清单驱动的批量执行器——按清单调度、状态流转（pending/running/done/failed）
-3. **TaskCheckpoint**：任务级检查点持久化——跨 run 恢复的依据。**恢复判定用分层指纹（评审 P0-2）**：整体 `scriptHash` 粒度过粗（改一行日志 → 全部任务产物失效，违背 M3 初衷），改为
+3. **TaskCheckpoint**：任务级检查点持久化——跨 run 恢复的依据。**恢复判定用分层指纹（评审 P0-2，本轮补充执行契约与外部依赖维度）**：整体 `scriptHash` 粒度过粗（改一行日志 → 全部任务产物失效，违背 M3 初衷），改为
 
    ```
    workflowId
      └── taskKey
-          ├── taskDefinitionHash   # 任务定义（prompt 模板/调用形态）
-          ├── inputHash            # 输入数据指纹
-          ├── promptHash           # 最终 prompt 指纹
-          └── modelConfigHash      # 模型配置指纹
+          ├── taskDefinitionHash        # 任务定义（prompt 模板/调用形态）
+          ├── inputHash                 # 输入数据指纹
+          ├── promptHash                # 最终 prompt 指纹
+          ├── modelConfigHash           # 模型 ID + 关键参数及一切影响输出的配置（不能只比模型名称）
+          ├── executionContractVersion  # 输出契约版本（输出结构变化时旧产物不能被新下游安全消费）
+          └── externalDepsHash          # 外部依赖指纹（知识库/MCP server/代码库快照变化 → 缓存失效）
    ```
 
-   - **taskFingerprint** = taskKey + 上述四项 hash → 判断单个任务产物是否可复用；修改无关任务不影响其他任务的产物复用
+   - **taskFingerprint** = hash(taskKey + 上述五项) → 判断单个任务产物是否可复用；修改无关任务不影响其他任务的产物复用
    - **workflowVersionHash**（整体 scriptHash）仅用于审计与 Plan 过期检测，不参与产物复用判定
-   - **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性——任务"执行完成"不等于"副作用已提交"，避免崩溃后重复发布
+   - **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性（副作用类任务须有独立幂等键）——任务"执行完成"不等于"副作用已提交"，避免崩溃后重复发布
+
+   **Checkpoint 记录结构与提交规则（评审 P0-2）**：
+
+   ```
+   TaskCheckpoint
+     ├── taskFingerprint
+     ├── status            # running / done / failed
+     ├── leaseOwner        # 持有执行权的 runId
+     ├── leaseExpiresAt    # lease 到期时间
+     ├── attempt
+     ├── resultRef         # 产物引用
+     └── committedAt       # 原子提交时间
+   ```
+
+   1. 同一 taskFingerprint 同一时刻只能有一个有效执行者（lease 未过期即独占）
+   2. Checkpoint **原子提交**（禁止部分写入）
+   3. 执行者崩溃后，须等 lease 到期才可被其他 Run 接管
+   4. 外部副作用使用独立幂等键，与 checkpoint 提交解耦
 4. 任务级 resume：`workflow resume --tasks`——已完成任务跳过，只跑 failed/pending
 5. per-task 重试策略（Plan budget.maxRetries / stage 覆盖）
 6. 失败分类与恢复报告
@@ -363,10 +416,10 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 
 | 任务 | 内容 | 交付物 | 验收 |
 | --- | --- | --- | --- |
-| M3-T1 TaskRegistry | 任务实例 Schema（taskKey/hash/状态/产物引用）；存储于 `.pi/workflows/tasks/<workflowId>/` | `src/engine/governance/task-registry.ts` | 清单与实际执行一一对应 |
+| M3-T1 TaskRegistry | 任务实例 Schema（taskFingerprint/status/leaseOwner/leaseExpiresAt/attempt/resultRef/committedAt）；存储于 `.pi/workflows/tasks/<workflowId>/`。**并发安全（评审 P0-2）**：同一 taskFingerprint 同一时刻只允许一个有效执行者（lease 未过期即独占）；崩溃 Run 的任务在 lease 到期后才可被其他 Run 接管 | `src/engine/governance/task-registry.ts` | 清单与实际执行一一对应；无双重执行 |
 | M3-T2 BatchExecutor | 清单驱动调度：静态清单（Plan stages）+ 动态登记（运行时 register）；复用现有 scheduler 并发配额 | `batch-executor.ts` | 48 任务清单按并发上限调度正确 |
 | M3-T3 TaskCheckpoint | done 任务持久化（产物 + taskFingerprint 分层指纹）；跨 run 按 taskFingerprint 复用判定 | checkpoint 存取层 | 修改无关代码后 done 任务产物仍可复用；副作用状态可查 |
-| M3-T4 任务级 resume | `workflow resume --tasks`：跳过 done，重跑 failed/pending；兼容现有 runId resume（两通道并存） | resume 扩展 | 部分失败场景恢复成功率 100% |
+| M3-T4 任务级 resume | `workflow resume --tasks`：跳过 done（指纹一致），重跑 failed/pending；兼容现有 runId resume（两通道并存）；**并发安全**：resume Run 与新启动 Run 竞争同一任务时按 lease 接管语义执行，外部副作用走独立幂等键 | resume 扩展 | 部分失败场景恢复成功率 100%；多 Run 并发恢复无双重执行 |
 | M3-T5 失败分类与恢复报告 | per-task 失败原因分类（可恢复/结构性/超限）；恢复报告（重跑清单/节省 token 数） | 恢复报告生成 | 报告与实际执行一致 |
 | M3-T6 Benchmark | 48 组任务中 10 组失败的恢复对比（全量重跑 vs 任务级恢复的耗时/token） | `dev-docs/benchmark/m3-*.json` | 量化：token 节省 ≥ 失败比例 × 总量 |
 
@@ -376,7 +429,10 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 | --- | --- |
 | 部分失败恢复的已完成任务重跑率 | 0% |
 | 任务状态与实际执行一致性 | 100% |
-| 跨 run 恢复（同 workflowId+hash）成功率 | 100% |
+| 指纹一致的已完成任务，正确复用率 | 100% |
+| 指纹不一致的任务，旧产物复用率 | 0%（不允许错误复用） |
+| 修改无关任务，对其他任务有效产物的影响 | 零影响 |
+| 副作用未确认提交的任务，被判定为安全完成 | 不允许（0 例） |
 | 静态清单 + 动态登记两种模式覆盖 | 均有测试 |
 
 **依赖**：M1 Plan stages（静态清单来源）、M2 budget（per-task 重试上限）。
@@ -392,8 +448,16 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 **纳入**
 
 1. **输入分片器**（确定性）：按大小/数量/业务边界标记分片（Analyzer OPT `input-reduction` 建议的自动化）
-2. **公共上下文提取执行**：前置 agent/确定性合并生成公共摘要 + 引用传递（Analyzer OPT-001 的自动化）
-3. **AdaptiveScheduler**：按任务类型与 M5 历史耗时加权路由 tier；波次重排（长任务先发）
+2. **上下文三层管理**（评审 P0-3：减少重复传输 ≠ 减少必要信息）：
+
+   | 层次 | 内容 | 传递方式 |
+   | --- | --- | --- |
+   | Shared Context | 所有任务都需要的基础信息 | 公共引用 |
+   | Task Context | 每个任务独有的输入 | 独立传递 |
+   | Evidence Reference | 必须保留的原始证据 | 按需读取（不可因生成摘要而丢弃原始来源） |
+
+   反例约束：48 个需求任务共享一份游戏规则文档时，**不得**把规则压缩成摘要后分发——可能丢失只对特定任务重要的规则细节。`mcp.call`/确定性 dedup 生成的公共摘要仅作为 Shared Context 层，Evidence Reference 层保留原始引用（Analyzer OPT-001 的自动化）
+3. **AdaptiveScheduler**：按任务类型与 **M2/M3 已有运行观测数据**加权路由 tier（无历史样本时静态调度；M5 完成后接入正式性能基线）；波次重排（长任务先发）
 4. **ModelPool 自适应**：按 429/超时/耗时信号动态升降档（复用 `model-pool.ts` 现有池）
 5. **Plan execution.mode 策略执行器**：fast/balanced/quality 三模式的自动化策略（fast 砍验证、quality 加 verify）落地为可执行配置
 6. 脚本 API：`mcp`/`agent` 之外新增 `shard(items, opts)` 分片 helper（可选使用）
@@ -419,7 +483,7 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 | --- | --- |
 | 重复上下文 token 降低 | ≥30%（PrdGameSkill S8 对照） |
 | 混合任务墙钟 | 自适应 ≤ 静态调度（同并发） |
-| 质量不降级 | verify/judge 通过率不低于基线 |
+| 质量不降级 | verify/judge 通过率不低于基线；**证据覆盖率不下降**（Evidence Reference 层保证原始来源可按需读取） |
 | 分片确定性 | 同输入同分片 100% |
 
 **依赖**：M1 Analyzer 建议 Schema（自动化对象）、M3 TaskRegistry（分片任务登记）、**M2/M3 运行观测数据（轻量画像，不依赖 M5 基线）**。
@@ -469,6 +533,21 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 **依赖**：M1-M4 全部交付物。
 
 ---
+
+## 五点五、跨阶段能力：Workflow Execution Trace（评审新增）
+
+PrdGameSkill 的核心痛点（跑 60 分钟失败却不知道慢在哪）**不是静态分析能完全回答的**——静态分析知道有 3 个并行任务，但不知道服务端任务 480s/32K token 才是真正瓶颈。
+
+新增跨阶段能力 **Workflow Execution Trace**（静态分析 + 动态执行观测关联），分阶段演进、**不为它提前重构 Runtime**：
+
+| 阶段 | Execution Trace 交付 |
+| --- | --- |
+| M1 | 静态 Analyzer + **读取已有 Journal 与执行报告，关联已有数据** |
+| M2 | 结构化运行指标采集完善（per-agent 耗时/Token/失败） |
+| M3 | 关联 TaskCheckpoint（任务级执行记录） |
+| M5 | 跨 Run 正式性能基线 |
+
+最终形态 **Workflow Performance Analyzer**：代码结构与真实执行数据关联，输出——哪个 Stage 最慢、哪个 Agent 消耗 Token 最多、哪些任务在等待、哪些可并行、哪些重复传递上下文、哪些失败后重复执行。让 Analyzer 真正回答"为什么慢、改哪里、改后是否变快"。
 
 ## 六、跨阶段注意事项
 
