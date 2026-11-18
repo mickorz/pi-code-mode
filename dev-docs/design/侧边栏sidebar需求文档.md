@@ -1,6 +1,6 @@
 # Sidebar（右侧工作栏）需求文档
 
-> 状态：需求已确认，待产出第一阶段技术方案与执行计划
+> 状态：需求已确认；技术架构设计已产出，见 [workflow-explorer-架构设计.md](./workflow-explorer-架构设计.md)
 > 整理说明：本文档由多轮设计讨论记录整理而成，去除对话痕迹与失效链接，保留确认过的需求、设计与决策
 > 复刻对象：REF-001 `thirdparties/opencode-dynamic-workflows`（UI 完全参考其实现，源码已在固定 commit `7f6e93a` 核对）
 
