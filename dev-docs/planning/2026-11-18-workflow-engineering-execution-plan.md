@@ -23,7 +23,7 @@
 | M2 | Execution Governance | Budget 体系 + Plan 执行消费 + 运行指标 | 运行失控、成本不可控 | **已完成**（2026-11-18，58 断言全 PASS） |
 | M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | **已完成**（2026-11-18，27 断言+13 Benchmark 全 PASS） |
 | M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | **已完成**（2026-11-18，39 断言+11 Benchmark 全 PASS） |
-| M5 | Continuous Optimization | Evaluator + 性能基线 + 优化闭环 | 无法持续衡量与优化 | 未开始 |
+| M5 | Continuous Optimization | Evaluator + 性能基线 + 优化闭环 | 无法持续衡量与优化 | **已完成**（2026-11-18，23 断言+8 Benchmark 全 PASS） |
 
 **全局约束**（适用于所有阶段，源自架构基线第五节）：
 
