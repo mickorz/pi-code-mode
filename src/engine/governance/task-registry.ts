@@ -141,10 +141,12 @@ export class TaskRegistry {
     runId: string
     leaseMs?: number
     now?: number
+    /** 强制重跑：跳过 already-done 复用（resume=false 场景） */
+    force?: boolean
   }): AcquireResult {
     const now = input.now ?? Date.now()
     const existing = this.data.tasks[input.taskKey]
-    if (existing?.status === "done" && existing.taskFingerprint === input.taskFingerprint) {
+    if (!input.force && existing?.status === "done" && existing.taskFingerprint === input.taskFingerprint) {
       return {
         ok: false,
         reason: "already-done",

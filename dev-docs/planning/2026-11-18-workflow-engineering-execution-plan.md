@@ -5,6 +5,7 @@
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
 - 依赖修正（2026-11-18 评审 P0-1）
 - 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认
+- 修订记录：2026-11-18 M3 完成 —— 分层指纹七元组（任务级 externalDeps）+ Fencing Token（leaseGeneration 原子 CAS）+ 原子提交与产物校验 + 副作用四状态 + Registry 可重建 + BatchExecutor（清单/并发/重试/恢复报告）+ 任务级 resume（重跑率 0%）；27 断言 + 13 Benchmark 全 PASS，详见 `dev-docs/progress-result/MCP-M3-执行报告.md`
 - 修订记录：2026-11-18 M2 完成 —— 预算三分类（硬/软/实际）+ Reservation 五约束 + 降级 Run 级语义（activeProfile/effectivePolicy/policyTransitions）+ Plan 执行消费（PlanRunContext/WorkflowRunConfig）+ budget.remaining() + plan_validate 工具；58 断言全 PASS，详见 `dev-docs/progress-result/MCP-M2-执行报告.md`
 - 修订记录：2026-11-18 M1 完成 —— T0-T8 全部交付（Plan/AST/规则引擎/Report/AI Planner/CLI+工具/Skill/Benchmark），67 断言全 PASS，详见 `dev-docs/progress-result/MCP-M1-执行报告.md`
 - 修订记录：2026-11-18 五轮评审修订——P0-1 M1 接口承诺对齐 Definition/Profile Schema 并新增 WorkflowRunConfig 概念（与 WorkflowPlan 分离，M2 Plan Runner 组合）；P0-2 TaskCheckpoint 增加 leaseGeneration（Fencing Token），提交原子 CAS 校验双字段；P1-1 Budget Reservation 原子预留/释放/结算五条约束；P1-2 动态降级 Run 级语义（activeProfile/effectivePolicy/policyTransitions，降级只影响未调度任务）；P1-3 三 Profile 完整示例（默认 balanced）与 Validator 解析规则；新增 Execution Trace 跨阶段能力与五级关联 ID
@@ -19,7 +20,7 @@
 | --- | --- | --- | --- | --- |
 | M1 | Workflow Intelligence | Plan Schema + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 | **已完成**（2026-11-18，67 断言全 PASS，recall 100%/FPR 0%） |
 | M2 | Execution Governance | Budget 体系 + Plan 执行消费 + 运行指标 | 运行失控、成本不可控 | **已完成**（2026-11-18，58 断言全 PASS） |
-| M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | 未开始 |
+| M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | **已完成**（2026-11-18，27 断言+13 Benchmark 全 PASS） |
 | M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | 未开始 |
 | M5 | Continuous Optimization | Evaluator + 性能基线 + 优化闭环 | 无法持续衡量与优化 | 未开始 |
 
