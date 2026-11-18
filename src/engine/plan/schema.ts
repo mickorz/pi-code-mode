@@ -41,6 +41,8 @@ export interface PlanExecutionPolicy {
     maxOutputTokens?: number
     maxRetries?: number
   }
+  /** Profile 可追加（不可削减）的验证项；Definition 的 requiredValidation 恒生效 */
+  additionalValidation?: string[]
 }
 
 /** 单个 Profile：只存差异化执行策略 */
