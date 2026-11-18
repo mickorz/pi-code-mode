@@ -564,6 +564,8 @@ Workflow: 10-unified-spec
 
 ## 修订记录
 
+- 2026-11-18 五轮评审修订：Profile 补齐三示例（默认 balanced）、Profile 解析规则（继承/默认值/不可覆盖项）、Checkpoint leaseGeneration（Fencing Token）与原子 CAS 提交、四系统边界确认（Checkpoint 为恢复事实源，不改 Runtime 为调度系统）
+
 - 2026-11-18 评审修订（二轮）：M4/M5 依赖倒置修正（陷阱 8 + 数据能力分层表）；M3 任务恢复模型改分层指纹 taskFingerprint（整体 scriptHash 仅审计）与外部副作用四状态；M2 预算三分类（硬/软/实际）与 maxOutputTokens/maxAgents 语义明确；M1 依赖置信度分级（Explicit/Structural/Candidate/Unknown）与 AnalyzerRule/AnalyzerFinding 规则注册接口；Plan 身份（planVersion/planHash）与 Plan Definition/Profile 分离；T7 授权边界六步链；配置优先级链与四系统存储边界；M5 验收指标替换（同类输入估算误差/P50-P90 耗时/回归检测准确率）。M1 开发顺序：T2/T3 即用 PrdGameSkill S8/S10 阶段性验证。
 
 ## 引用

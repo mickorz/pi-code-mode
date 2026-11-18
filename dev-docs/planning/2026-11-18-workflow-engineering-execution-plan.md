@@ -5,6 +5,7 @@
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
 - 依赖修正（2026-11-18 评审 P0-1）
 - 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认
+- 修订记录：2026-11-18 五轮评审修订——P0-1 M1 接口承诺对齐 Definition/Profile Schema 并新增 WorkflowRunConfig 概念（与 WorkflowPlan 分离，M2 Plan Runner 组合）；P0-2 TaskCheckpoint 增加 leaseGeneration（Fencing Token），提交原子 CAS 校验双字段；P1-1 Budget Reservation 原子预留/释放/结算五条约束；P1-2 动态降级 Run 级语义（activeProfile/effectivePolicy/policyTransitions，降级只影响未调度任务）；P1-3 三 Profile 完整示例（默认 balanced）与 Validator 解析规则；新增 Execution Trace 跨阶段能力与五级关联 ID
 - 修订记录：2026-11-18 三轮评审修订——P0：taskFingerprint 补 executionContractVersion/modelConfigHash 细化/externalDepsHash，TaskCheckpoint 增加 lease 并发安全与原子提交（四规则），外部副作用幂等键；P0：M4 上下文三层（Shared/Task/Evidence Reference），质量验收扩展证据覆盖率；P1：M1-T1 Plan Definition/Profile Schema 落地 + hash 命名统一，M1-T2 动态循环/动态分发处理边界，M1 指标限定为静态可确定节点；修正 M4 范围/M3 指标/M5 汇总表三处文档不一致；新增跨阶段能力 Execution Trace：**M4 自适应调度消费 M2/M3 已有的运行观测数据（轻量耗时画像），不依赖 M5 的正式性能基线**——M5 在 M4 之后完善长期数据，消除依赖倒置
 - 数据能力分层（评审 P0-1 修正依据）：当前 Run 实时数据→M2；多 Run 基础记录→M2/M3；简单历史统计→M4 消费；正式基线/趋势/回归检测→M5。原则：下游阶段不得依赖上游尚未建立的数据能力
 
@@ -83,6 +84,8 @@
 
 - 定义 Plan JSON Schema（**Definition 与 Profile 分离落地，评审 P1-2**）
 - 定义指纹字段（统一命名）：`source.scriptHash`（JS 内容指纹）/ `planHash`（Plan 内容指纹）/ `planVersion`（Plan 版本）/ `analyzedAt`（分析时间，属报告元数据）
+- **planHash 计算规则（评审 P0-4，防自引用）**：`planHash = SHA256(canonicalJSON(Plan without planHash))`——剔除 planHash 字段后对剩余内容做 canonical JSON 再哈希。参与：planVersion / source.scriptHash / definition / profiles；**不参与：source.analyzedAt / planHash**
+- **activeProfile**：run 级字段，记录当前 Run 选择的 Profile 名（同一 Plan 可在不同 Run 使用不同 Profile）；`profileHash`（当前 Profile 独立指纹）随 run 记录，用于精确追踪运行配置
 - **planHash 计算规则（评审 P0-4，防自引用）**：`planHash = SHA256(canonicalJSON(Plan without planHash))`——剔除 planHash 字段后对剩余内容做 canonical JSON 再哈希：
 
   | 字段 | 参与 planHash 计算 |
@@ -120,6 +123,16 @@
 - 识别 workflow 子流程调用
 - 提取调用参数和代码位置
 - 建立 Call Graph 与依赖关系
+- **动态代码处理边界（评审 P1-1，必做）**：
+
+   | 代码形态 | 输出 |
+   | --- | --- |
+   | 静态可确定（字面量调用） | 输出精确节点 |
+   | 动态循环（`for (const t of tasks) await agent(t.prompt)`） | 输出动态节点及上下界；上下界无法确定则不估算 |
+   | 动态分发（`handlers[type](input)`） | 标记 Unknown |
+   | 运行时补充 | 后续由 M2 的执行观测补充实际调用数量 |
+
+   不为满足"识别率 100%"伪造无法静态推断的数据
 - **动态代码处理边界（评审 P1-1，必做）**：
 
    | 代码形态 | 输出 |
@@ -297,8 +310,9 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 
 ---
 
-**对后续阶段的接口承诺（M2-M5 依赖这些产物）**：
-- `WorkflowPlan`（JSON Schema，含 source.execution.mode/concurrency/modelPolicy、budget、stages）
+**对后续阶段的接口承诺（M2-M5 依赖这些产物，五轮评审 P0-1 对齐架构基线 2.2 Definition/Profile Schema）**：
+- `WorkflowPlan`（描述工作流定义与可选执行策略）：`{ planVersion, planHash, workflowId, source, definition, profiles }`
+- `WorkflowRunConfig`（描述本次实际执行选择了什么策略）：`{ workflowId, runId, planHash, activeProfile, profileHash }`——与 WorkflowPlan 是**两个不同概念**，M2 的 Plan Runner 负责把两者组合成最终执行配置
 - `AnalysisReport`（JSON，findings 带 ruleId/severity/location/evidence）
 - `OptimizationSuggestion`（Schema，含 expectedImpact/qualityRisk/validation）
 
@@ -415,10 +429,10 @@ PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必�
 
 | 任务 | 内容 | 交付物 | 验收 |
 | --- | --- | --- | --- |
-| M3-T1 TaskRegistry | 任务实例 Schema（taskFingerprint/status/leaseOwner/leaseExpiresAt/attempt/resultRef/committedAt）；存储于 `.pi/workflows/tasks/<workflowId>/`。**并发安全（评审 P0-2）**：同一 taskFingerprint 同一时刻只允许一个有效执行者（lease 未过期即独占）；崩溃 Run 的任务在 lease 到期后才可被其他 Run 接管 | `src/engine/governance/task-registry.ts` | 清单与实际执行一一对应；无双重执行 |
+| M3-T1 TaskRegistry | 任务实例 Schema（taskFingerprint/status/leaseOwner/leaseExpiresAt/**leaseGeneration**/attempt/resultRef/committedAt）；存储于 `.pi/workflows/tasks/<workflowId>/`。**并发安全（评审 P0-2）**：同一 taskFingerprint 同一时刻只允许一个有效执行者（lease 未过期即独占）；崩溃 Run 的任务在 lease 到期后才可被其他 Run 接管；**每次接管 leaseGeneration+1（Fencing Token）** | `src/engine/governance/task-registry.ts` | 清单与实际执行一一对应；无双重执行；旧执行者恢复后无法覆盖新结果 |
 | M3-T2 BatchExecutor | 清单驱动调度：静态清单（Plan stages）+ 动态登记（运行时 register）；复用现有 scheduler 并发配额 | `batch-executor.ts` | 48 任务清单按并发上限调度正确 |
-| M3-T3 TaskCheckpoint | done 任务持久化（产物 + taskFingerprint 分层指纹）；跨 run 按 taskFingerprint 复用判定 | checkpoint 存取层 | 修改无关代码后 done 任务产物仍可复用；副作用状态可查 |
-| M3-T4 任务级 resume | `workflow resume --tasks`：跳过 done（指纹一致），重跑 failed/pending；兼容现有 runId resume（两通道并存）；**并发安全**：resume Run 与新启动 Run 竞争同一任务时按 lease 接管语义执行，外部副作用走独立幂等键 | resume 扩展 | 部分失败场景恢复成功率 100%；多 Run 并发恢复无双重执行 |
+| M3-T3 TaskCheckpoint | done 任务持久化（产物 + taskFingerprint 分层指纹 + **leaseGeneration**）；跨 run 按 taskFingerprint 复用判定；**提交原子 CAS**：提交须同时满足 leaseOwner 与 leaseGeneration 与当前持有者一致（检查与提交不可分割），旧执行者即使恢复也不能覆盖新执行者的结果（场景：A 暂停→lease 过期→B 接管完成→A 恢复提交被拒） | checkpoint 存取层 | 修改无关代码后 done 任务产物仍可复用；副作用状态可查；Fencing 生效 |
+| M3-T4 任务级 resume | `workflow resume --tasks`：跳过 done（指纹一致），重跑 failed/pending；兼容现有 runId resume（两通道并存）；**并发安全**：resume Run 与新启动 Run 竞争同一任务时按 lease 接管语义执行（接管即 leaseGeneration+1），外部副作用走独立幂等键 | resume 扩展 | 部分失败场景恢复成功率 100%；多 Run 并发恢复无双重执行 |
 | M3-T5 失败分类与恢复报告 | per-task 失败原因分类（可恢复/结构性/超限）；恢复报告（重跑清单/节省 token 数） | 恢复报告生成 | 报告与实际执行一致 |
 | M3-T6 Benchmark | 48 组任务中 10 组失败的恢复对比（全量重跑 vs 任务级恢复的耗时/token） | `dev-docs/benchmark/m3-*.json` | 量化：token 节省 ≥ 失败比例 × 总量 |
 
@@ -565,6 +579,33 @@ workflowId
 | stageId | 标识执行阶段 |
 | taskKey | 标识逻辑任务 |
 | agentCallId | 标识一次实际 Agent 调用 |
+
+M1-T0 先确认五级 ID 与现有 Journal（runId:callIndex/attempt）的兼容映射；M2/M3 在各自采集与登记中使用同一层级，不另发明字段。
+
+## 五点五、跨阶段能力：Workflow Execution Trace（评审新增）
+
+PrdGameSkill 的核心痛点（跑 60 分钟失败却不知道慢在哪）**不是静态分析能完全回答的**——静态分析知道有 3 个并行任务，但不知道服务端任务 480s/32K token 才是真正瓶颈。
+
+新增跨阶段能力 **Workflow Execution Trace**（静态分析 + 动态执行观测关联），分阶段演进、**不为它提前重构 Runtime**：
+
+| 阶段 | Execution Trace 交付 |
+| --- | --- |
+| M1 | 静态 Analyzer + **读取已有 Journal 与执行报告，关联已有数据** |
+| M2 | 结构化运行指标采集完善（per-agent 耗时/Token/失败） |
+| M3 | 关联 TaskCheckpoint（任务级执行记录） |
+| M5 | 跨 Run 正式性能基线 |
+
+最终形态 **Workflow Performance Analyzer**：代码结构与真实执行数据关联，输出——哪个 Stage 最慢、哪个 Agent 消耗 Token 最多、哪些任务在等待、哪些可并行、哪些重复传递上下文、哪些失败后重复执行。让 Analyzer 真正回答"为什么慢、改哪里、改后是否变快"。
+
+**统一关联 ID（五级层级）**——静态分析的 Agent 节点与真实执行调用靠它对应，避免各阶段自造关联字段：
+
+```
+workflowId
+  └── runId
+       └── stageId
+            └── taskKey
+                 └── agentCallId   # 一次实际 Agent 调用
+```
 
 M1-T0 先确认五级 ID 与现有 Journal（runId:callIndex/attempt）的兼容映射；M2/M3 在各自采集与登记中使用同一层级，不另发明字段。
 
