@@ -2,7 +2,7 @@
 
 - 日期：2026-11-18
 - 状态：**架构基线（长期有效）**——后续 M2/M3 等阶段的基础设施讨论以本文档为准，不重新讨论基础架构
-- 配套执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-m1-execution-plan.md`
+- 配套执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-execution-plan.md`
 - 已确定决策：
 
 | 决策 | 选择 | 最终约束 |
@@ -417,7 +417,7 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 
 ## 六、最终路线图（Workflow Engineering Roadmap）
 
-> 完整执行计划（M1-M5 任务分解与验收指标）：`dev-docs/planning/2026-11-18-workflow-engineering-m1-m5-execution-plan.md`
+> 完整执行计划（M1-M5 任务分解与验收指标）：`dev-docs/planning/2026-11-18-workflow-engineering-execution-plan.md`
 
 | 阶段 | 名称 | 解决的问题 |
 | --- | --- | --- |
@@ -466,6 +466,6 @@ Workflow: 10-unified-spec
 
 ## 引用
 
-- M1 执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-m1-execution-plan.md`
+- M1 执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-execution-plan.md`
 - 现有资产：`src/engine/runtime/vm.ts`、`workflow-runtime.ts`、`src/engine/persistence/journal.ts`、`skills/workflow-authoring/`
 - 外部测试样本来源：PrdGameSkill 仓库（`8-difference-review.js`、`10-unified-spec.js` 等）
