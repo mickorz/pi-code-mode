@@ -37,3 +37,23 @@
 	path = thirdparties/pi-sidebar
 	url = https://github.com/jrimmer/pi-sidebar.git
 	branch = main
+[submodule "thirdparties/pi-web-ui"]
+	path = thirdparties/pi-web-ui
+	url = https://github.com/Watercol/pi-web-ui.git
+	branch = main
+[submodule "thirdparties/pi-agent-dashboard"]
+	path = thirdparties/pi-agent-dashboard
+	url = https://github.com/BlackBeltTechnology/pi-agent-dashboard.git
+	branch = develop
+[submodule "thirdparties/pi-web-epsilondelta"]
+	path = thirdparties/pi-web-epsilondelta
+	url = https://github.com/Epsilondelta-ai/pi-web.git
+	branch = main
+[submodule "thirdparties/awesome-agent-clients"]
+	path = thirdparties/awesome-agent-clients
+	url = https://github.com/arach/awesome-agent-clients.git
+	branch = main
+[submodule "thirdparties/pi-web"]
+	path = thirdparties/pi-web
+	url = https://github.com/jmfederico/pi-web.git
+	branch = main
