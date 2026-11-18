@@ -33,3 +33,7 @@
 	path = thirdparties/agents
 	url = https://github.com/luan/agents.git
 	branch = main
+[submodule "thirdparties/pi-sidebar"]
+	path = thirdparties/pi-sidebar
+	url = https://github.com/jrimmer/pi-sidebar.git
+	branch = main

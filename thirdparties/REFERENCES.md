@@ -15,6 +15,7 @@
 | REF-007 | pi-sidebar-tui | https://github.com/bi0h4z4rd88/pi-sidebar-tui.git | thirdparties/pi-sidebar-tui | 38d2a33a3fdbd2f5f24c19d79805a62025ae7d41 | 未发现 LICENSE 文件 | 只读研究，禁止复制任何代码：pi 终端侧边栏 TUI 扩展（session 指标/todo/workspace/已连 MCP server 实时面板），与本项目 TUI widget 层形态对照 | 2026-11-18 引入。与本项目 TUI widget 层（MCP 状态展示方向）形态对照参考 |
 | REF-008 | pi-ui-extension | https://github.com/1993yihuan/pi-ui-extension.git | thirdparties/pi-ui-extension | 5ea4acc0f0e5cf8564967c00c3a160439fa9ee0a | MIT | 方法论参考：pi 全屏终端 UI 扩展（会话管理/上下文占用/Tool 与 MCP 活动面板/i18n 组织），与本项目 workflow 状态展示方向对照 | 2026-11-18 引入。其 MCP 活动/上下文占用展示与本包 workflow 观测（Node Inspector/onMcpCall 审计）方向对照 |
 | REF-009 | agents（luan） | https://github.com/luan/agents.git | thirdparties/agents | f8eec56fe1c185713322996eadfda7c03d82ebf3 | MIT | 方法论参考：多 harness agent 配置集合；关注子目录 `harnesses/pi/agent`（pi 的 AGENTS.md/SYSTEM.md/settings/keybindings/themes 配置形态），submodule 指向仓库根，使用时引用该子路径 | 2026-11-18 引入。为 pi-code-mode 的 agent 配置组织（AGENTS.md 形态、settings 结构）提供外部对照 |
+| REF-010 | pi-sidebar | https://github.com/jrimmer/pi-sidebar.git | thirdparties/pi-sidebar | be97bc66833d119216166b97e6901b8d38df5e03 | BSD-3-Clause | 方法论参考：pi 悬浮右侧边栏扩展（git diff/status 与会话元数据展示），与本项目 workflow/审计状态展示方向对照 | 2026-11-18 引入。与 REF-007/REF-008 同形态赛道，后续 TUI 状态面板选型对照 |
 
 ## Submodule 引入与登记流程
 
