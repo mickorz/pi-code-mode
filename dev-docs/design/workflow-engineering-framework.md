@@ -44,6 +44,8 @@ Workflow Evaluator   真实耗时、Token、成本、失败率、质量与优化
 
 其中 Plan 和 JS 是两个独立产物，但必须保持一致。
 
+定位宣言：**pi-code-mode 不应该最终变成一个只能执行 JS 的 Workflow Runtime，而应该成为一个能帮助 Agent 工程化创建、诊断、执行、恢复和优化 Workflow 的框架。** 五层框架的全部设计（Plan/Analyzer/治理/恢复/自适应/评估）都服务于这一定位。
+
 ### 1.2 三条架构原则
 
 **原则一：业务逻辑和执行策略分离。**
@@ -436,6 +438,18 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 
 ## 四点五、长期约束：恢复模型、配置优先级与存储边界（评审 2026-11-18 补）
 
+### 数据能力分层（各阶段数据归属，评审 P0-1 修正依据）
+
+| 数据能力 | 归属阶段 |
+| --- | --- |
+| 当前 Run 实时耗时、Token、失败率 | M2 |
+| 多 Run 的基础执行记录 | M2/M3 |
+| 简单历史性能统计 | M4 可先消费已有记录 |
+| 正式性能基线、趋势、回归检测 | M5 |
+| 基于历史表现的自适应调度 | M4（消费 M2/M3 数据，不依赖 M5） |
+
+原则：**下游阶段不得依赖上游尚未建立的数据能力**（M4/M5 依赖倒置的教训，见陷阱 8）。
+
 ### 任务恢复模型（M3 设计约束）
 
 产物复用判定使用**分层指纹**，整体 scriptHash 只用于审计：
@@ -541,6 +555,10 @@ Workflow: 10-unified-spec
 ```
 
 ---
+
+## 修订记录
+
+- 2026-11-18 评审修订（二轮）：M4/M5 依赖倒置修正（陷阱 8 + 数据能力分层表）；M3 任务恢复模型改分层指纹 taskFingerprint（整体 scriptHash 仅审计）与外部副作用四状态；M2 预算三分类（硬/软/实际）与 maxOutputTokens/maxAgents 语义明确；M1 依赖置信度分级（Explicit/Structural/Candidate/Unknown）与 AnalyzerRule/AnalyzerFinding 规则注册接口；Plan 身份（planVersion/planHash）与 Plan Definition/Profile 分离；T7 授权边界六步链；配置优先级链与四系统存储边界；M5 验收指标替换（同类输入估算误差/P50-P90 耗时/回归检测准确率）。M1 开发顺序：T2/T3 即用 PrdGameSkill S8/S10 阶段性验证。
 
 ## 引用
 
