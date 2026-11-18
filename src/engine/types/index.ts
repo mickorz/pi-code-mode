@@ -154,6 +154,40 @@ export interface CompositeRecord {
   durationMs?: number
 }
 
+/** 阶段执行记录（Explorer 执行树源；阶段切换时创建/关闭）
+ *  phaseId 是稳定身份：`<scopePath.join("/")>#<display phase title>`——
+ *  display title 已含 child 前缀，同名阶段在同一 scope 内本就是同一阶段，跨 scope 靠 scopePath 区分 */
+export interface PhaseExecutionRecord {
+  /** 稳定身份（见上） */
+  phaseId: string
+  /** 展示名（含 child 前缀，如 "▸ 子流程 / 结算分析"） */
+  title: string
+  /** 所在 workflow scope 身份链（对齐 WorkflowExecutionRecord.scopePath） */
+  scopePath: string[]
+  status: "running" | "ok" | "failed" | "aborted"
+  startedAt: number
+  endedAt?: number
+  durationMs?: number
+}
+
+/** 确定性工具节点执行记录（runTool / MCP 直调；P4.1 语义：不计 agent 配额） */
+export interface ToolExecutionRecord {
+  /** 稳定身份：`<scopePath.join("/")>#<kind>:<name>#<seq>`（同 scope 内同名工具多次调用不碰撞） */
+  toolId: string
+  /** 工具名（runTool 为脚本相对路径；MCP 为 mcp__server__tool） */
+  name: string
+  kind: "mcp" | "runtime"
+  /** 所在 workflow scope 身份链 */
+  scopePath: string[]
+  /** 调用时所处阶段展示名（无阶段时省略） */
+  phase?: string
+  status: "running" | "ok" | "error"
+  startedAt: number
+  endedAt?: number
+  durationMs?: number
+  error?: string
+}
+
 /** workflow 脚本 meta 信封 */
 export interface WorkflowMeta {
   /** 稳定 ID（Schedule 引用）；缺省用 name */

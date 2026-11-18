@@ -1,0 +1,279 @@
+/**
+ * ExplorerController —— Workflow Explorer 单实例控制器（M4）。
+ *
+ * 生命周期设计（架构设计 §3，本次架构的关键调整）：
+ *   单实例常驻 ≠ Overlay 组件常驻。Controller / TreeModel / NavigationState 在 extension 装配期创建，
+ *   与 pi 会话同寿；Overlay View 只在打开时创建、关闭时 dispose（ctx.ui.custom 的 done() 生命周期）。
+ *   因此"关闭再打开"只重建 UI，不丢选中节点、展开态与 Tab。
+ *
+ * 无 TUI 依赖：本文件只依赖 RunManager + 数据模型，TUI 是 extensions/explorer/ 下的一个适配器。
+ * Runtime 事件必须不能反向影响执行——Controller 只订阅、只读。
+ */
+
+import type { RunManager, RunSnapshot } from "../../manager/run-manager.js"
+import type { WorkflowRuntimeEvent } from "../../engine/events/workflow-events.js"
+import type { RuntimeEventBus } from "../../engine/events/runtime-event-bus.js"
+import { JournalStore } from "../../engine/persistence/journal.js"
+import { JournalDetailRepository, type AgentDetail } from "../repository/detail-repository.js"
+import { WorkflowTreeModel, type WorkflowTreeNode } from "../model/workflow-tree-model.js"
+import { NavigationModel, type ExplorerTab, type NavigationEffect } from "../model/navigation-model.js"
+import path from "node:path"
+
+export interface ExplorerRunRow {
+  runId: string
+  label?: string
+  status: string
+  startedAt: number
+  finishedAt?: number
+  /** 节点统计（workflow 数 / agent 完成进度） */
+  workflows: number
+  agentsTotal: number
+  agentsDone: number
+}
+
+export interface ExplorerViewState {
+  runs: ExplorerRunRow[]
+  activeRunId?: string
+  activeTab: ExplorerTab
+  /** 当前可见行（树展开序） */
+  rows: WorkflowTreeNode[]
+  /** 显式收起的节点（渲染展开/折叠标记用） */
+  collapsedNodeKeys: Set<string>
+  selectedIndex: number
+  focus: "tree" | "detail"
+  detailScrollTop: number
+  selected?: WorkflowTreeNode
+  detail?: NodeDetailView
+}
+
+export interface NodeDetailView {
+  node: WorkflowTreeNode
+  /** Agent 节点：journal 详情（可能尚未落盘，undefined = 无可用数据） */
+  agent?: AgentDetail
+  /** 从树模型拿到的祖先链（近 → 远），详情头部"路径"用 */
+  ancestors: WorkflowTreeNode[]
+}
+
+export interface ExplorerControllerDeps {
+  runManager: RunManager
+  /** 事件总线：Controller 自己订阅（不依赖 RunManager 的 run 事件，避免与 widget 抢节流语义） */
+  eventBus?: RuntimeEventBus
+  cwd?: string
+  /** journal 目录（与 workflow-tools 的 JOURNAL_DIR 一致） */
+  journalDir?: string
+}
+
+const DEFAULT_JOURNAL_DIR = path.join(".pi", "workflows", "journal")
+
+export class ExplorerController {
+  readonly runManager: RunManager
+  private readonly eventBus?: RuntimeEventBus
+  private readonly cwd: string
+  private readonly journalDir: string
+
+  private visible = false
+  private activeRunId?: string
+  private readonly trees = new Map<string, WorkflowTreeModel>()
+  private navigation?: NavigationModel
+  private journalFor?: { runId: string; repo: JournalDetailRepository }
+
+  /** UI 适配器注册的重绘回调（Overlay 打开时设置，关闭时清空） */
+  private requestRender?: () => void
+  private readonly unsubscribe?: () => void
+
+  constructor(deps: ExplorerControllerDeps) {
+    this.runManager = deps.runManager
+    this.eventBus = deps.eventBus
+    this.cwd = deps.cwd ?? process.cwd()
+    this.journalDir = deps.journalDir ?? path.join(this.cwd, DEFAULT_JOURNAL_DIR)
+    this.unsubscribe = this.eventBus?.subscribe((event) => this.onRuntimeEvent(event))
+  }
+
+  /** Overlay 打开时由 TUI 适配器调用；返回的 release 在 Overlay 关闭时调用（不销毁状态） */
+  open(requestRender: () => void): void {
+    this.visible = true
+    this.requestRender = requestRender
+    // 默认定位：优先在途 run，其次最近一次
+    if (!this.activeRunId || !this.runManager.getSnapshot(this.activeRunId)) {
+      this.activeRunId = this.pickDefaultRun()
+    }
+    if (this.activeRunId) this.ensureTree(this.activeRunId)
+    this.navigation?.ensureSelection()
+    this.requestRender()
+  }
+
+  hide(): void {
+    this.visible = false
+    this.requestRender = undefined
+  }
+
+  get isVisible(): boolean {
+    return this.visible
+  }
+
+  get activeRun(): string | undefined {
+    return this.activeRunId
+  }
+
+  get nav(): NavigationModel | undefined {
+    return this.navigation
+  }
+
+  /** 切到指定 run（/explorer <runId> 与 Runs 选择共用）；保留原 run 的树与展开态 */
+  selectRun(runId: string): boolean {
+    if (!this.runManager.getSnapshot(runId)) return false
+    this.activeRunId = runId
+    this.ensureTree(runId)
+    this.navigation?.ensureSelection()
+    this.requestRender?.()
+    return true
+  }
+
+  /** 当前 run 的树模型（TUI 渲染与测试用） */
+  get tree(): WorkflowTreeModel | undefined {
+    return this.activeRunId ? this.trees.get(this.activeRunId) : undefined
+  }
+
+  /** 详情：Agent 节点按需读 journal；其他节点直接取节点元数据 */
+  detailFor(nodeKey: string): NodeDetailView | undefined {
+    const tree = this.tree
+    if (!tree) return undefined
+    const node = tree.getNode(nodeKey)
+    if (!node) return undefined
+    const ancestors = tree.ancestorsOf(nodeKey)
+    const agent = node.kind === "agent" ? this.repo().getAgentDetail(localAgentId(nodeKey)) : undefined
+    return { node, agent, ancestors }
+  }
+
+  /** 当前视图快照（TUI 渲染的唯一入口） */
+  view(): ExplorerViewState {
+    const runs = this.runRows()
+    const tree = this.tree
+    const nav = this.navigation
+    const rows = nav && tree ? nav.visibleRows() : []
+    nav?.pruneSelection()
+    const selected = nav?.selectedNode
+    return {
+      runs,
+      activeRunId: this.activeRunId,
+      activeTab: nav?.state.activeTab ?? "workflow",
+      rows,
+      collapsedNodeKeys: nav?.state.collapsedNodeKeys ?? new Set<string>(),
+      selectedIndex: nav?.selectedIndex(rows) ?? -1,
+      focus: nav?.state.focus ?? "tree",
+      detailScrollTop: nav?.state.detailScrollTop ?? 0,
+      selected,
+      detail: selected ? this.detailFor(selected.nodeKey) : undefined,
+    }
+  }
+
+  /** 逻辑键分发（TUI 适配器把原始字节归一化后调用） */
+  handleKey(key: string): NavigationEffect[] {
+    const nav = this.navigation
+    if (!nav) return [{ kind: "redraw" }]
+    switch (key) {
+      case "up":
+        return nav.up()
+      case "down":
+        return nav.down()
+      case "right":
+        return nav.right()
+      case "left":
+        return nav.left()
+      case "enter":
+        return nav.enter()
+      case "escape":
+        return nav.escape()
+      case "home":
+        return nav.home()
+      case "end":
+        return nav.end()
+      case "tab":
+        nav.nextTab(1)
+        return [{ kind: "redraw" }]
+      case "shiftTab":
+        nav.nextTab(-1)
+        return [{ kind: "redraw" }]
+      default:
+        return []
+    }
+  }
+
+  dispose(): void {
+    this.unsubscribe?.()
+    this.visible = false
+    this.requestRender = undefined
+  }
+
+  // ---- 内部 ----
+
+  private onRuntimeEvent(event: WorkflowRuntimeEvent): void {
+    const tree = this.trees.get(event.runId)
+    if (!tree) {
+      // 未打开过的 run：只在它是当前 run 时才建树（其它 run 打开时按快照重建）
+      if (event.runId !== this.activeRunId) {
+        if (event.type === "run.started") this.requestRender?.()
+        return
+      }
+      this.ensureTree(event.runId)
+    }
+    const changed = this.trees.get(event.runId)?.applyEvent(event)
+    if (changed && this.activeRunId === event.runId) this.requestRender?.()
+  }
+
+  /** 建树：优先用 RunManager 快照（不重放历史事件），之后靠增量事件推进 */
+  private ensureTree(runId: string): WorkflowTreeModel {
+    const existing = this.trees.get(runId)
+    if (existing) return existing
+    const snapshot = this.runManager.getSnapshot(runId)
+    if (!snapshot) throw new Error(`run 不存在: ${runId}`)
+    const tree = new WorkflowTreeModel(runId)
+    tree.loadSnapshot(snapshot)
+    this.trees.set(runId, tree)
+    if (!this.navigation || this.activeRunId === runId) {
+      this.navigation = new NavigationModel({
+        rootKey: () => tree.rootKey,
+        node: (key) => tree.getNode(key),
+      })
+    }
+    return tree
+  }
+
+  private pickDefaultRun(): string | undefined {
+    const runs = this.runManager.list()
+    const running = runs.find((r) => r.status === "running")
+    return (running ?? runs[0])?.runId
+  }
+
+  private repo(): JournalDetailRepository {
+    const cached = this.journalFor
+    if (cached && cached.runId === this.activeRunId) return cached.repo
+    const runId = this.activeRunId ?? ""
+    const repo = new JournalDetailRepository(new JournalStore(this.cwd, this.journalDir), runId)
+    this.journalFor = { runId, repo }
+    return repo
+  }
+
+  private runRows(): ExplorerRunRow[] {
+    return this.runManager.list().map((r) => {
+      const snap: RunSnapshot | null = this.runManager.getSnapshot(r.runId)
+      const agents = snap?.agents ?? []
+      return {
+        runId: r.runId,
+        label: r.label,
+        status: r.status,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        workflows: snap?.workflows.length ?? 0,
+        agentsTotal: agents.length,
+        agentsDone: agents.filter((a) => a.status !== "running").length,
+      }
+    })
+  }
+}
+
+/** nodeKey = [runId, kind, scopePath, localId].join("|")；agent 的 localId 即 journal key */
+function localAgentId(nodeKey: string): string {
+  const parts = nodeKey.split("|")
+  return parts[parts.length - 1]
+}

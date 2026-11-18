@@ -19,6 +19,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import path from "node:path"
 import { RunManager, withGlobalGate } from "../src/manager/run-manager.js"
+import { getRuntimeEventBus } from "../src/engine/events/runtime-event-bus.js"
 import { ModelPool } from "../src/engine/agent/model-pool.js"
 import { ensureModelTiersTemplate } from "../src/engine/agent/model-tiers.js"
 import { PiScheduleRunner } from "../src/manager/pi-schedule-runner.js"
@@ -34,8 +35,13 @@ import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 import { createRenderScheduler } from "../src/manager/render-scheduler.js"
 import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
+import { registerExplorerCommand } from "./commands/explorer.js"
+import { ExplorerController } from "../src/explorer/controller/explorer-controller.js"
 
-const runManager = new RunManager(16)
+const runManager = new RunManager(16, getRuntimeEventBus())
+// Workflow Explorer 单实例（模块级常驻：Controller/树模型/导航状态与会话同寿，
+// Overlay 视图按需创建销毁——关闭面板不丢选中节点）
+const explorer = new ExplorerController({ runManager, eventBus: getRuntimeEventBus(), cwd: process.cwd() })
 // tier 配置引导（可发现性）：工程 .pi/workflows/model-tiers.json 不存在时创建带中文说明的空模板
 // （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）。
 // 创建结果通过 session_start 的 ui.notify 通知（TUI 吞掉扩展 console.log，工厂期无 ctx.ui 可用）
@@ -60,6 +66,7 @@ for (const [tier, entry] of Object.entries(tiers)) {
 function makeDeps(cwd?: string): WorkflowToolDeps {
   return {
     runManager,
+    eventBus: getRuntimeEventBus(),
     adapterFactory: () => withGlobalGate(new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd() }), runManager.gate),
     cwd,
     // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）；
@@ -166,6 +173,7 @@ export default function extension(pi: ExtensionAPI): void {
   // ---- 斜杠命令（实现见 extensions/commands/，一命令一文件）----
   registerWorkflowsCommand(pi, { runManager, makeDeps, deliver })
   registerScheduleCommand(pi, { scheduler })
+  registerExplorerCommand(pi, { explorer })
 
   // workflow-tasks widget（M4）：在途 runs 实时摘要
   installTaskWidget(pi)

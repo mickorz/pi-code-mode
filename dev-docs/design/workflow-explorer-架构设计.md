@@ -2,9 +2,27 @@
 
 > 版本：V1.0
 > 日期：2026-11-18
-> 状态：架构决策已确认，待技术方案评审
+> 状态：**已实现（M0-M6 全部落地，单元/契约测试全绿；交互式 TUI 目视验收待人工执行）**
 > 需求来源：[侧边栏sidebar需求文档.md](./侧边栏sidebar需求文档.md)
 > 核心调整：单实例常驻不等于 Overlay 组件永久挂载——Controller、运行数据与导航状态常驻，Overlay 视图按需显示隐藏
+
+## 实现落点（代码索引）
+
+| 里程碑 | 落地文件 | 测试 |
+| ------ | -------- | ---- |
+| M1 Runtime Event Protocol | `src/engine/events/workflow-events.ts`、`src/engine/events/runtime-event-bus.ts`、`src/engine/runtime/workflow-runtime.ts`（埋点）、`src/engine/types/index.ts`（Phase/Tool 记录） | `tests/contract/runtime-events.test.ts` |
+| M2 RunManager 扩展 | `src/manager/run-manager.ts`（attachEvent/getSnapshot/lifecycle 事件） | 同上 + `tests/contract/run-manager-events.test.ts` |
+| M3 WorkflowTreeModel | `src/explorer/model/workflow-tree-model.ts` | `tests/contract/explorer-tree.test.ts` |
+| M4 Controller + Navigation | `src/explorer/controller/explorer-controller.ts`、`src/explorer/model/navigation-model.ts` | `tests/contract/explorer-controller.test.ts` |
+| M4 TUI Overlay | `extensions/explorer/index.ts`、`extensions/explorer/render.ts`、`extensions/commands/explorer.ts` | `tests/contract/explorer-render.test.ts`、`explorer-overlay.test.ts`、`explorer-command.test.ts` |
+| M5 Journal Detail | `src/engine/persistence/journal.ts`（V2）、`src/explorer/repository/detail-repository.ts` | `tests/contract/journal-v2.test.ts` |
+| M6 端到端 | — | `tests/contract/explorer-e2e.test.ts` |
+
+两处与设计文档的实现偏差（已按实现为准）：
+
+1. **展开态用 `collapsedNodeKeys` 而非 `expandedNodeKeys`**：默认全展开（运行中树仅几十节点），仅显式收起时剪枝——用户打开面板即看到完整结构。
+2. **隐含阶段节点**：子 workflow 未声明 phase 时，Runtime 用 `"▸ child / "` 前缀作展示阶段且不发 phase 事件；树模型按需建占位阶段节点（同 phaseId 与真实 `phase.started` 合并），避免子流程 agent 丢节点。
+
 
 ---
 

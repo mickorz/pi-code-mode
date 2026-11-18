@@ -16,6 +16,7 @@ import { agentAdapterToRunner } from "../adapter/agent-adapter.js"
 import type { AgentAdapter } from "../adapter/types.js"
 import { renderWorkflowRunResult } from "./render-text.js"
 import { RunManager } from "../manager/run-manager.js"
+import type { RuntimeEventBus } from "../engine/events/runtime-event-bus.js"
 
 const JOURNAL_DIR = path.join(".pi", "workflows", "journal")
 
@@ -26,6 +27,8 @@ export interface WorkflowToolDeps {
   cwd?: string
   /** 后台 run 完成后回传主会话的通道（extension 接线 pi.sendUserMessage） */
   deliver?: (text: string) => Promise<void>
+  /** Runtime 统一事件总线（M1：Explorer / Web Dashboard 共用；缺省不发布事件） */
+  eventBus?: RuntimeEventBus
   /** 模型分层解析：tier 名 -> provider/modelId（M4 tier 体系；未配置回退会话默认模型） */
   resolveTier?: (tier: string) => string | undefined
   /** tier 名 -> 模型池（v2 池化；优先于 resolveTier，未配置返回 undefined） */
@@ -161,6 +164,8 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         confirm,
         onAgentJournal: (entry: any) => journal.append(runId, entry.key, entry),
         onAgentUpdate: (record: any) => deps.runManager.attach(runId, record),
+        // M1：统一事件出口（RunManager 已订阅总线，节点快照由 attachEvent 维护）
+        onRuntimeEvent: deps.eventBus ? (event: any) => deps.eventBus!.publish(event) : undefined,
       })
 
       // 4. 后台分支（M3）：立即返回 runId，完成后 deliver 回传主会话
@@ -169,12 +174,14 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
           .then((outcome) => {
             const preview = JSON.stringify(outcome.result ?? null)
             deps.runManager.finish(runId, { status: "completed", resultPreview: preview })
+            persistRunSummary(journal, runId, outcome, "completed")
             return deps.deliver?.(renderWorkflowRunResult(outcome, { runId, sourceLabel: `background:${sourceLabel}` }))
           })
           .catch(async (e) => {
             const msg = String((e as Error)?.message ?? e)
             const cancelled = run.controller.signal.aborted
             deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
+            persistRunSummary(journal, runId, undefined, cancelled ? "cancelled" : "failed", msg)
             await deps.deliver?.(`[workflow ${cancelled ? "已停止" : "失败"}] runId=${runId}
 ${msg}
 已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。`)
@@ -191,6 +198,7 @@ ${msg}
         const outcome = await runWorkflow(script, runOpts())
         const preview = JSON.stringify(outcome.result ?? null)
         deps.runManager.finish(runId, { status: "completed", resultPreview: preview })
+        persistRunSummary(journal, runId, outcome, "completed")
         return {
           content: [{ type: "text" as const, text: renderWorkflowRunResult(outcome, { runId, sourceLabel }) }],
           details: { runId, sourceLabel },
@@ -200,6 +208,7 @@ ${msg}
         const msg = String((e as Error)?.message ?? e)
         const cancelled = run.controller.signal.aborted
         deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
+        persistRunSummary(journal, runId, undefined, cancelled ? "cancelled" : "failed", msg)
         const resumeHint = cancelled ? `
 已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。` : ""
         return {
@@ -252,4 +261,38 @@ export function makeWorkflowControlTool(deps: WorkflowToolDeps) {
 
 function toolText(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} }
+}
+
+/**
+ * run 终态写 V2 journal 观测快照（M5）：一次性写入，不写高频事件。
+ * 只改 metadata/observability 两个字段，entries（Agent 结果回放）原样保留 —— 回放语义不变。
+ * 失败不阻断运行（journal 仅影响历史回看与 Node Detail 展示）。
+ */
+function persistRunSummary(
+  journal: JournalStore,
+  runId: string,
+  outcome: { workflows?: unknown[]; phases?: unknown[]; composites?: unknown[]; agents?: unknown[]; toolCount?: number; meta?: { name?: string; id?: string } } | undefined,
+  status: string,
+  error?: string,
+): void {
+  try {
+    journal.recordRunSummary(runId, {
+      metadata: {
+        workflowId: outcome?.meta?.id,
+        workflowName: outcome?.meta?.name,
+        label: status,
+        status,
+        ...(error ? { error } : {}),
+        endedAt: Date.now(),
+      } as any,
+      observability: {
+        workflows: outcome?.workflows,
+        phases: outcome?.phases,
+        composites: outcome?.composites,
+        agents: outcome?.agents,
+      },
+    })
+  } catch {
+    // 展示层可失败：不因 journal 写入失败影响 run 结果返回
+  }
 }
