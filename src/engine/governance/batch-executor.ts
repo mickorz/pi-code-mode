@@ -165,6 +165,21 @@ export class BatchExecutor {
 
           const leaseGeneration = acquired.checkpoint!.leaseGeneration
           let lastError: string | undefined
+          // 租约自动续期（M4-T1）：按 leaseMs 的 1/3 周期续租，避免超长任务（T0 基线 59min/agent）被接管
+          const renewTimer = setInterval(() => {
+            try {
+              this.registry.renew({
+                taskKey: task.taskKey,
+                runId: this.opts.runId,
+                leaseGeneration,
+                leaseMs: this.opts.leaseMs,
+              })
+            } catch {
+              /* 续期失败不中断任务（提交时仍有 CAS 校验兜底） */
+            }
+          }, Math.max(1000, Math.floor(this.opts.leaseMs / 3)))
+          if (typeof renewTimer.unref === "function") renewTimer.unref()
+
           // 本次运行内尝试计数（与历史 attempt 分离：接管失败任务时历史 attempt 已 >1）
           let localAttempt = 0
           let attempt = 0
@@ -184,6 +199,7 @@ export class BatchExecutor {
                 lastError = `提交被拒：${committed.reason}`
                 break
               }
+              clearInterval(renewTimer)
               return {
                 taskKey: task.taskKey,
                 status: "done" as TaskStatus,
@@ -197,6 +213,7 @@ export class BatchExecutor {
               if (localAttempt >= this.opts.maxAttempts) break
             }
           }
+          clearInterval(renewTimer)
           this.registry.fail({
             taskKey: task.taskKey,
             runId: this.opts.runId,
