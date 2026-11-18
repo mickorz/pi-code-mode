@@ -120,6 +120,23 @@ function declaredName(stmt: AnyNode): string | undefined {
   return undefined
 }
 
+/** 静态数组长度推断：new Array(N) / [a,b,c] / new Array(N).fill(..) */
+function staticArrayLength(node: AnyNode): number | undefined {
+  if (!node || typeof node !== "object") return undefined
+  if (node.type === "ArrayExpression" && Array.isArray(node.elements)) return node.elements.length
+  if (node.type === "NewExpression" && node.callee?.name === "Array" && typeof node.arguments?.[0]?.value === "number") {
+    return node.arguments[0].value
+  }
+  if (node.type === "CallExpression" && node.callee?.property?.name === "fill") {
+    return staticArrayLength(node.callee.object)
+  }
+  if (node.type === "CallExpression" && ["map", "slice", "filter"].includes(String(node.callee?.property?.name))) {
+    // 非精确：保守返回 undefined
+    return undefined
+  }
+  return undefined
+}
+
 /** 字面量字符串（模板字符串仅当无表达式时） */
 function literalString(node: AnyNode): string | undefined {
   if (!node) return undefined
@@ -158,6 +175,8 @@ export function analyzeAst(source: string): AstAnalysis {
   const varToCall = new Map<string, string>()
   /** 变量名 → 是否为动态调用目标（赋值为计算成员/成员访问/其他函数值） */
   const dynamicCallables = new Set<string>()
+  /** 变量名 → 静态可确定的数组长度（new Array(N) / [..] / .fill） */
+  const varLength = new Map<string, number>()
   /** 当前所在的动态上下文（循环/动态分发） */
   const dynamicStack: Array<{ reason: string; bounds?: CallNode["loopBounds"] }> = []
   /** 当前复合容器栈（parallel/sequence/...） */
@@ -175,6 +194,27 @@ export function analyzeAst(source: string): AstAnalysis {
     else if (expr.type === "CallExpression") callNode = expr
     if (callNode?.type === "CallExpression") {
       const callee = callNode.callee
+      // 数组高阶方法（.map/.forEach）→ 把可确定数组长度作为回调内调用的上界
+      const ARRAY_METHODS = new Set(["map", "forEach", "flatMap", "filter"])
+      if (
+        callee?.type === "MemberExpression" &&
+        !callee.computed &&
+        typeof callee.property?.name === "string" &&
+        ARRAY_METHODS.has(callee.property.name) &&
+        callNode.arguments?.length
+      ) {
+        const recv = callee.object
+        let bound: number | undefined = staticArrayLength(recv)
+        if (bound === undefined && recv?.type === "Identifier") bound = varLength.get(recv.name)
+        dynamicStack.push({
+          reason: `数组高阶方法 .${callee.property.name} 的回调执行次数`,
+          bounds: bound !== undefined ? { min: 0, max: bound, reason: `数组静态长度 ${bound}` } : { min: 0, reason: "数组长度静态不可知" },
+        })
+        visitExpr(callNode.arguments[0], containerId)
+        dynamicStack.pop()
+        return
+      }
+
       const fnName =
         callee?.type === "Identifier"
           ? callee.name
@@ -322,6 +362,11 @@ export function analyzeAst(source: string): AstAnalysis {
         const before = nodes.length
         visitExpr(init)
         if (name && nodes.length > before) varToCall.set(name, nodes[nodes.length - 1]!.id)
+        // 静态数组长度（供 .map/.forEach 波次估算）
+        if (name && init) {
+          const len = staticArrayLength(init)
+          if (len !== undefined) varLength.set(name, len)
+        }
         // 动态调用目标：计算成员访问 handlers[type]、成员访问 obj.fn、或非追踪函数的调用结果
         if (name && init && typeof init === "object") {
           const isDynamicValue =
