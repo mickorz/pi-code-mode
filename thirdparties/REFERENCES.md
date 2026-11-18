@@ -12,6 +12,8 @@
 | REF-004 | pi-model-router | https://github.com/yeliu84/pi-model-router.git | thirdparties/pi-model-router | 9339ed067e666cedd0f3f44219c0558a0616bc5e | MIT | 方法论参考：pi 平台按回合模型分层路由（high/medium/low tier 启发式、成本预算、fallback 链、virtual model 注册）；只读研究，集成前再评估 | 2026-11-16 引入。与本包 model-tiers 分层解析（agent tier → provider/modelId）直接对标，为 tier 解析策略与意图分类启发式提供外部对照 |
 | REF-005 | pi（earendil-works） | https://github.com/earendil-works/pi.git | thirdparties/pi | 4afe78de1e51162c01c946dcf080e6a266685a01 | MIT | 官方上游参考：pi 平台本体（agent core / MCP 扩展 / codemode / tool_search 源码），MCP Tool Integration 计划的对标与上游 issue 反馈依据；只读研究 | 2026-11-18 引入。MCP 集成开发的上游对照（F15 dispose 泄漏、loadMcpConfig 未导出等待反馈项） |
 | REF-006 | pi-memory | https://github.com/jayzeng/pi-memory.git | thirdparties/pi-memory | 842727466171c9e50209ed6fe53463a952e5a5f6 | MIT | 方法论参考：pi 平台记忆管理扩展（记忆持久化与索引形态）；只读研究，集成前再评估 | 2026-11-18 引入。与本包 memory/持久化设计（journal、agent 记忆）对照参考 |
+| REF-007 | pi-sidebar-tui | https://github.com/bi0h4z4rd88/pi-sidebar-tui.git | thirdparties/pi-sidebar-tui | 38d2a33a3fdbd2f5f24c19d79805a62025ae7d41 | 未发现 LICENSE 文件 | 只读研究，禁止复制任何代码：pi 终端侧边栏 TUI 扩展（session 指标/todo/workspace/已连 MCP server 实时面板），与本项目 TUI widget 层形态对照 | 2026-11-18 引入。与本项目 TUI widget 层（MCP 状态展示方向）形态对照参考 |
+| REF-008 | pi-ui-extension | https://github.com/1993yihuan/pi-ui-extension.git | thirdparties/pi-ui-extension | 5ea4acc0f0e5cf8564967c00c3a160439fa9ee0a | MIT | 方法论参考：pi 全屏终端 UI 扩展（会话管理/上下文占用/Tool 与 MCP 活动面板/i18n 组织），与本项目 workflow 状态展示方向对照 | 2026-11-18 引入。其 MCP 活动/上下文占用展示与本包 workflow 观测（Node Inspector/onMcpCall 审计）方向对照 |
 
 ## Submodule 引入与登记流程
 

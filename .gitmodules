@@ -21,3 +21,11 @@
 	path = thirdparties/pi-memory
 	url = https://github.com/jayzeng/pi-memory.git
 	branch = main
+[submodule "thirdparties/pi-sidebar-tui"]
+	path = thirdparties/pi-sidebar-tui
+	url = https://github.com/bi0h4z4rd88/pi-sidebar-tui.git
+	branch = main
+[submodule "thirdparties/pi-ui-extension"]
+	path = thirdparties/pi-ui-extension
+	url = https://github.com/1993yihuan/pi-ui-extension.git
+	branch = main
