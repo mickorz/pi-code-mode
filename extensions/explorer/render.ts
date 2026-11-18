@@ -217,12 +217,16 @@ export function renderExplorerFrame(state: ExplorerViewState, width: number, bod
     })
   }
 
-  const hints =
+  const fullHints =
     state.activeTab === "workflow"
       ? state.focus === "detail"
         ? "up/down 滚动  left/right 上下节点  esc 返回树  tab 切 Tab  q 关闭"
         : "up/down 选择  right/enter 展开或详情  left 收起  tab 切 Tab  o 切 run  q 关闭"
       : "tab 切 Tab  q 关闭"
+  // 窄终端换短提示，不依赖截断（截断会丢掉关键键位信息）
+  const shortHints =
+    state.activeTab !== "workflow" ? "tab / q" : state.focus === "detail" ? "↑↓ 滚动  ←→ 节点  esc 返回  q" : "↑↓ 选择  →/enter 详情  ← 收起  q"
+  const hints = visibleWidth(fullHints) <= width ? fullHints : shortHints
   lines.push(truncateToWidth(theme.fg("muted", hints), width))
 
   const padded = lines.slice(0, bodyRows)
