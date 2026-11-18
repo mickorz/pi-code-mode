@@ -2,6 +2,7 @@
 
 - 日期：2026-11-18
 - 架构基线：`dev-docs/design/workflow-engineering-framework.md`（本文档不重复架构论证）
+- 总执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-m1-m5-execution-plan.md`（M2-M5 与跨阶段约束）
 - 阶段目标：**先让 pi-code-mode 能够理解一个 Workflow、分析它的执行结构、发现性能风险、生成优化方案，并指导 Agent 修改 Workflow JS**
 - 明确不做：不改造 Runtime 核心执行机制、不引入新执行 DSL、不实现自动并发调度（避免一次性改动过多基础设施，同时先解决 PrdGameSkill 长耗时问题）
 

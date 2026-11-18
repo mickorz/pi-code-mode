@@ -417,6 +417,8 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 
 ## 六、最终路线图（Workflow Engineering Roadmap）
 
+> 完整执行计划（M1-M5 任务分解与验收指标）：`dev-docs/planning/2026-11-18-workflow-engineering-m1-m5-execution-plan.md`
+
 | 阶段 | 名称 | 解决的问题 |
 | --- | --- | --- |
 | M1 · Workflow Intelligence | **当前阶段**：Plan + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 |
