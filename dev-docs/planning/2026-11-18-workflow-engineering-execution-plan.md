@@ -5,6 +5,7 @@
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
 - 依赖修正（2026-11-18 评审 P0-1）
 - 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认
+- 修订记录：2026-11-18 M4 完成 —— 确定性分片器（count/bytes/boundary）+ 上下文三层（摘要不得替代原文，注册强制校验证据）+ AdaptiveScheduler（消费 M2/M3 画像，长任务先发，无样本静态）+ AdaptiveModelPool（429 降档/缓慢回升）+ Effective Validation（Required ∪ Profile）+ 租约自动续期；39 断言 + 11 Benchmark 全 PASS，详见 `dev-docs/progress-result/MCP-M4-执行报告.md`
 - 修订记录：2026-11-18 M3 完成 —— 分层指纹七元组（任务级 externalDeps）+ Fencing Token（leaseGeneration 原子 CAS）+ 原子提交与产物校验 + 副作用四状态 + Registry 可重建 + BatchExecutor（清单/并发/重试/恢复报告）+ 任务级 resume（重跑率 0%）；27 断言 + 13 Benchmark 全 PASS，详见 `dev-docs/progress-result/MCP-M3-执行报告.md`
 - 修订记录：2026-11-18 M2 完成 —— 预算三分类（硬/软/实际）+ Reservation 五约束 + 降级 Run 级语义（activeProfile/effectivePolicy/policyTransitions）+ Plan 执行消费（PlanRunContext/WorkflowRunConfig）+ budget.remaining() + plan_validate 工具；58 断言全 PASS，详见 `dev-docs/progress-result/MCP-M2-执行报告.md`
 - 修订记录：2026-11-18 M1 完成 —— T0-T8 全部交付（Plan/AST/规则引擎/Report/AI Planner/CLI+工具/Skill/Benchmark），67 断言全 PASS，详见 `dev-docs/progress-result/MCP-M1-执行报告.md`
