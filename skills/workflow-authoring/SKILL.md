@@ -17,7 +17,7 @@ description: 编写 pi 动态工作流 JavaScript 脚本时加载。涉及 workf
    - pi 的模型配置（~/.pi/agent/models.json）或 model-tiers 配置；
    - 都拿不到时直接问用户要模型名。
 
-   分析类（扫描 / 对照 / 枚举 / 归类）与写作类（长输出报告 / 终稿）分两问让用户各选一个；写作类缺省用会话默认模型。
+   分析类（扫描 / 对照 / 枚举 / 归类）与写作类（长输出报告 / 终稿）分两问让用户各选一个；写作类缺省用会话默认模型。**model-tiers 已配置的档位（读 `.pi/workflows/model-tiers.json` 的 tiers 键）直接推荐用 tier 名**，不必逐个列模型串
 3. **并发**：默认 16（运行时钳制上限，组数 ≤ 并发才能一波跑完）；网关限流环境建议 8；允许自定义正整数。
 4. **拆分形态**：多阶段流程默认推荐 **sub workflow 拆分**（问询确认，用户未明确反对即按拆分做）：主编排 + 各阶段子流程，创建 `.pi/workflows/<workflow 名>/` 子文件夹，主编排与全部子流程都放里面（布局与调用约定见「拆分：子文件夹布局」）；只有无阶段边界、agent 总数少的短流程才单文件全写。用户明确说「写一起」时按单文件做。
 
@@ -25,13 +25,14 @@ description: 编写 pi 动态工作流 JavaScript 脚本时加载。涉及 workf
 
 ## 不变量（违反即报错）
 
-1. 脚本首条语句必须是 `export const meta = { name: 'short_snake_case', description: '一句话说明' }`；可选 `id`（稳定标识，可含斜杠如 `ui/main-menu`，供按名引用与定时寻址；缺省回落 name）
-2. 整个 run 至少一次 agent dispatch：直接调 `agent()`，或经 `workflow()` 子流程间接（纯编排父脚本合法）；两者都没有的纯计算不要用 workflow
+1. **meta 可整体省略**：不写 `export const meta` 时自动缺省 `name: "workflow"`（实例由 runId 区分）；写 meta 时 name 需 snake_case，忘写 name 也自动补缺省。需要 Schedule 寻址/被引用时才必填 `id` 或 `name`。可选 `mcp` 声明（见「MCP 直调」，默认已开启，无需声明）
+2. 整个 run 至少一次实际外部调用：直接调 `agent()`，或经 `workflow()` 子流程间接，或 **MCP 直调**（`mcp.call`/`tools.mcp__*`）；两者都没有的纯计算不要用 workflow
 3. 禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（可确定性重放要求）
 4. `parallel()` 接收函数数组，不是 Promise 数组：`() => agent(...)`，返回结果按输入顺序
 5. `agent()` 的 agentType 选项在 pi 版当前被忽略（子代理默认可用全部工具）；只读任务在 prompt 中明确「不要修改任何文件」，写文件任务无需额外参数
 6. **阶段失败闸门**：agent 重试耗尽（缺省重试 1 次）后，当前阶段收尾、下一 `phase()` 边界终止 run 并报告失败明细；需静默继续传工具参数 `continueOnAgentFailure: true`，需要容错降级用 `fallback()`（降级成功自动吸收失败）
 7. **默认超时 1 小时**：生成的每个 `agent()` 调用默认带 `timeoutMs: 3600000`；任务明显更快（如固定文本回复）可用更小值，用户显式指定时从其指定——缺省无兜底超时的裸 agent 不要生成
+8. **不要用 `tools` 或 `mcp` 作局部变量名**：两者是注入的全局（MCP 直调，见下节），局部同名会遮蔽导致 TypeError
 
 ## 可用全局
 
@@ -156,10 +157,73 @@ return { brief: spec.brief, design: design.design, code: code.code }
 | `schema` | JSON Schema 对象，返回结构化 JSON |
 | `agentType` | pi 版当前忽略此选项（保留兼容）；只读约束写在 prompt 里 |
 | `model` | "provider/modelId"，如 anthropic/claude-sonnet-4-6 |
+| `tier` | 模型分层名，按 `.pi/workflows/model-tiers.json` 的 tiers 路由（如 `fast`/`big`/`ultra` 或自定义档位）；优先级低于 `model`；未列出的 tier 回退会话默认模型 |
 | `isolation` | `"worktree"` 独立 git worktree 隔离（写型任务配合 agentType general） |
 | `timeoutMs` | 单 agent 超时毫秒；**生成时默认带 3600000（1h）**，快任务可调小 |
 | `retries` | 可恢复失败重试次数（上限 3） |
+| `replayable` | resume 时允许哈希命中回放（需 run 用 explicit 模式且指纹匹配）；缺省 false=默认重跑；副作用安全的声明项 |
 | `phase` | 显式归属阶段（缺省用当前 phase） |
+
+## 模型分层（tier 与 model-tiers.json）
+
+配置文件（缺省时插件装载会自动创建引导模板）：
+
+- 项目级：`.pi/workflows/model-tiers.json`（主配置位，同名档位覆盖全局）
+- 全局：`~/.pi/workflows/model-tiers.json`
+
+```json
+{
+  "tiers": {
+    "fast": "provider/model-a",
+    "big": [ { "model": "provider/b", "concurrency": 16 }, { "model": "provider/c", "concurrency": 8 } ]
+  }
+}
+```
+
+- 档位值：单个 "provider/modelId" 字符串，或模型池数组（`concurrency` 为该模型并发上限，溢出排队）
+- 脚本用法：`agent('分析这个文件', { tier: 'fast' })`；同一档位可被多个 agent 共用
+- 与 `model` 同时给时 `model` 优先（tier 被忽略）；都缺省用会话默认模型
+- 写脚本前先用问询确认：当前项目是否已配 model-tiers、可用档位名有哪些（读配置而不是猜）
+
+## MCP 直调（workflow 内直接调宿主 MCP server）
+
+workflow 脚本可直接调用宿主已连接的 MCP server（不经子 agent、不消耗模型 token），与官方 code-mode 同款形态：
+
+```javascript
+// meta.mcp 可省略：默认可用宿主全部 enabled server（懒连接：调谁才连谁）
+const page = await mcp.call('web-reader', 'webReader', { url: 'https://example.com' })
+
+// 官方同款 proxy 形态（tools.mcp__<server>__<tool>）
+const repo = await tools.mcp__zread__get_repo_structure({ repo_name: 'earendil-works/pi' })
+
+// 反射
+const servers = mcp.listServers()
+const tools = await mcp.listTools('zread') // hidden 工具不返回
+```
+
+收敛与封锁（可选声明，写在 meta.mcp）：
+
+```javascript
+export const meta = {
+  name: 'safe_flow',
+  mcp: {
+    enabled: true,
+    servers: ['web-reader'],            // 收敛 server 面（缺省=全部 enabled server）
+    allowTools: ['web-reader:*'],        // 工具白名单（支持 'server:prefix_*' 模式）
+    denyTools: ['chrome-devtools:*'],    // 封锁（优先级高于 allow）
+    exposure: { 'chrome-devtools': 'hidden' }, // 沿用 pi exposure 语义
+  },
+}
+```
+
+规则与注意：
+- 默认开启全部宿主 enabled server，**懒连接**（调谁才连谁）；`meta.mcp: { enabled: false }` 显式禁用（调用抛错）
+- 工具名格式 `mcp__<server>__<tool>`，server 名中 `-` 以 `_` 出现在工具名（如 `web-reader` → `mcp__web_reader__*`）
+- 结果形态对齐官方 code-mode：工具声明了 `outputSchema` 时返回 `structuredContent`，否则返回文本串；工具报错/被拒则 Promise reject（脚本内可 try-catch）
+- **不要用 `tools`/`mcp` 作局部变量名**（会遮蔽注入的全局，不变量 8）；枚举工具用 `mcp.listTools(server)`，不要靠属性探测（未知名抛含可达 server 列表的错误）
+- server 连接属 run 级（run 结束显式回收）；单请求超时 60s；HTTP server 需认证时调用会超时/报错——避免在无人值守 workflow 中调用需认证的 server
+- 审计：每条直调实时发 `onMcpCall` 审计回调并计入 run 日志与 toolCount（纯 MCP workflow 合法，不需要 agent）
+- 子 Agent 不再有 MCP 通道：`agent()` 无 `tools.mcp` 选项，需要 MCP 数据时在 workflow 层直调后把结果作为 prompt 传给 agent
 
 ## 确定性验证
 
