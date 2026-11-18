@@ -5,6 +5,7 @@
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
 - 依赖修正（2026-11-18 评审 P0-1）
 - 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认
+- 修订记录：2026-11-18 M1 完成 —— T0-T8 全部交付（Plan/AST/规则引擎/Report/AI Planner/CLI+工具/Skill/Benchmark），67 断言全 PASS，详见 `dev-docs/progress-result/MCP-M1-执行报告.md`
 - 修订记录：2026-11-18 五轮评审修订——P0-1 M1 接口承诺对齐 Definition/Profile Schema 并新增 WorkflowRunConfig 概念（与 WorkflowPlan 分离，M2 Plan Runner 组合）；P0-2 TaskCheckpoint 增加 leaseGeneration（Fencing Token），提交原子 CAS 校验双字段；P1-1 Budget Reservation 原子预留/释放/结算五条约束；P1-2 动态降级 Run 级语义（activeProfile/effectivePolicy/policyTransitions，降级只影响未调度任务）；P1-3 三 Profile 完整示例（默认 balanced）与 Validator 解析规则；新增 Execution Trace 跨阶段能力与五级关联 ID
 - 修订记录：2026-11-18 三轮评审修订——P0：taskFingerprint 补 executionContractVersion/modelConfigHash 细化/externalDepsHash，TaskCheckpoint 增加 lease 并发安全与原子提交（四规则），外部副作用幂等键；P0：M4 上下文三层（Shared/Task/Evidence Reference），质量验收扩展证据覆盖率；P1：M1-T1 Plan Definition/Profile Schema 落地 + hash 命名统一，M1-T2 动态循环/动态分发处理边界，M1 指标限定为静态可确定节点；修正 M4 范围/M3 指标/M5 汇总表三处文档不一致；新增跨阶段能力 Execution Trace：**M4 自适应调度消费 M2/M3 已有的运行观测数据（轻量耗时画像），不依赖 M5 的正式性能基线**——M5 在 M4 之后完善长期数据，消除依赖倒置
 - 数据能力分层（评审 P0-1 修正依据）：当前 Run 实时数据→M2；多 Run 基础记录→M2/M3；简单历史统计→M4 消费；正式基线/趋势/回归检测→M5。原则：下游阶段不得依赖上游尚未建立的数据能力
@@ -15,7 +16,7 @@
 
 | 阶段 | 名称 | 核心交付 | 解决的问题 | 状态 |
 | --- | --- | --- | --- | --- |
-| M1 | Workflow Intelligence | Plan Schema + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 | 已规划（细节见 M1 细节计划，待启动 T0） |
+| M1 | Workflow Intelligence | Plan Schema + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 | **已完成**（2026-11-18，67 断言全 PASS，recall 100%/FPR 0%） |
 | M2 | Execution Governance | Budget 体系 + Plan 执行消费 + 运行指标 | 运行失控、成本不可控 | 未开始 |
 | M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | 未开始 |
 | M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | 未开始 |

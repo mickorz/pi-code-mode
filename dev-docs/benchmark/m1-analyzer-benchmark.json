@@ -1,0 +1,154 @@
+{
+  "analyzerVersion": "1.0.0",
+  "ruleSetVersion": "1.0.0",
+  "generatedAt": "2026-11-18T10:36:03.179Z",
+  "detection": {
+    "labeledSamples": 8,
+    "expectTotal": 4,
+    "expectHit": 4,
+    "recall": 1,
+    "forbidTotal": 4,
+    "forbidHit": 0,
+    "falsePositiveRate": 0,
+    "perFile": [
+      {
+        "file": "atomic/serial-dependent.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 2,
+        "note": "真串行不得给并行建议（关键误报项）"
+      },
+      {
+        "file": "atomic/serial-candidate.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 2,
+        "note": "相邻无引用 → 并行候选"
+      },
+      {
+        "file": "atomic/repeated-context.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 5,
+        "note": "重复注入大对象"
+      },
+      {
+        "file": "atomic/parallel-waves.js",
+        "expectHit": 0,
+        "expectTotal": 0,
+        "forbiddenHit": [],
+        "findings": 1,
+        "note": "并行波次（任务数动态，允许无 CONC-001）"
+      },
+      {
+        "file": "atomic/dynamic-loop.js",
+        "expectHit": 0,
+        "expectTotal": 0,
+        "forbiddenHit": [],
+        "findings": 1,
+        "note": "动态循环不得给并行建议"
+      },
+      {
+        "file": "atomic/dynamic-dispatch.js",
+        "expectHit": 0,
+        "expectTotal": 0,
+        "forbiddenHit": [],
+        "findings": 0,
+        "note": "动态分发不得给并行建议"
+      },
+      {
+        "file": "atomic/sub-workflow.js",
+        "expectHit": 0,
+        "expectTotal": 0,
+        "forbiddenHit": [],
+        "findings": 0,
+        "note": "2 调用子流程：不足 3 链不报 SERIAL-001，且不得误报并行候选"
+      },
+      {
+        "file": "atomic/sub-workflow-chain.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 1,
+        "note": "3 个 workflow 子流程 Explicit 链"
+      }
+    ]
+  },
+  "realScripts": {
+    "count": 9,
+    "allDeterministic": true,
+    "results": [
+      {
+        "file": "10-unified-spec.js",
+        "findings": 5,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 22
+      },
+      {
+        "file": "3-produce-outputs.js",
+        "findings": 8,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 37
+      },
+      {
+        "file": "4-client-verify.js",
+        "findings": 6,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 16
+      },
+      {
+        "file": "5-server-verify.js",
+        "findings": 6,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 16
+      },
+      {
+        "file": "8-difference-review.js",
+        "findings": 4,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 17
+      },
+      {
+        "file": "bug-coverage-check.js",
+        "findings": 18,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 87
+      },
+      {
+        "file": "full-check-suite.js",
+        "findings": 2,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 10
+      },
+      {
+        "file": "game-prd-check.js",
+        "findings": 30,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 100
+      },
+      {
+        "file": "game-requirement-audit.js",
+        "findings": 18,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 83
+      }
+    ]
+  },
+  "planLifecycle": {
+    "freshOk": true,
+    "staleDetected": true,
+    "legacyWithoutPlan": true
+  }
+}
