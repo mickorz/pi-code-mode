@@ -151,6 +151,12 @@ Plan 只记录预估值，真实运行数据归 Evaluator 管理。
   - **Plan Profile**：同一 Definition 下的执行策略变体（fast / balanced / quality）
 - fast/balanced/quality 三个 Profile **不复制三份完整 stages**——修改一个 Stage 只改 Definition，Profiles 只存差异化执行参数，避免多文件同步维护
 
+**Profile 解析规则（Plan Validator 实现依据，五轮评审 P1-3）**：
+- 默认 Profile 为 **balanced**（run 未指定 activeProfile 时使用）
+- Profile 允许继承 Definition 公共配置；未声明字段回退 Definition 级默认值
+- **Profile 不可覆盖的 Definition 约束**：`requiredValidation` 强制项、`acceptanceCriteria`、stage 结构与依赖
+- 三个 Profile（fast/balanced/quality）均须在 Schema 中给出完整示例
+
 **第四，execution mode。**
 三个模式继承现有 `workflow-authoring` skill 的速度优先、质量优先设计：
 
