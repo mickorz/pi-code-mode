@@ -23,7 +23,7 @@ function makeProject(opts?: { manifest?: { id: string }[]; brokenLegacy?: boolea
   if (opts?.brokenLegacy) {
     const dir = path.join(projectDir, ".opencode-workflows", "workflows");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "bad.js"), "const x = 1");
+    fs.writeFileSync(path.join(dir, "bad.js"), "export const meta = { name: 'Bad Name' }\nconst x = 1");
   }
   return projectDir;
 }

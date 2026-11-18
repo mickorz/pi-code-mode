@@ -56,15 +56,9 @@ function gatedAgent() {
   }
 }
 
-test("缺少 meta 信封被拒绝", async () => {
-  await assert.rejects(
-    runWorkflow(`await agent('hi')`, { agent: countingAgent().runner }),
-    (error: unknown) => {
-      assert.ok(error instanceof WorkflowError)
-      assert.match(error.message, /meta/)
-      return true
-    },
-  )
+test("缺少 meta 信封：缺省 name=workflow 正常执行（meta 可省略）", async () => {
+  const result = await runWorkflow(`await agent('hi')`, { agent: countingAgent().runner })
+  assert.equal(result.meta.name, "workflow")
 })
 
 test("meta.name 必须是 snake_case", async () => {

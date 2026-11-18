@@ -159,7 +159,7 @@ test("register: id 冲突与坏脚本均拒绝注册", async () => {
   assert.equal(fs.readFileSync(registerJsonPath(projectDir), "utf-8"), manifestBefore);
 
   const broken = path.join(projectDir, "broken.js");
-  fs.writeFileSync(broken, "const x = 1"); // 无 meta -> 校验失败
+  fs.writeFileSync(broken, "export const meta = { name: 'Bad Name' }\nconst x = 1"); // meta.name 非 snake_case -> 校验失败
   await registerSubcommand.run(["broken.js"], ctx, deps);
   assert.match(notifications.at(-1)!.text, /校验失败/);
   assert.equal(fs.readFileSync(registerJsonPath(projectDir), "utf-8"), manifestBefore);

@@ -51,7 +51,10 @@ const DETERMINISM_PRELUDE = [
 
 type AnyNode = Node & { [key: string]: any; start: number; end: number }
 
-/** 解析 workflow 脚本：校验 meta 信封并剥离，返回 meta 与可执行 body */
+/** meta 缺省时的默认名（匿名 workflow：实例由 runId 区分，name 仅作展示） */
+const DEFAULT_META_NAME = "workflow"
+
+/** 解析 workflow 脚本：meta 可整体省略（缺省 name=workflow），显式提供时校验信封并剥离，返回 meta 与可执行 body */
 export function parseWorkflowScript(script: string): { meta: WorkflowMeta; body: string } {
   if (DETERMINISM_BLOCKLIST.test(script)) {
     throw new WorkflowError(
@@ -69,13 +72,10 @@ export function parseWorkflowScript(script: string): { meta: WorkflowMeta; body:
     ranges: false,
   }) as AnyNode
 
+  // meta 可整体省略：匿名 workflow（缺省 name=workflow）
   const first = ast.body?.[0] as AnyNode | undefined
   if (first?.type !== "ExportNamedDeclaration") {
-    throw new WorkflowError(
-      "脚本首条语句必须是 `export const meta = { name, description, phases }`",
-      WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
-      { recoverable: false },
-    )
+    return { meta: { name: DEFAULT_META_NAME }, body: script }
   }
 
   const declaration = first.declaration as AnyNode | null
@@ -102,6 +102,11 @@ export function parseWorkflowScript(script: string): { meta: WorkflowMeta; body:
 
   const meta = evaluateLiteral(declarator.init, "meta")
   validateMeta(meta)
+
+  // name 缺省宽容：显式 meta 但忘写 name 时补缺省（显式写了 name 才校验 snake_case）
+  if (!meta.name) {
+    meta.name = DEFAULT_META_NAME
+  }
 
   return {
     meta,
@@ -157,8 +162,11 @@ function propertyKey(key: AnyNode, path: string): string {
 function validateMeta(meta: unknown): asserts meta is WorkflowMeta {
   if (!meta || typeof meta !== "object") throw new Error("meta 必须是对象字面量")
   const value = meta as Record<string, unknown>
-  if (typeof value.name !== "string" || !/^[a-z][a-z0-9_]*$/i.test(value.name)) {
-    throw new Error("meta.name 必须是非空的 snake_case 字符串")
+  // name 缺省宽容：忘写时由 parseWorkflowScript 补缺省名；显式提供才校验 snake_case
+  if (value.name !== undefined) {
+    if (typeof value.name !== "string" || !/^[a-z][a-z0-9_]*$/i.test(value.name)) {
+      throw new Error("meta.name 必须是非空的 snake_case 字符串")
+    }
   }
   if (value.description !== undefined && typeof value.description !== "string") {
     throw new Error("meta.description 必须是字符串")
