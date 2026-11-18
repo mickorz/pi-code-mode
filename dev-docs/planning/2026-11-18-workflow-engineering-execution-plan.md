@@ -3,6 +3,7 @@
 - 日期：2026-11-18
 - 架构基线：`dev-docs/design/workflow-engineering-framework.md`（五层框架、三条原则、六条陷阱约束——本文档全部任务受其约束）
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
+- 依赖修正（2026-11-18 评审 P0-1）：**M4 自适应调度消费 M2/M3 已有的运行观测数据（轻量耗时画像），不依赖 M5 的正式性能基线**——M5 在 M4 之后完善长期数据，消除依赖倒置
 
 ---
 
@@ -86,6 +87,8 @@
 
 **验收**：合法 Plan 可读取；非法 Plan 可定位错误；JS 修改后能发现 Plan 过期；没有 Plan 的旧 Workflow 正常工作。
 
+> **开发顺序说明（评审建议五）**：不等 T4 全部完成才验证 Analyzer 有效性——**T2/T3 即用 PrdGameSkill 的 S8、S10 做阶段性验证**，尽早暴露"AST 分析能力不足以支持真实 Workflow（大量动态代码无法识别）"的风险。
+
 ### T2：AST Analyzer
 
 **工作内容**
@@ -94,11 +97,20 @@
 - 识别 agent / parallel / pipeline / sequence / fallback / race 调用
 - 识别 workflow 子流程调用
 - 提取调用参数和代码位置
-- 建立 Call Graph 与初步依赖关系
+- 建立 Call Graph 与依赖关系
 
 **交付物**：`src/engine/analyzer/ast-parser.ts`、`call-graph.ts`、`dependency-analyzer.ts`
 
-**验收**：准确统计已知 DSL 调用；还原直接可识别的串行/并行结构；动态表达式标记 unknown 不猜测；输出有来源位置的调用图。
+**依赖置信度分级（评审补充-1，必做）**——静态分析不能断定业务独立性，每条依赖边必须标注：
+
+| 置信度 | 含义 |
+| --- | --- |
+| Explicit | 明确的数据依赖（后调用引用了前调用的结果） |
+| Structural | 由代码控制流产生的依赖（同一 sequence/条件分支内） |
+| Candidate | 可能独立，需要语义判断（并行候选，交 Semantic Analyzer 确认） |
+| Unknown | 无法静态确定（动态表达式/间接引用） |
+
+**验收**：准确统计已知 DSL 调用；依赖边全部携带置信度标注；Candidate 与 Unknown 不允许被自动并行化建议直接采纳；输出有来源位置的调用图。
 
 ### T3：性能规则引擎
 
@@ -109,7 +121,27 @@
 
 **交付物**：`src/engine/analyzer/rules/`、`rule-engine.ts`
 
-**验收**：每条风险有 ruleId、能定位代码；不确定的结果明确标注；有测试证明不会把合法串行流程误判为确定的性能缺陷。
+**规则注册机制（评审补充-2，必做）**——统一规则接口，支持持续扩展与第三方贡献：
+
+```ts
+interface AnalyzerRule {
+  id: string
+  version: string
+  severity: "critical" | "high" | "medium" | "low"
+  analyze(context: AnalyzerContext): AnalyzerFinding[]
+}
+
+interface AnalyzerFinding {
+  ruleId: string
+  severity: string
+  confidence: number          // 0-1，静态结论的置信度
+  location: { file: string; startLine: number; endLine: number }
+  evidence: string[]
+  suggestion?: string
+}
+```
+
+**验收**：每条风险有 ruleId、能定位代码、带 confidence；不确定的结果明确标注；新增规则不需要修改 Analyzer 主体；有测试证明不会把合法串行流程误判为确定的性能缺陷。
 
 ### T4：Analyzer Report
 
@@ -156,9 +188,18 @@
 - 新增 Plan 生成步骤、Analyzer 检查步骤、优化建议处理流程
 - 增加修改后重新分析的循环与交付检查
 
+**授权边界（评审补充-4，必做）**——T7 的"根据报告修正问题"不是自动改生产脚本，固定为六步链：
+
+```
+Analyzer 分析 → 生成 Optimization Suggestions → Agent 在独立工作区修改
+→ 重新 Analyzer + Benchmark → 用户确认 → 应用修改
+```
+
+PrdGameSkill 等生产 Workflow：需求覆盖、证据映射与质量验证必须在修改后保留（陷阱 5），不能因 Analyzer 认为可合并任务就直接改生产脚本。
+
 **交付物**：`skills/workflow-authoring/SKILL.md` 更新（+ references/workflow-plan.md、analyzer-rules.md）
 
-**验收**：Agent 创建或修改 Workflow 时，自动执行静态分析并根据报告修正问题。
+**验收**：Agent 创建或修改 Workflow 时，自动执行静态分析并根据报告修正问题；修改动作全部发生在独立工作区并经用户确认后才应用。
 
 ### T8：Benchmark
 
@@ -239,7 +280,16 @@
 
 **纳入**
 
-1. Budget 强制执行：`Plan.budget`（maxAgents/maxDurationMs/maxInputTokens/maxOutputTokens/maxRetries）在 Runtime 侧生效
+1. Budget 强制执行：`Plan.budget` 在 Runtime 侧生效。**预算分三类，执行策略不同（评审 P0-3）**：
+
+   | 类型 | 字段 | 执行策略 |
+   | --- | --- | --- |
+   | 硬预算 | maxAgents / maxDurationMs / maxRetries | dispatch 前拦截，超限即停 |
+   | 软预算 | maxInputTokens / maxOutputTokens | 调用前**预估预留** → 执行后**按真实 usage 结算**；超软限触发停止或降级（quality→fast） |
+   | 实际计量 | 模型返回 usage | 结算依据；无法精确计量的模型标记为估算值 |
+
+   - `maxOutputTokens` 区分两个概念：**单次模型输出上限**（model 参数级）与 **workflow 累计输出预算**（run 级），不混用
+   - `maxAgents` 明确定义为 **agent 总 dispatch 次数**（与现有 runtime agentCount 同口径）
 2. Plan 生命周期 **Executed** 阶段：`runWorkflow` 接受 `planPath`，按 Plan 注入执行策略（mode/concurrency/modelPolicy/budget）
 3. 运行指标聚合：per-agent usage（已有）→ run 级聚合（input/output tokens、耗时、重试次数、失败清单）
 4. 超限策略：预算耗尽的行为分级（agent 级可恢复失败 / run 级终止并报告剩余任务）
@@ -256,11 +306,11 @@
 | --- | --- | --- | --- |
 | M2-T1 Budget Schema 扩展 | Plan Schema 的 budget 字段类型化进 `src/engine/plan/`；与 agent 默认 timeoutMs/retries 联动规则 | plan schema v1.1 | 合法/非法 budget 均可定位 |
 | M2-T2 Token/耗时计量聚合 | per-agent usage 聚合为 run 级计数器（复用 M2 前已采集的 usage）；提供余量查询 | `src/engine/governance/budget-tracker.ts` | 聚合值与 journal 逐条求和一致 |
-| M2-T3 预算强制执行 | run 级 maxDurationMs / maxAgents / token 上限闸；agent dispatch 前检查，超限按策略分类（可恢复失败 / 终止） | `budget-gate.ts` 注入 runtime（可选 options，旧脚本零改动） | 超限 100% 拦截；旧 workflow 兼容 |
+| M2-T3 预算强制执行 | 硬预算 dispatch 前拦截；软预算**预估预留 → usage 结算**（含估算值标记）；超软限停止/降级 | `budget-gate.ts` 注入 runtime（可选 options，旧脚本零改动） | 硬预算超限 100% 拦截；软预算结算与 usage 一致；旧 workflow 兼容 |
 | M2-T4 Plan 执行消费 | `runWorkflow({ planPath })`：读 Plan → 注入 mode/concurrency/modelPolicy/budget | plan-runner 集成 | 同一 JS + 不同 Plan 产生不同执行策略 |
 | M2-T5 budget.remaining() 脚本 API | VM 注入余量查询（供脚本自主降级） | globals 注入 | 脚本内可读余量并分支 |
 | M2-T6 工具与 CLI | `workflow run --plan`、`workflow plan validate` 命令 | 工具扩展 | CLI 与工具同一 Plan Core |
-| M2-T7 Benchmark | 预算强制用例（超 token/超时/超 agent 数）；Plan 注入对旧 workflow 的兼容回归 | `dev-docs/benchmark/m2-*.json` | 量化验收达成 |
+| M2-T7 Benchmark | 预算强制用例（超硬预算/软预算降级/超 agent 数）；软预算**预估精度**用例；Plan 注入兼容回归 | `dev-docs/benchmark/m2-*.json` | 量化验收达成 |
 
 ### 验收指标
 
@@ -285,7 +335,20 @@
 
 1. **TaskRegistry**：任务清单持久化——静态可枚举任务（Plan stages/分片清单）+ 运行时动态登记任务（并行 batches 运行时注册）
 2. **BatchExecutor**：清单驱动的批量执行器——按清单调度、状态流转（pending/running/done/failed）
-3. **TaskCheckpoint**：任务级检查点持久化——跨 run 恢复的依据（按 `workflowId + scriptHash + taskKey` 关联，突破现有 resume 的 runId 隔离）
+3. **TaskCheckpoint**：任务级检查点持久化——跨 run 恢复的依据。**恢复判定用分层指纹（评审 P0-2）**：整体 `scriptHash` 粒度过粗（改一行日志 → 全部任务产物失效，违背 M3 初衷），改为
+
+   ```
+   workflowId
+     └── taskKey
+          ├── taskDefinitionHash   # 任务定义（prompt 模板/调用形态）
+          ├── inputHash            # 输入数据指纹
+          ├── promptHash           # 最终 prompt 指纹
+          └── modelConfigHash      # 模型配置指纹
+   ```
+
+   - **taskFingerprint** = taskKey + 上述四项 hash → 判断单个任务产物是否可复用；修改无关任务不影响其他任务的产物复用
+   - **workflowVersionHash**（整体 scriptHash）仅用于审计与 Plan 过期检测，不参与产物复用判定
+   - **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性——任务"执行完成"不等于"副作用已提交"，避免崩溃后重复发布
 4. 任务级 resume：`workflow resume --tasks`——已完成任务跳过，只跑 failed/pending
 5. per-task 重试策略（Plan budget.maxRetries / stage 覆盖）
 6. 失败分类与恢复报告
@@ -300,7 +363,7 @@
 | --- | --- | --- | --- |
 | M3-T1 TaskRegistry | 任务实例 Schema（taskKey/hash/状态/产物引用）；存储于 `.pi/workflows/tasks/<workflowId>/` | `src/engine/governance/task-registry.ts` | 清单与实际执行一一对应 |
 | M3-T2 BatchExecutor | 清单驱动调度：静态清单（Plan stages）+ 动态登记（运行时 register）；复用现有 scheduler 并发配额 | `batch-executor.ts` | 48 任务清单按并发上限调度正确 |
-| M3-T3 TaskCheckpoint | done 任务持久化（产物 + hash）；跨 run 按 workflowId+scriptHash 恢复 | checkpoint 存取层 | 重跑同 workflow 时 done 任务零执行 |
+| M3-T3 TaskCheckpoint | done 任务持久化（产物 + taskFingerprint 分层指纹）；跨 run 按 taskFingerprint 复用判定 | checkpoint 存取层 | 修改无关代码后 done 任务产物仍可复用；副作用状态可查 |
 | M3-T4 任务级 resume | `workflow resume --tasks`：跳过 done，重跑 failed/pending；兼容现有 runId resume（两通道并存） | resume 扩展 | 部分失败场景恢复成功率 100% |
 | M3-T5 失败分类与恢复报告 | per-task 失败原因分类（可恢复/结构性/超限）；恢复报告（重跑清单/节省 token 数） | 恢复报告生成 | 报告与实际执行一致 |
 | M3-T6 Benchmark | 48 组任务中 10 组失败的恢复对比（全量重跑 vs 任务级恢复的耗时/token） | `dev-docs/benchmark/m3-*.json` | 量化：token 节省 ≥ 失败比例 × 总量 |
@@ -343,7 +406,7 @@
 | --- | --- | --- | --- |
 | M4-T1 输入分片器 | 确定性分片：按字节/条数/边界标记；分片结果确定性（同输入同分片） | `src/engine/adaptive/sharder.ts` | 分片覆盖 100%、无重复无遗漏 |
 | M4-T2 公共上下文提取 | 前置合并（agent 或确定性 dedup）→ 引用传递（`ctx.common`） | common-context 执行器 | 重复注入 token 下降（对照 Benchmark） |
-| M4-T3 AdaptiveScheduler | 按 Evaluator/M5 前的历史耗时加权路由；长任务先发 | `adaptive-scheduler.ts` | 混合长短任务的墙钟优于静态调度 |
+| M4-T3 AdaptiveScheduler | 第一版基于 **M2/M3 已有运行观测数据**建立轻量级任务耗时画像（无历史样本时静态调度）；长任务先发；M5 完成后接入正式性能基线 | `adaptive-scheduler.ts` | 混合长短任务的墙钟优于静态调度；无历史样本时行为正确 |
 | M4-T4 ModelPool 自适应 | 429/超时信号 → 池内降档；恢复 → 升档 | model-pool 增强 | 人为注入 429 时自动切换且任务不失败 |
 | M4-T5 mode 策略执行器 | fast/balanced/quality 的验证增减、冗余评审配置化 | mode 策略执行器 | 三模式产生可观测的策略差异 |
 | M4-T6 Benchmark | 分片前后 token 对比、自适应 vs 静态调度墙钟对比、质量不降级验证 | `dev-docs/benchmark/m4-*.json` | 见验收指标 |
@@ -357,7 +420,7 @@
 | 质量不降级 | verify/judge 通过率不低于基线 |
 | 分片确定性 | 同输入同分片 100% |
 
-**依赖**：M1 Analyzer 建议 Schema（自动化对象）、M3 TaskRegistry（分片任务登记）、M2 指标（自适应依据）。
+**依赖**：M1 Analyzer 建议 Schema（自动化对象）、M3 TaskRegistry（分片任务登记）、**M2/M3 运行观测数据（轻量画像，不依赖 M5 基线）**。
 
 ---
 
@@ -395,10 +458,11 @@
 
 | 指标 | 目标 |
 | --- | --- |
-| estimated 偏差率随迭代收敛 | 连续 3 轮递减 |
+| 估算误差 | **同一 Workflow、同一类输入规模**下的预估 vs 真实偏差（跨规模不可比，不做递减类指标） |
+| 耗时画像 | 按任务类型统计 P50/P90 耗时并可查询 |
+| 回归检测准确率 | 人为注入性能回归可被检出（含误报率记录） |
 | 优化闭环真实案例 | ≥1 个（含前后量化对比） |
 | 建议可信度评分 | 高分建议的实际有效率 ≥80% |
-| 基线回归检测 | 人为注入性能回归可被检出 |
 
 **依赖**：M1-M4 全部交付物。
 

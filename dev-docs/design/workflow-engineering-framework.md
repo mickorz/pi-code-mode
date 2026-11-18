@@ -139,7 +139,7 @@ Analyzer 可以提出优化建议，但不能把静态估算当成真实耗时�
 }
 ```
 
-三个关键设计：
+四个关键设计：
 
 **第一，sourceHash。**
 Plan 必须记录对应的 JS 内容指纹。JS 修改后，Analyzer 能知道原 Plan 是否过期，不能继续把旧分析结果当作当前版本。
@@ -147,7 +147,15 @@ Plan 必须记录对应的 JS 内容指纹。JS 修改后，Analyzer 能知道�
 **第二，estimated 和 actual 分开。**
 Plan 只记录预估值，真实运行数据归 Evaluator 管理。
 
-**第三，execution mode。**
+**第三，Plan 身份与 Profile 分离（评审 2026-11-18 补）。**
+
+- Plan 有自己的 `planVersion` 与 `planHash`（Plan 内容指纹）；`source.analyzedAt` 是分析报告元数据，**不属于 Plan 身份**
+- 区分两个概念：
+  - **Plan Definition**：长期维护的工作流计划（stages 结构、质量策略）
+  - **Plan Profile**：同一 Definition 下的执行策略变体（fast / balanced / quality）
+- fast/balanced/quality 三个 Profile **不复制三份完整 stages**——修改一个 Stage 只改 Definition，Profiles 只存差异化执行参数，避免多文件同步维护
+
+**第四，execution mode。**
 三个模式继承现有 `workflow-authoring` skill 的速度优先、质量优先设计：
 
 | 模式 | 目标 | 策略 |
@@ -246,6 +254,30 @@ groups 有 48 组时输出：
 评估分片合并策略，或减少不必要的任务数量。
 ```
 同时需考虑任务耗时差异，不能直接认定墙钟时间一定是三倍。
+
+**依赖置信度分级（长期约束）**：静态分析不能断定业务独立性，依赖边必须携带置信度标注——
+Explicit（明确数据依赖）/ Structural（控制流依赖）/ Candidate（可能独立，交语义层确认）/ Unknown（无法静态确定）。
+Candidate 与 Unknown **不允许被自动并行化建议直接采纳**。
+
+**规则注册机制**：每条规则实现统一接口，支持持续扩展与第三方贡献，不需要反复修改 Analyzer 主体：
+
+```ts
+interface AnalyzerRule {
+  id: string
+  version: string
+  severity: "critical" | "high" | "medium" | "low"
+  analyze(context: AnalyzerContext): AnalyzerFinding[]
+}
+
+interface AnalyzerFinding {
+  ruleId: string
+  severity: string
+  confidence: number      // 0-1，静态结论的置信度
+  location: { file: string; startLine: number; endLine: number }
+  evidence: string[]
+  suggestion?: string
+}
+```
 
 ### 3.3 Semantic Analyzer：AI 的职责边界
 
@@ -402,6 +434,50 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 
 ---
 
+## 四点五、长期约束：恢复模型、配置优先级与存储边界（评审 2026-11-18 补）
+
+### 任务恢复模型（M3 设计约束）
+
+产物复用判定使用**分层指纹**，整体 scriptHash 只用于审计：
+
+```
+workflowId
+  └── taskKey
+       ├── taskDefinitionHash   # 任务定义
+       ├── inputHash            # 输入数据指纹
+       ├── promptHash           # 最终 prompt 指纹
+       └── modelConfigHash      # 模型配置指纹
+```
+
+- **taskFingerprint** = taskKey + 四项 hash → 判定单个任务产物是否可复用（改一行日志不失效全部产物）
+- **workflowVersionHash**（整体 scriptHash）→ 仅审计与 Plan 过期检测
+- **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性——避免崩溃后重复发布
+
+### 配置优先级链（M2 设计约束）
+
+```
+Runtime 安全上限      ← 不可被 Plan 或 JS 覆盖
+      ↓
+Plan 执行配置         ← meta.mcp / Plan budget 等
+      ↓
+Workflow JS 显式配置  ← agent({ model, timeoutMs, ... })
+      ↓
+Runtime 默认配置
+```
+
+Run 级并发与 Agent 级并发是两个概念，Plan 中必须分别声明，不混用。
+
+### 存储边界：四个系统各司其职（M3 设计约束）
+
+| 系统 | 职责 |
+| --- | --- |
+| Journal | Agent 调用回放、执行历史（现有，语义不变） |
+| TaskRegistry | 任务清单与状态 |
+| TaskCheckpoint | 任务结果持久化与跨 Run 复用 |
+| Run Snapshot | 当前 Run 的整体状态 |
+
+四个概念独立实现，不互相塞数据；M3 不得为任务级恢复破坏现有 Journal 的 resume 语义。
+
 ## 五、架构陷阱（约束条款）
 
 以下六条直接作为框架约束写入后续所有阶段的设计评审：
@@ -412,6 +488,8 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 4. **不要为了 Plan 引入另一套完整 DSL。** Plan 是执行策略与工程元数据，JS 继续负责实际流程。
 5. **不要为了性能牺牲需求覆盖率。** 拆分、截断、瘦身都必须保留完整证据覆盖能力。
 6. **不要过早重构 Runtime。** 现有 `workflow-runtime.ts` 已有并发、重试、超时、Journal、子 Workflow 和执行观测能力，先利用这些能力建立分析基础。
+7. **Token 预算不能只靠执行前拦截。** output token 无法在调用前准确预估——预算体系分三类：硬预算（agent 数/总时间/重试次数，前拦截）、软预算（token 预估，预留+结算+超限降级）、实际计量（模型返回 usage）；`maxOutputTokens` 区分单次输出上限与累计输出预算；`maxAgents` 明确为总 dispatch 次数。
+8. **下游阶段不得依赖上游尚未建立的能力。** 教训：M4 AdaptiveScheduler 原设计依赖 M5 的历史性能基线（M5 在 M4 之后）——依赖倒置。修订：M4 第一版基于 M2/M3 已有运行观测数据做轻量耗时画像，无历史样本时静态调度；M5 完成后再接入正式基线。
 
 ---
 
