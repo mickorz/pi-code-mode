@@ -562,6 +562,26 @@ PrdGameSkill 的核心痛点（跑 60 分钟失败却不知道慢在哪）**不�
 
 最终形态 **Workflow Performance Analyzer**：代码结构与真实执行数据关联，输出——哪个 Stage 最慢、哪个 Agent 消耗 Token 最多、哪些任务在等待、哪些可并行、哪些重复传递上下文、哪些失败后重复执行。让 Analyzer 真正回答"为什么慢、改哪里、改后是否变快"。
 
+**统一关联 ID（五级层级，五轮评审补）**——静态分析的 Agent 节点与真实执行调用靠它对应，避免各阶段自造关联字段：
+
+```
+workflowId
+  └── runId
+       └── stageId
+            └── taskKey
+                 └── agentCallId   # 一次实际 Agent 调用
+```
+
+| ID | 职责 |
+| --- | --- |
+| workflowId | 标识工作流 |
+| runId | 标识一次执行 |
+| stageId | 标识执行阶段 |
+| taskKey | 标识逻辑任务 |
+| agentCallId | 标识一次实际 Agent 调用 |
+
+M1-T0 先确认五级 ID 与现有 Journal（runId:callIndex/attempt）的兼容映射；M2/M3 在各自采集与登记中使用同一层级，不另发明字段。
+
 **统一关联 ID（评审 P1，五级层级）**——静态分析的 Agent 节点与真实执行调用靠它对应，避免各阶段自造关联字段：
 
 ```
