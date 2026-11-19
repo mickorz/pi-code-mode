@@ -44,6 +44,10 @@
 - 确定性覆盖合计：explorer-tree 8/8 + explorer-e2e 1/1（含嵌套）。
 - 保留点：验收点 5 的目视部分需交互 TUI（Ctrl+B 展开树、选子 workflow 节点看详情）。
 
+### 2026-11-19 subworkflow-tree-view 复跑（run `run-1795077446955-y6wkwb`）：✅ 可复现
+
+同日第二次 run（6.6s）结果形态完全一致：阶段前缀分组、wf1/wf2 调用序领号（并行B 又先完成仍编号 wf2）、args 克隆传递均复现。嵌套显示行为稳定，无新增保留点。
+
 ## 遗留
 
 - 验收点 1/2 的「目视」部分（面板缩进、[REDACTED] 显示效果）headless 无法核对，依赖 contract E2E 渲染断言兜底；如需人工目视，交互会话 Ctrl+B 打开 Explorer 选中 SchemaAgent 节点。
