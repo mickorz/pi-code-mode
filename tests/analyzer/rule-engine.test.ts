@@ -169,3 +169,21 @@ return rs`
   // CONC-002 confidence=0.4 < 0.5，不参与计分
   assert.ok(score < 20, `动态分片提示不应把风险分推高，实际 ${score}`)
 })
+
+test("CONC-002：集合长度静态可定时不重复提示（交给 CONC-001）", () => {
+  const src = `
+const items = [1, 2, 3, 4]
+const rs = await parallel(items.map((i) => () => agent('x')))
+return rs`
+  const { findings } = runRules(src)
+  assert.equal(findings.filter((f) => f.ruleId === "CONC-002").length, 0, "静态定长的集合应由 CONC-001 处理")
+})
+
+test("CONC-002：运行时集合仍然提示", () => {
+  const src = `
+const items = JSON.parse(await agent('列出分片'))
+const rs = await parallel(items.map((i) => () => agent('x')))
+return rs`
+  const { findings } = runRules(src)
+  assert.equal(findings.filter((f) => f.ruleId === "CONC-002").length, 1)
+})

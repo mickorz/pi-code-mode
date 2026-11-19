@@ -63,6 +63,12 @@ export const dynamicParallel: AnalyzerRule = {
       const collection = m[2]!
       if (seen.has(m.index)) continue
       seen.add(m.index)
+      // 若该集合能静态定长度（字面量数组 / new Array(N)），交给 CONC-001 估波次，这里不再重复提示
+      const escaped = collection.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      const staticallySized = new RegExp(
+        `(?:const|let|var)\\s+${escaped}\\s*=\\s*(?:\\[|new\\s+Array\\s*\\(\\s*\\d+\\s*\\))`,
+      ).test(ctx.source)
+      if (staticallySized) continue
       const line = ctx.source.slice(0, m.index).split("\n").length
       const { concurrency } = staticsOf(ctx)
       const timeoutMatch = /timeoutMs\s*:\s*(\d+)/g
