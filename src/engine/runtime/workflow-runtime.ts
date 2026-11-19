@@ -45,6 +45,8 @@ import type {
   WorkflowRunResult,
 } from "../types/index.js"
 import { McpClientPool, makeMcpInvoker, type McpInvoker } from "../../mcp/mcp-client-pool.js"
+import { TaskRegistry } from "../governance/task-registry.js"
+import { computeTaskFingerprint, contentHash } from "../governance/task-fingerprint.js"
 import type { BudgetGate } from "../governance/budget-gate.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createNodeExecutor, compositeScopeStorage, type WorkflowNode } from "./node-contract.js"
@@ -134,6 +136,10 @@ export interface WorkflowRunOptions {
   agentDir?: string
   /** M2：预算闸（可选注入——旧脚本零改动；未注入时不限预算） */
   budgetGate?: BudgetGate
+  /** M6/M3：任务级恢复注册表（可选；启用后按 agent call taskKey/fingerprint 复用） */
+  taskRegistry?: TaskRegistry
+  /** M6/M3：任务级恢复模式；true 时跳过 done 且指纹一致任务 */
+  taskResume?: boolean
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
   trigger?: {
     type: string
@@ -227,6 +233,9 @@ interface SharedRunContext {
   agentDir?: string
   /** M2：预算闸（run 级；未注入时不限预算） */
   budgetGate?: BudgetGate
+  /** M6/M3：任务级恢复注册表与模式 */
+  taskRegistry?: TaskRegistry
+  taskResume?: boolean
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
   /** 子 workflow 嵌套深度上限（分支 A） */
@@ -298,6 +307,8 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     onMcpCall: options.onMcpCall,
     agentDir: options.agentDir,
     budgetGate: options.budgetGate,
+    taskRegistry: options.taskRegistry,
+    taskResume: options.taskResume ?? false,
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
     phaseFailed: [],
     continueOnAgentFailure: options.continueOnAgentFailure ?? false,
@@ -557,6 +568,27 @@ async function executeWorkflow(
     // 哈希身份：prompt/model/phase/agentType/schema（与 Pi 同思路，无 thread/agentDef/tier 面）
     const deltaKey = record.id
     const callHash = hashAgentCall(prompt, scriptOptions, displayPhase)
+    // M6/M3 任务级恢复：taskKey 使用稳定 workflow scope + callIndex；指纹含 prompt/model/契约
+    const taskKeyForResume = shared.taskRegistry ? `${scope.pathKeys?.join(":") ?? "root"}:${callIndex}` : deltaKey
+    const taskFingerprint = shared.taskRegistry
+      ? computeTaskFingerprint({
+          taskKey: taskKeyForResume,
+          promptHash: contentHash(prompt),
+          inputHash: contentHash(prompt),
+          modelConfigHash: contentHash({ model: modelSpec ?? "default", tier: scriptOptions.tier ?? "" }),
+          executionContractVersion: scriptOptions.schema ? JSON.stringify(scriptOptions.schema) : "text-v1",
+        })
+      : undefined
+    if (shared.taskRegistry && shared.taskResume && taskFingerprint) {
+      const reusable = shared.taskRegistry.reusable(taskKeyForResume, taskFingerprint.fingerprint)
+      if (reusable.reusable) {
+        record.status = "ok"
+        record.outputType = "structured"
+        record.outputPreview = buildOutputPreview(shared.taskRegistry.readResult(taskKeyForResume))
+        shared.onAgentUpdate?.(record)
+        return shared.taskRegistry.readResult(taskKeyForResume)
+      }
+    }
     const cached = shared.resumeJournal?.get(deltaKey)
     const hashMatches = cached != null && cached.hash === callHash
     // 空文本结果不回放：历史 journal 里的空串一律重跑（与 Pi isEmptyTextAgentResult 同语义）
@@ -767,6 +799,12 @@ async function executeWorkflow(
                 durationMs: Date.now() - attemptStarted,
                 usage: attemptUsage(),
               })
+            }
+            if (shared.taskRegistry && taskFingerprint) {
+              const acquired = shared.taskRegistry.acquire({ taskKey: taskKeyForResume, taskFingerprint: taskFingerprint.fingerprint, runId: shared.runId })
+              if (acquired.ok) {
+                shared.taskRegistry.commit({ taskKey: taskKeyForResume, runId: shared.runId, leaseGeneration: acquired.checkpoint!.leaseGeneration, taskFingerprint: taskFingerprint.fingerprint, result: value })
+              }
             }
             return value
           } catch (error) {

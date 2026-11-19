@@ -13,6 +13,7 @@ import { runWorkflow } from "../engine/runtime/workflow-runtime.js"
 import { loadRegistry, readWorkflowScript } from "../engine/runtime/workflow-registry.js"
 import { resolvePlanContext, toRunConfig } from "../engine/plan/plan-runner.js"
 import { JournalStore } from "../engine/persistence/journal.js"
+import { TaskRegistry } from "../engine/governance/task-registry.js"
 import { agentAdapterToRunner } from "../adapter/agent-adapter.js"
 import type { AgentAdapter } from "../adapter/types.js"
 import { renderWorkflowRunResult } from "./render-text.js"
@@ -127,8 +128,9 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
       }
 
       // 2. 校验 meta
+      let workflowIdForTasks: string | undefined
       try {
-        parseWorkflowScript(script)
+        workflowIdForTasks = parseWorkflowScript(script).meta.id ?? parseWorkflowScript(script).meta.name
       } catch (e) {
         return toolText(`[workflow 参数错误] 脚本校验失败: ${String((e as Error)?.message ?? e)}`)
       }
@@ -195,6 +197,12 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         confirm,
         // M6：Plan 预算闸接入真实 run（此前只在测试中传过）
         ...(planCtx ? { budgetGate: planCtx.budgetGate } : {}),
+        ...(params.taskResume
+          ? {
+              taskRegistry: new TaskRegistry({ dir: path.join(cwd, ".pi", "workflows", "tasks"), workflowId: workflowIdForTasks ?? runId }),
+              taskResume: true,
+            }
+          : {}),
         onAgentJournal: (entry: any) => journal.append(runId, entry.key, entry),
         onAgentUpdate: (record: any) => deps.runManager.attach(runId, record),
       })
