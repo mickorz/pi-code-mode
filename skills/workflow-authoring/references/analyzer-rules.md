@@ -28,12 +28,12 @@
 
 ## 怎么读报告
 
-```bash
-# CLI
-pi-code-mode analyze .pi/workflows/demo.js --md
+```
+# 会话内命令（唯一手动入口，AI 建议默认开启）
+/workflows analyze .pi/workflows/demo.js
 
-# Pi 工具
-workflow_analyze({ scriptPath: ".pi/workflows/demo.js", includeSuggestions: true })
+# 等价工具（Agent 自动调用时用）
+workflow_analyze({ scriptPath: ".pi/workflows/demo.js" })
 ```
 
 关键字段：

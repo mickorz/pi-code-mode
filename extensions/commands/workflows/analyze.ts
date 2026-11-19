@@ -4,7 +4,10 @@
  * 复用 Analyzer Core（analyzeWorkflow）——与 workflow_analyze 工具、CLI 同一实现，无重复逻辑。
  *
  * 用法：
- *   /workflows analyze <脚本路径|注册表名> [--suggest] [--json]
+ *   /workflows analyze <脚本路径|注册表名> [--no-suggest] [--json]
+ *
+ * AI 优化建议默认开启（用户预期：分析就该给建议，不用额外加 flag）；
+ * 想省 token 时用 --no-suggest。
  *
  * 输出策略（报告常达数百行，notify 会被截断）：
  *   - 完整报告落盘 .pi/workflows/reports/<name>.analysis.{md,json}
@@ -50,6 +53,8 @@ function renderSummary(input: {
   findings: Array<{ ruleId: string; severity: string; confidence: number; location: { startLine: number; endLine: number }; evidence: string[] }>
   totalFindings: number
   recommends: number
+  /** AI 建议条数（未开启时为 undefined） */
+  aiRecommends?: number
   reportPath?: string
   diagnostics: string[]
 }): string {
@@ -81,13 +86,13 @@ function renderSummary(input: {
 }
 
 export const analyzeSubcommand: Subcommand = {
-  usage: "analyze <路径|名> [--suggest] [--json]  静态分析（别名 anal；报告落盘 .pi/workflows/reports/）",
+  usage: "analyze <路径|名> [--no-suggest] [--json]  静态分析+AI建议（别名 anal；报告落盘）",
   async run(argv, ctx, deps) {
     const cwd = ctx.cwd ?? process.cwd()
     const flags = new Set(argv.filter((a) => a.startsWith("--")))
     const ref = argv.find((a) => !a.startsWith("--"))
     if (!ref) {
-      ctx.ui.notify("用法: /workflows analyze <脚本路径|注册表名> [--suggest] [--json] [--write]", "warning")
+      ctx.ui.notify("用法: /workflows analyze <脚本路径|注册表名> [--no-suggest] [--json]", "warning")
       return
     }
 
@@ -97,8 +102,8 @@ export const analyzeSubcommand: Subcommand = {
       return
     }
 
-    // AI 优化建议需显式 --suggest（会真实调用模型，耗 token）
-    const withSuggestions = flags.has("--suggest")
+    // AI 优化建议默认开启（--no-suggest 可关；会真实调用模型，耗 token）
+    const withSuggestions = !flags.has("--no-suggest")
     const result = await analyzeWorkflow({
       source: resolved.source,
       ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
@@ -146,6 +151,7 @@ export const analyzeSubcommand: Subcommand = {
       })),
       totalFindings: r.summary.totalFindings,
       recommends: r.recommendations.length,
+      ...(result.planner ? { aiRecommends: result.planner.proposals.length } : {}),
       ...(reportPath ? { reportPath } : {}),
       diagnostics: r.diagnostics,
     })

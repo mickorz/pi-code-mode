@@ -34,18 +34,12 @@ function usage() {
   pi-code-mode path       打印插件仓库绝对路径
   pi-code-mode test       干净房间一次性测试：pi -ne -e <repo>
 
-分析工具：
-  pi-code-mode analyze <脚本>  [--json|--md] [--write]  静态分析 workflow（调用图/风险/估算）
-  pi-code-mode optimize <脚本> [--suggest]                生成优化建议（默认不修改生产脚本）
-  pi-code-mode plan validate <plan.json>              校验 Plan（Schema/Profile 边界/指纹/过期）
 
 装完后在当前项目启动 pi，首次会弹 project trust 确认，授权一次永久生效。
-分析工具（本 CLI）：
-  pi-code-mode analyze <脚本> [--json|--md] [--write]
-  pi-code-mode plan validate <plan.json>
+插件工具：workflow / workflow_control / schedule_*；
+命令：/workflows（含 analyze|anal / plan validate / run / resume / status / cancel）、/schedule。
 
-插件工具：workflow / workflow_control / workflow_analyze / plan_validate / schedule_*；
-命令：/workflows /schedule。
+注：静态分析与 Plan 校验的唯一入口是 pi 会话内的 /workflows analyze 与 /workflows plan validate。
 更新插件：插件仓库改 src → npm run build → 重启本项目的 pi。`);
 }
 
@@ -72,51 +66,7 @@ const cwd = process.cwd();
 const settingsPath = resolve(cwd, ".pi/settings.json");
 const settingsDir = dirname(settingsPath);
 
-/** 转发分析类子命令给 src 下的 TS 实现（经 tsx 运行，避免 bin 里重复实现分析逻辑） */
-function runTsCli(tsRelPath, exportName, args) {
-  const script = resolve(REPO_ROOT, tsRelPath);
-  if (!existsSync(script)) {
-    console.error(`✗ 缺少实现文件：${script}（先 npm run build 或在仓库根运行）`);
-    return 1;
-  }
-  // 用仓库内的 tsx 直接跑一个小驱动脚本，避免 bin 依赖 TS 编译产物路径
-  const moduleUrl = pathToFileURL(script).href;
-  const driver = `
-import { ${exportName} } from ${JSON.stringify(moduleUrl)};
-const code = await ${exportName}(process.argv.slice(1));
-process.exit(typeof code === "number" ? code : 0);
-`;
-  const r = spawnSync(
-    process.execPath,
-    [resolve(REPO_ROOT, "node_modules/tsx/dist/cli.mjs"), "--input-type=module", "-e", driver, ...args],
-    { cwd: cwd, stdio: "inherit", env: process.env },
-  );
-  if (r.error) {
-    console.error(`✗ 运行分析器失败：${r.error.message}`);
-    return 1;
-  }
-  return r.status ?? 0;
-}
-
 switch (cmd) {
-  case "analyze": {
-    process.exitCode = runTsCli("src/tools/workflow-analyze-tool.ts", "runAnalyzeCli", process.argv.slice(3));
-    break;
-  }
-  case "optimize": {
-    process.exitCode = runTsCli("src/tools/workflow-analyze-tool.ts", "runOptimizeCli", process.argv.slice(3));
-    break;
-  }
-  case "plan": {
-    const sub = process.argv[3];
-    if (sub === "validate") {
-      process.exitCode = runTsCli("src/tools/plan-tool.ts", "runPlanValidateCli", process.argv.slice(4));
-    } else {
-      console.error("用法：pi-code-mode plan validate <plan.json>");
-      process.exitCode = 2;
-    }
-    break;
-  }
   case "install": {
     if (resolve(cwd) === REPO_ROOT) {
       console.log("当前目录就是插件仓库本身，已通过 .pi/settings.json 自托管，无需再装。");

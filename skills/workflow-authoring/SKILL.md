@@ -288,9 +288,10 @@ Plan 是**独立于 JS 的执行策略文件**（stages / quality 强制项 / fa
 
 ### 2. Analyzer 静态分析（必做）
 
-```bash
-pi-code-mode analyze <脚本路径> --md        # CLI
-workflow_analyze({ scriptPath: "..." })     # Pi 工具（二者同一 Core）
+```
+/workflows analyze <脚本路径>          # 会话内命令（唯一手动入口，AI 建议默认开启）
+/workflows plan validate <plan.json>   # Plan 校验
+workflow_analyze({ scriptPath: "..." })  # 等价工具（Agent 自动调用，同一 Core）
 ```
 
 读报告要点（详见 [analyzer-rules.md](references/analyzer-rules.md)）：

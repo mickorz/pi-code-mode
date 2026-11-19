@@ -21,7 +21,7 @@
 ### 命令速查表
 
 ```
-/workflows analyze <路径|名> [--suggest]   静态分析（别名 anal；报告自动落盘）
+/workflows analyze <路径|名> [--no-suggest]   静态分析 + AI 建议（别名 anal；报告自动落盘）
 /workflows plan validate <plan.json>      校验 Plan（Profile 边界/指纹/过期）
 /workflows run <路径|名> [k=v...]         后台执行 workflow
 /workflows resume <路径|名> [--tasks]     任务级恢复（只重跑未完成）
@@ -113,12 +113,18 @@ Analyzer: .opencode-workflows/workflows/game-requirement-audit/game-requirement-
 - [ ] `.pi/workflows/reports/game-requirement-audit.analysis.json` 存在
 - [ ] 报告内含 `callGraph` / `dependencies` / `recommendations` 字段
 
-### 1.3 AI 优化建议（`--suggest` 或工具版）
+### 1.3 AI 优化建议（默认开启，不用加参数）
 
-命令加 `--suggest` 会真实调用模型生成优化建议（消耗 token）：
+`/workflows analyze` **默认就会生成 AI 优化建议**（会真实调用模型，消耗 token）。直接跑：
 
 ```
-/workflows analyze .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js --suggest
+/workflows analyze .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
+```
+
+只想看静态结果、省 token 时关闭：
+
+```
+/workflows analyze .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js --no-suggest
 ```
 
 等价的工具调用（脚本用 `scriptPath`）：
