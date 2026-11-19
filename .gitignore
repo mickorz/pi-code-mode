@@ -16,5 +16,7 @@ dist/
 
 # workflow 运行产物（journal 等，不提交）
 .pi/workflows/journal/
+# analysis 报告与 dashboard 是运行产物（每次生成都变，不入库）
+.pi/workflows/reports/
 .opencode-workflows/
 dev-examples/sample-project-acceptance/.journal/
