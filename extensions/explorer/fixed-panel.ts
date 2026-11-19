@@ -1,14 +1,15 @@
 /**
- * Explorer 固定模式（widget 常驻面板）：设置可开关，Ctrl+B overlay 不动。
+ * Explorer 固定模式（右侧常驻面板）：设置可开关，Ctrl+B overlay 不动。
  *
- * 设计依据：dev-docs/design/2026-11-19-explorer-fixed-panel-可行性分析.md
- *   - 路线：ctx.ui.setWidget Component 工厂（官方扩展点，同 workflow-tasks 先例）
+ * 设计依据：dev-docs/design/2026-11-19-explorer-fixed-panel-可行性分析.md（2026-11-19 修正版）
+ *   - 路线：ctx.ui.custom + overlayOptions { anchor: "right-center", nonCapturing: true }
+ *     （官方 API；nonCapturing = 不捕获键盘焦点，主对话输入不受影响；悬浮叠加会遮主区右侧内容）
  *   - 互斥：固定模式 on → 注销 workflow-tasks（其 run 级摘要是树信息的子集）；off → 恢复
- *   - 空态：无活动 run 时 render 返回空行集（widget 自动隐藏，不占编辑器上方空间）
- *   - 只读：widget 无键盘交互，详情走 Ctrl+B overlay
+ *   - 空态：无 running run 时 render 返回空行集（overlay 零行即视觉不可见）
+ *   - 只读：详情走 Ctrl+B overlay（nonCapturing 无键盘交互）
  *
  * 自防御：render 运行在宿主 TUI 渲染循环里，任何异常都返回空行集而不是抛出
- * （workflow-tasks 曾因类型异常击穿宿主，见函数内注释）。
+ * （workflow-tasks 曾因类型异常击穿宿主，见 pi-code-mode.ts 注释）。
  */
 
 import fs from "node:fs"
@@ -22,25 +23,28 @@ import { depthMapOf, renderTreeRow, type ThemeLike } from "./render.js"
 export interface FixedPanelConfig {
   /** 默认 false——不写配置文件 = 关闭，现有用户零感知 */
   enabled: boolean
-  /** widget 落位（宿主仅支持这两处，无右侧停靠） */
-  placement: "aboveEditor" | "belowEditor"
+  /** 右侧锚点：right-top（贴顶）| right-center（垂直居中） */
+  anchor: "right-top" | "right-center"
+  /** 面板宽度（终端列数；悬浮面板，宽度多少遮多少） */
+  width: number
   /** 树行硬上限（超出折叠），防大树占屏 */
   maxRows: number
 }
 
 export const FIXED_PANEL_CONFIG_FILE = path.join(".pi", "workflows", "explorer.json")
 
-const DEFAULT_CONFIG: FixedPanelConfig = { enabled: false, placement: "aboveEditor", maxRows: 10 }
+const DEFAULT_CONFIG: FixedPanelConfig = { enabled: false, anchor: "right-top", width: 34, maxRows: 14 }
 
-/** 读固定模式配置；文件缺失/字段缺失/非法值一律回退默认（enabled 缺省 false） */
+/** 读固定模式配置；文件缺失/字段缺失/非法值一律回退默认（enabled 缺省 false）。旧版 placement 字段忽略 */
 export function readFixedPanelConfig(cwd: string): FixedPanelConfig {
   const file = path.join(cwd, FIXED_PANEL_CONFIG_FILE)
   try {
-    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { fixedPanel?: Partial<FixedPanelConfig> }
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { fixedPanel?: Record<string, unknown> }
     const p = raw.fixedPanel ?? {}
     return {
       enabled: p.enabled === true,
-      placement: p.placement === "belowEditor" ? "belowEditor" : "aboveEditor",
+      anchor: p.anchor === "right-center" ? "right-center" : "right-top",
+      width: typeof p.width === "number" && p.width >= 20 ? Math.floor(p.width) : DEFAULT_CONFIG.width,
       maxRows: typeof p.maxRows === "number" && p.maxRows >= 3 ? Math.floor(p.maxRows) : DEFAULT_CONFIG.maxRows,
     }
   } catch {
@@ -73,7 +77,7 @@ export function foldLine(total: number): string {
 
 /**
  * 固定面板行集：run 头 1 行 + 执行树行（全展开、无选中），超出 maxRows 折叠。
- * 空态策略继承 workflow-tasks：无 running run 时返回空数组——widget 渲染零行即视觉隐藏
+ * 空态策略继承 workflow-tasks：无 running run 时返回空数组——overlay 渲染零行即视觉不可见
  * （run 结束不常驻占屏；终态 run 到 Ctrl+B overlay 查看）。
  * 纯函数：now 注入供测试确定秒表值。
  */
@@ -89,6 +93,97 @@ export function fixedPanelLines(view: ExplorerViewState, width: number, maxRows:
   shown.push(truncateToWidth(`  ${foldLine(lines.length)}`, width))
   return shown
 }
+
+// ── 面板侧（overlay 形态）：供互斥协调器编排 ──
+
+export interface OverlayHandleLike {
+  hide(): void
+}
+
+export interface FixedPanelDeps {
+  /** 视图快照来源（ExplorerController.view） */
+  getView: () => ExplorerViewState
+  /** 秒表重绘判断（ExplorerController.hasRunningNodes） */
+  hasRunning: () => boolean
+  cwd: string
+}
+
+export interface FixedPanelHandle {
+  /** 在当前 ctx.ui 上挂右侧 nonCapturing overlay（常驻：不调 done，直到 uninstall） */
+  install(ctx: any): void
+  /** 隐藏并移除 overlay */
+  uninstall(ctx: any): void
+}
+
+/**
+ * 右侧固定面板：nonCapturing overlay（不抢焦点、常驻、悬浮遮主区右侧）。
+ * install 时重读配置（/explorer fixed 切换后 width/anchor 可能已写盘更新）。
+ */
+export function createFixedPanel(deps: FixedPanelDeps): FixedPanelHandle {
+  let handle: OverlayHandleLike | undefined
+  return {
+    install(ctx: any) {
+      const config = readFixedPanelConfig(deps.cwd)
+      void (ctx.ui as any).custom(
+        (tui: any, theme: unknown, _keybindings: unknown, done: () => void) => {
+          const tl = themeLikeOf(theme)
+          const render = (width: number): string[] => {
+            try {
+              return fixedPanelLines(deps.getView(), width, config.maxRows, Date.now(), tl)
+            } catch {
+              // 自防御：render 异常击穿宿主（同 workflow-tasks 教训），空行集兜底
+              return []
+            }
+          }
+          // 秒表走字：仅运行中重绘（空闲零渲染）
+          const tick = setInterval(() => {
+            if (deps.hasRunning()) tui.requestRender()
+          }, FIXED_PANEL_TICK_MS)
+          ;(tick as { unref?: () => void }).unref?.()
+          return {
+            // 宿主 Component 契约；dispose 由宿主在 overlay 移除时调用
+            dispose: () => {
+              clearInterval(tick)
+              done()
+            },
+            render,
+            invalidate: () => {},
+          }
+        },
+        {
+          overlay: true,
+          overlayOptions: () => ({
+            anchor: config.anchor,
+            width: config.width,
+            maxHeight: "100%",
+            margin: { top: 1, right: 0, bottom: 1 },
+            // 不捕获键盘焦点：主对话输入不受影响（右侧常驻的关键）
+            nonCapturing: true,
+            // 窄终端不显示（面板遮主区比例过高）
+            visible: (termWidth: number) => termWidth >= 100,
+          }),
+          onHandle: (h: OverlayHandleLike) => {
+            handle = h
+          },
+        },
+      )
+    },
+    uninstall(_ctx: any) {
+      handle?.hide()
+      handle = undefined
+    },
+  }
+}
+
+/** 宿主 theme → ThemeLike 适配（工厂收到的 theme 已有 fg/bg/bold，仅收窄类型；异常时恒等兜底） */
+export function themeLikeOf(theme: unknown): ThemeLike {
+  const t = theme as Partial<ThemeLike> | undefined
+  if (typeof t?.fg === "function" && typeof t?.bold === "function") return t as ThemeLike
+  return { fg: (_c, s) => s, bg: (_c, s) => s, bold: (s) => s }
+}
+
+/** 秒表 tick 间隔（运行中走字；配合空闲零渲染检查） */
+export const FIXED_PANEL_TICK_MS = 1000
 
 // ── 互斥协调器 ──
 
@@ -117,9 +212,9 @@ export interface WidgetCoordinator {
 }
 
 /**
- * 互斥协调器：同一时刻只有一侧 widget 在位。
+ * 互斥协调器：同一时刻只有一侧在位。
  * - 固定模式 off（默认）→ workflow-tasks（现有行为零变化）
- * - 固定模式 on → 固定面板（workflow-tasks 注销，避免信息重复堆叠）
+ * - 固定模式 on → 右侧固定面板（workflow-tasks 注销，避免信息重复堆叠）
  */
 export function createWidgetCoordinator(deps: WidgetCoordinatorDeps): WidgetCoordinator {
   let config = readFixedPanelConfig(deps.cwd)
@@ -141,13 +236,3 @@ export function createWidgetCoordinator(deps: WidgetCoordinatorDeps): WidgetCoor
     },
   }
 }
-
-/** 宿主 theme → ThemeLike 适配（工厂收到的 theme 已有 fg/bg/bold，仅收窄类型；异常时恒等兑底） */
-export function themeLikeOf(theme: unknown): ThemeLike {
-  const t = theme as Partial<ThemeLike> | undefined
-  if (typeof t?.fg === "function" && typeof t?.bold === "function") return t as ThemeLike
-  return { fg: (_c, s) => s, bg: (_c, s) => s, bold: (s) => s }
-}
-
-/** 秒表 tick 间隔（运行中走字；配合空闲零渲染检查） */
-export const FIXED_PANEL_TICK_MS = 1000

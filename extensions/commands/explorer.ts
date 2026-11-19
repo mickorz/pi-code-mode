@@ -38,7 +38,7 @@ export function registerExplorerCommand(pi: ExtensionAPI, deps: ExplorerCommandD
         if (mode === "on" || mode === "off") {
           const config = deps.widgets.setEnabled(ctx, mode === "on")
           ctx.ui.notify(
-            `固定面板已${mode === "on" ? "开启" : "关闭"}（placement=${config.placement}，maxRows=${config.maxRows}；配置已写入 .pi/workflows/explorer.json）`,
+            `固定面板已${mode === "on" ? "开启（右侧常驻，anchor=" + config.anchor + "，width=" + config.width + "）" : "关闭"}；配置已写入 .pi/workflows/explorer.json`,
             "info",
           )
         } else if (mode === "status" || mode === "") {

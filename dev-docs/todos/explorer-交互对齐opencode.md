@@ -8,7 +8,7 @@
 
 | 差异点 | 类型 | 说明 |
 | ------ | ---- | ---- |
-| 右侧栏不能常驻 | **宿主硬限制** | pi 只有 `setWidget(aboveEditor\|belowEditor)` 与 `ctx.ui.custom({overlay})`，没有 opencode 那种 `sidebar_content` Dock 插槽 |
+| 右侧栏不能常驻 | ~~宿主硬限制~~ **已修正** | 初版归因有误：`ctx.ui.custom` + `overlayOptions: { anchor: "right-center", nonCapturing: true }` 是官方支持的右侧常驻路线（不抢焦点，悬浮遮主区右侧；参考 REF-010 pi-sidebar）。已用于固定面板（explorer/fixed-panel.ts） |
 | Enter 不能"打开 agent 子会话" | **半硬限制** | pi 有 `switchSession(path)`，但子 agent 是 `createAgentSession` 内存态会话，没有可切换的 session path |
 | 必须手打 `/explorer` 才能打开 | **本仓库取舍** | pi 有 `pi.registerShortcut()`，当初没接 |
 | 四 Tab + 左树右详情双栏 | **本仓库取舍** | 为容纳 Tools/Journal；opencode 是单树 + 全屏详情路由 |

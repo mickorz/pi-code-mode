@@ -16,16 +16,20 @@
 
 ## 2. 宿主能力事实（查证结论）
 
+> **2026-11-19 重大修正**：初版分析认定「右侧常驻是宿主硬限制（widget 只有上下落位）」——**该结论有误**。
+> 深入查证 pi-tui 源码与参考项目 pi-sidebar（REF-010，BSD-3-Clause）后发现：
+> `ctx.ui.custom(factory, { overlay: true, overlayOptions: { anchor: "right-center", nonCapturing: true, ... } })`
+> 是官方支持的「右侧 + 常驻 + 不抢焦点」路线（nonCapturing = 不捕获键盘焦点，主对话输入不受影响）。
+> 局限：overlay 是**悬浮叠加**（遮住主区右侧内容），非 compositor 的真分屏让位。
+
 | 事实 | 出处 | 对本需求的影响 |
 | --- | --- | --- |
-| `ctx.ui.setWidget(key, string[], { placement })` | `dist/core/extensions/types.d.ts` L101 | 行数组形态可用，简单 |
-| `setWidget` 支持 **Component 工厂**（`(tui, theme) => Component & { dispose? }`） | 同上 L102 | 可事件驱动刷新 + 卸载清理，完整支持 |
-| `placement` 只有 `aboveEditor` / `belowEditor` | `ExtensionWidgetOptions` | **没有右侧停靠**——「右侧常驻」是宿主硬限制（§差异归因表已记录） |
-| widget 不在焦点系统 | tui.md 组件模型 | **无键盘交互**：不能上下选节点/开详情 |
-| `ctx.ui.onTerminalInput(handler)` 全局原始输入监听（可 consume） | types.d.ts L82 | 理论上可给 widget 加按键，但与编辑器按键流竞争，进阶项不做 |
-| `pi.getSettings()` 是严格 schema（无 index signature） | settings-schema.d.ts L225 | 自定义键不可靠，**不走 pi settings** |
-| 仓库自管配置先例：`.pi/workflows/model-tiers.json`（插件自读 JSON） | `src/engine/agent/model-tiers.ts` L37 | 固定模式开关走同款自管配置 |
-| 本仓库 widget 先例：`workflow-tasks`（事件驱动 + dispose + render 自防御） | `extensions/pi-code-mode.ts` L95-147 | 架构直接照抄，风险已知可控 |
+| `ctx.ui.custom` 支持 `overlayOptions.anchor: "right-center"` + `nonCapturing: true` | pi-tui `OverlayOptions`（源码已验证） | **右侧常驻官方路线，采纳** |
+| `setWidget` 仅 aboveEditor/belowEditor | types.d.ts L49-52 | widget 路线无法右侧，弃用 |
+| overlay 悬浮遮挡：宽度多少遮多少 | compositeOverlays 语义 | 缓解：宽度可配 + 后续可加 collapsed/autohide（pi-sidebar 同款策略） |
+| `ctx.ui.onTerminalInput(handler)` 全局原始输入监听 | types.d.ts L82 | 进阶项不做 |
+| `pi.getSettings()` 是严格 schema | settings-schema.d.ts L225 | 自定义键不可靠，走自管配置 |
+| 仓库自管配置先例：model-tiers.json | `src/engine/agent/model-tiers.ts` | 固定模式开关走同款自管配置 |
 
 ## 3. 路线对比
 

@@ -68,10 +68,10 @@ function viewState(nodeCount: number, running = true): ExplorerViewState {
 
 // ── 配置 ──
 
-test("配置: 缺省（无文件）为关闭 + aboveEditor + maxRows 10", () => {
+test("配置: 缺省（无文件）为关闭 + right-top + width 34 + maxRows 14", () => {
   const dir = tmpDir()
   const cfg = readFixedPanelConfig(dir)
-  assert.deepEqual(cfg, { enabled: false, placement: "aboveEditor", maxRows: 10 })
+  assert.deepEqual(cfg, { enabled: false, anchor: "right-top", width: 34, maxRows: 14 })
 })
 
 test("配置: roundtrip 写读一致，保留文件内其他键", () => {
@@ -80,19 +80,23 @@ test("配置: roundtrip 写读一致，保留文件内其他键", () => {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, JSON.stringify({ other: 123, fixedPanel: { enabled: false } }), "utf8")
 
-  const merged = writeFixedPanelConfig(dir, { enabled: true, placement: "belowEditor", maxRows: 6 })
+  const merged = writeFixedPanelConfig(dir, { enabled: true, anchor: "right-center", width: 40, maxRows: 6 })
   assert.equal(merged.enabled, true)
-  assert.deepEqual(readFixedPanelConfig(dir), { enabled: true, placement: "belowEditor", maxRows: 6 } satisfies FixedPanelConfig)
+  assert.deepEqual(readFixedPanelConfig(dir), { enabled: true, anchor: "right-center", width: 40, maxRows: 6 } satisfies FixedPanelConfig)
   // 其他键不丢
   assert.equal((JSON.parse(fs.readFileSync(file, "utf8")) as any).other, 123)
 })
 
-test("配置: 非法值回退默认（enabled 非 true 一律关、placement 白名单、maxRows 下限）", () => {
+test("配置: 非法值回退默认（enabled 非 true 一律关、anchor 白名单、width/maxRows 下限）；旧 placement 字段忽略", () => {
   const dir = tmpDir()
   const file = path.join(dir, ".pi", "workflows", "explorer.json")
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify({ fixedPanel: { enabled: "yes", placement: "leftDock", maxRows: -5 } }), "utf8")
-  assert.deepEqual(readFixedPanelConfig(dir), { enabled: false, placement: "aboveEditor", maxRows: 10 })
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ fixedPanel: { enabled: "yes", anchor: "leftDock", width: 5, maxRows: -5, placement: "aboveEditor" } }),
+    "utf8",
+  )
+  assert.deepEqual(readFixedPanelConfig(dir), { enabled: false, anchor: "right-top", width: 34, maxRows: 14 })
 })
 
 // ── 渲染 ──

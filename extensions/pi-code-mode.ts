@@ -40,11 +40,8 @@ import { registerExplorerCommand } from "./commands/explorer.js"
 import { toggleExplorer } from "./explorer/index.js"
 import { installExplorerStatusLine } from "./explorer/status-line.js"
 import {
+  createFixedPanel,
   createWidgetCoordinator,
-  fixedPanelLines,
-  readFixedPanelConfig,
-  themeLikeOf,
-  FIXED_PANEL_TICK_MS,
   type WidgetSide,
 } from "./explorer/fixed-panel.js"
 import { ExplorerController } from "../src/explorer/controller/explorer-controller.js"
@@ -151,41 +148,16 @@ function taskWidgetSide(): WidgetSide {
   }
 }
 
-/** 固定面板一侧：Explorer 树常驻 widget（只读仪表盘，配置驱动 placement/maxRows） */
+/** 固定面板一侧：右侧 nonCapturing overlay（不抢焦点、常驻、悬浮遮主区右侧） */
 function fixedPanelSide(): WidgetSide {
+  const panel = createFixedPanel({
+    getView: () => explorer.view(),
+    hasRunning: () => explorer.hasRunningNodes(),
+    cwd: process.cwd(),
+  })
   return {
-    install(ctx: any) {
-      // install 时重读配置：/explorer fixed 切换后 placement/maxRows 可能已写盘更新
-      const config = readFixedPanelConfig(process.cwd())
-      ctx.ui.setWidget(
-        "workflow-explorer-fixed",
-        (tui: any, theme: unknown) => {
-          const tl = themeLikeOf(theme)
-          const render = (width: number): string[] => {
-            try {
-              return fixedPanelLines(explorer.view(), width, config.maxRows, Date.now(), tl)
-            } catch {
-              // 自防御：render 异常击穿宿主（同 workflow-tasks 教训），空行集兜底
-              return []
-            }
-          }
-          // 秒表走字：仅运行中重绘（空闲零渲染）
-          const tick = setInterval(() => {
-            if (explorer.hasRunningNodes()) tui.requestRender()
-          }, FIXED_PANEL_TICK_MS)
-          ;(tick as { unref?: () => void }).unref?.()
-          return {
-            invalidate: () => {},
-            render,
-            dispose: () => clearInterval(tick),
-          }
-        },
-        { placement: config.placement },
-      )
-    },
-    uninstall(ctx: any) {
-      ctx.ui.setWidget("workflow-explorer-fixed", undefined)
-    },
+    install: (ctx) => panel.install(ctx),
+    uninstall: (ctx) => panel.uninstall(ctx),
   }
 }
 
