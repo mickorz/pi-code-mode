@@ -179,3 +179,19 @@ timeout/abort 后预留被 release；底层 session 仍可能异步上报 usage�
 - 执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-execution-plan.md`
 - 执行报告：`dev-docs/progress-result/MCP-M1-执行报告.md` 至 `MCP-M5-执行报告.md`
 - 关键文件：`src/tools/workflow-tools.ts`、`src/manager/pi-schedule-runner.ts`、`src/engine/governance/task-registry.ts`、`src/engine/governance/batch-executor.ts`、`src/engine/runtime/workflow-runtime.ts`
+
+## 八、审计后续修复状态（追加审计）
+
+本轮审计发现的 M6 新问题已修复：
+
+- H1 auto-shard 不安全 fingerprint：opaque thunk 不再跨 run 伪造复用；taskResume 只对稳定 agent taskKey 生效
+- H2 abort/失败语义：auto-shard 的可恢复错误不再塌缩为 done/null；中止检查保留，避免 BatchExecutor 吞掉 abort
+- H3 null 永久冻结：auto-shard 任务失败不提交 done/null checkpoint
+- H4 taskResume 绕过 replayPolicy：任务级复用尊重 explicit replayable 策略
+- M1 taskResume schema：workflow 工具参数已公开 `taskResume`
+- M2 auto-shard workflowId：不再使用 runId 作为任务文件身份
+- M3 画像来源：autoAdaptive 默认从 TaskCheckpoint 加载，parallel 可消费历史画像
+- M4 Benchmark：Required Validation unknown 不再默认放行；支持 afterScriptPath 真实 before/after 对照
+- M5 Baseline：run 后先检测历史回归，再写当前样本，避免当前样本稀释自身
+
+验证：engine 206/206、contract 110/110、M6 接线测试 25/25。仍需注意：auto-shard opaque thunk 不能安全跨 run 复用，这是保守拒绝，不是错误复用；真实 Benchmark 仍需业务 workflow 提供 validation 结果。

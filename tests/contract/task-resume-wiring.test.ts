@@ -16,7 +16,7 @@ function adapter(state: { calls: number }): AgentAdapter {
 
 test("workflow taskResume=true：第一次执行落 checkpoint，第二次复用不调用 agent", async () => {
   const cwd = tmp()
-  const script = `export const meta = { name: 'task_wire' }\nawait agent('same')\nreturn 'done'`
+  const script = `export const meta = { name: 'task_wire' }\nawait agent('same', { replayable: true })\nreturn 'done'`
   const state = { calls: 0 }
   const tool = makeWorkflowTool({ runManager: new RunManager(4), adapterFactory: () => adapter(state), cwd } as any)
   const a: any = await tool.execute("id", { script: script, taskResume: true }, undefined, undefined, {})
@@ -31,7 +31,7 @@ test("workflow taskResume=true：第一次执行落 checkpoint，第二次复用
 
 test("taskResume=false：旧路径正常执行（不启用 TaskRegistry）", async () => {
   const cwd = tmp()
-  const script = `export const meta = { name: 'plain_wire' }\nawait agent('same')\nreturn 'done'`
+  const script = `export const meta = { name: 'plain_wire' }\nawait agent('same', { replayable: true })\nreturn 'done'`
   const state = { calls: 0 }
   const tool = makeWorkflowTool({ runManager: new RunManager(4), adapterFactory: () => adapter(state), cwd } as any)
   await tool.execute("id", { script }, undefined, undefined, {})

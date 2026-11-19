@@ -428,11 +428,21 @@ export async function runWorkflow<T = unknown>(
       inputScale: shared.evaluationInputScale,
       actuals: [...byStage.entries()].map(([stageId, v]) => ({ stageId, ...v })),
     })
-    shared.baselineStore.record({
-      workflowId: shared.evaluationPlan.workflowId ?? meta.name,
-      scriptHash: shared.evaluationPlan.source.scriptHash ?? "unknown",
-      report: evaluation,
+    const baselineWorkflowId = shared.evaluationPlan.workflowId ?? meta.name
+    const baselineScriptHash = shared.evaluationPlan.source.scriptHash ?? "unknown"
+    // M6/M5：先用历史样本检测回归，再写入当前样本，避免当前样本稀释自己
+    const regression = shared.baselineStore.detectRegression({
+      workflowId: baselineWorkflowId,
+      scriptHash: baselineScriptHash,
+      ...(shared.evaluationInputScale ? { inputScale: shared.evaluationInputScale } : {}),
+      actual: {
+        agents: evaluation.summary.actualAgents,
+        durationMs: evaluation.summary.durationMs,
+        inputTokens: evaluation.summary.actualInputTokens,
+      },
     })
+    ;(evaluation as any).regression = regression
+    shared.baselineStore.record({ workflowId: baselineWorkflowId, scriptHash: baselineScriptHash, report: evaluation })
     shared.onEvaluation?.(evaluation)
   }
 
@@ -644,7 +654,7 @@ async function executeWorkflow(
           executionContractVersion: scriptOptions.schema ? JSON.stringify(scriptOptions.schema) : "text-v1",
         })
       : undefined
-    if (shared.taskRegistry && shared.taskResume && taskFingerprint) {
+    if (shared.taskRegistry && shared.taskResume && taskFingerprint && (shared.replayPolicy !== "explicit" || scriptOptions.replayable === true)) {
       const reusable = shared.taskRegistry.reusable(taskKeyForResume, taskFingerprint.fingerprint)
       if (reusable.reusable) {
         record.status = "ok"
@@ -1108,7 +1118,9 @@ async function executeWorkflow(
         cwd: shared.cwd,
         storageDir: path.join(shared.cwd, ".pi", "workflows", "tasks"),
         concurrency: shared.scheduler.getConcurrency(),
-        resume: shared.taskResume === true,
+        // thunk 闭包内容无法从 AST 在 runtime 安全提取；不能用 index+length 伪造 fingerprint。
+        // auto-shard 默认不跨 run 复用（TaskRegistry 仍记录本次任务）；显式 taskResume 只对 agent 级稳定 key 生效。
+        resume: false,
       })
       const batch = await executor.run(
         thunks.map((thunk, index) => ({
@@ -1120,13 +1132,14 @@ async function executeWorkflow(
             } catch (error) {
               if (isAborted()) throw error
               const workflowError = wrapError(error)
-              if (!workflowError.recoverable) throw workflowError
-              log(`parallel[${index}] 失败: ${workflowError.message}`)
-              return null
+              // BatchExecutor 任务失败必须保留 failed，不得把可恢复错误塌缩 null 后提交 done。
+              // 普通 parallel 才保留 null 塌缩语义；auto-shard 交给 task resume 重跑。
+              throw workflowError
             }
           },
         })),
       )
+      if (isAborted()) throw new WorkflowError("parallel 自动任务化被中止", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: false })
       log(`parallel 自动任务化：${batch.stats.total} 任务，复用 ${batch.stats.reused}，失败 ${batch.stats.failed}`)
       return batch.outcomes.map((o) => (o.status === "done" ? o.value : null))
     }

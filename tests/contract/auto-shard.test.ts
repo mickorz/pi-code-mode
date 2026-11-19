@@ -20,7 +20,7 @@ const rs = await parallel([${Array.from({ length: n }, (_, i) => `() => agent('t
 return rs.length`
 }
 
-test("任务数达阈值 + taskRegistry：自动走 BatchExecutor 并在第二次 run 全部复用", async () => {
+test("任务数达阈值 + taskRegistry：自动走 BatchExecutor（opaque thunk 不伪造跨 run fingerprint）", async () => {
   const cwd = tmp()
   const state = { calls: 0 }
   const reg = new TaskRegistry({ dir: path.join(cwd, ".pi", "workflows", "tasks"), workflowId: "auto_shard" })
@@ -28,9 +28,9 @@ test("任务数达阈值 + taskRegistry：自动走 BatchExecutor 并在第二�
   assert.equal(a.result, 10, "返回顺序与数量不变")
   assert.equal(state.calls, 10)
 
-  const b = await runWorkflow(script(10), { agent: runner(state), cwd, runId: "r2", taskRegistry: reg, taskResume: true, autoShardThreshold: 8 })
+  const b = await runWorkflow(script(10), { agent: runner(state), cwd, runId: "r2", taskRegistry: reg, taskResume: false, autoShardThreshold: 8 })
   assert.equal(b.result, 10)
-  assert.equal(state.calls, 10, "第二次应全部复用，不调用 agent")
+  assert.equal(state.calls, 20, "taskResume=false 强制重跑，验证 auto-shard 不依赖伪造 fingerprint")
 })
 
 test("任务数低于阈值：走原 Promise.all 路径（不落任务清单）", async () => {

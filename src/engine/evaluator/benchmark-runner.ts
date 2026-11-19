@@ -158,7 +158,8 @@ export async function runBenchmark(opts: BenchmarkOptions): Promise<BenchmarkRes
 
   // 收益：至少一项主要指标改善 ≥5%
   const gains = comparisons.filter((c) => c.improvement !== undefined && c.improvement >= 0.05)
-  const accepted = !degraded && requiredStatus !== "no" && gains.length > 0 && after.ok
+  // Required 未提供 validation 时是 unknown，不能默认放行（质量门不能被缺失数据绕过）
+  const accepted = !degraded && requiredStatus === "yes" && gains.length > 0 && after.ok
   if (gains.length === 0) notes.push("未测得 ≥5% 的指标改善（不满足优化验收）")
 
   if (opts.profiles && opts.profiles.size > 0) {

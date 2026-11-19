@@ -235,7 +235,8 @@ export function createWorkflowBenchmarkTool(deps: {
     description:
       "对 workflow 跑 before/after 真实对照：从 Plan 提取强制验证项，判定是否有改善且质量未降级。未提供 runOnce 时返回明确错误（不伪造数据）。",
     parameters: Type.Object({
-      scriptPath: Type.String({ description: "脚本路径（相对项目根）" }),
+      scriptPath: Type.String({ description: "优化前脚本路径（相对项目根）" }),
+      afterScriptPath: Type.Optional(Type.String({ description: "优化后脚本路径（工作区脚本，用于真实 before/after 对照）" })),
       planPath: Type.Optional(Type.String({ description: "Plan 路径（提供则做 Required Validation 校验）" })),
       profile: Type.Optional(Type.String({ description: "Profile 名（fast/balanced/quality）" })),
     }),
