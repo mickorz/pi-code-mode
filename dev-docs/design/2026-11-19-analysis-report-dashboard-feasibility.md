@@ -244,7 +244,7 @@ src/engine/analyzer/rules/
 
 | 期 | 内容 | 预估 |
 | --- | --- | --- |
-| **P0-0** | **规则文件化**：`definitions/` 9 份 `NN-<ID>-rule.md` + 双向一致性守卫测试 | **3h** |
+| ~~P0-0~~ | ~~规则文件化~~ **已完成 2026-11-19**：9 份 `definitions/NN-<ID>-rule.md` + `tests/analyzer/rules-docs.test.ts`（5 用例，双向校验 + description 逐字一致） | 完成 |
 | P0-1 | Markdown 报告补强（概览/影响/验收/目录）+ `impactHint` | 2h |
 | P0-2 | `template.html`（5 Tab + 3 图表 + 筛选交互） | 5h |
 | P0-3 | `build-dashboard.ts`（视图模型 + 校验 + 注入 + 命名） | 2h |
