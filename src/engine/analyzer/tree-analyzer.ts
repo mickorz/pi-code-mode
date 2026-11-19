@@ -27,6 +27,21 @@ export interface SubWorkflowSummary {
   rules: Record<string, number>
   /** 该文件最严重的 finding 的 ruleId（便于快速判断） */
   topRule?: string
+  /**
+   * 该文件的 finding 明细（精简字段）。
+   * 必要性：入口报告只列入口自己的 findings，若无明细，Dashboard 的「问题列表」里
+   * 看不到子流程命中的问题——用户会误以为「规则全通过」。
+   */
+  findings: Array<{
+    ruleId: string
+    severity: string
+    confidence: number
+    startLine: number
+    endLine: number
+    evidence: string[]
+    suggestion?: string
+    snippet?: string
+  }>
 }
 
 export interface TreeAnalysis {
@@ -82,6 +97,16 @@ function summarize(report: AnalysisReport, file: string): SubWorkflowSummary {
     totalFindings: report.summary.totalFindings,
     rules,
     ...(top ? { topRule: top.ruleId } : {}),
+    findings: report.findings.map((f) => ({
+      ruleId: f.ruleId,
+      severity: f.severity,
+      confidence: f.confidence,
+      startLine: f.location.startLine,
+      endLine: f.location.endLine,
+      evidence: f.evidence,
+      ...(f.suggestion ? { suggestion: f.suggestion } : {}),
+      ...(f.snippet ? { snippet: f.snippet } : {}),
+    })),
   }
 }
 
@@ -126,8 +151,10 @@ export function analyzeWorkflowTree(opts: TreeAnalysisOptions): TreeAnalysis {
       }
       if (!isWorkflowScript(src)) continue
       visited.add(key)
-      const report = buildReport({ source: src, file: path.relative(path.dirname(entryDir), abs), generatedAt: "T" })
-      subWorkflows.push(summarize(report, path.relative(path.dirname(entryDir), abs)))
+      // 统一正斜杠：与入口 ref 的书写风格一致，避免同一页面混用 \ 与 /
+      const rel = path.relative(path.dirname(entryDir), abs).split(path.sep).join("/")
+      const report = buildReport({ source: src, file: rel, generatedAt: "T" })
+      subWorkflows.push(summarize(report, rel))
       // 该子流程若引用子目录脚本，继续下探
       for (const ref of extractScriptRefs(src)) {
         const refAbs = path.resolve(dir, ref)

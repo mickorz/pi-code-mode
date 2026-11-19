@@ -30,7 +30,7 @@ await agent('复核' + JSON.stringify(all))
 return 'ok'`,
   )
   const { notes, ctx } = ctxWith(dir)
-  await analyzeSubcommand.run(["wf.js", "--no-suggest"], ctx, deps)
+  await analyzeSubcommand.run(["wf.js", "--no-suggest", "--no-open"], ctx, deps)
   const out = notes.at(-1)!.text
   assert.match(out, /风险分 \d+\/100/)
   assert.match(out, /调用点 2/)
@@ -40,10 +40,16 @@ test("analyze：完整报告落盘到 .pi/workflows/reports/", async () => {
   const dir = tmp()
   fs.writeFileSync(path.join(dir, "wf2.js"), "export const meta = { name: 'demo2' }\nawait agent('x')\nreturn 'ok'")
   const { notes, ctx } = ctxWith(dir)
-  await analyzeSubcommand.run(["wf2.js", "--no-suggest"], ctx, deps)
+  await analyzeSubcommand.run(["wf2.js", "--no-suggest", "--no-open"], ctx, deps)
   assert.ok(fs.existsSync(path.join(dir, ".pi", "workflows", "reports", "wf2.analysis.md")), "md 报告应落盘")
   assert.ok(fs.existsSync(path.join(dir, ".pi", "workflows", "reports", "wf2.analysis.json")), "json 报告应落盘")
-  assert.match(notes.at(-1)!.text, /完整报告/)
+  const dashDir = path.join(dir, ".pi", "workflows", "reports", "dashboard")
+  assert.ok(fs.existsSync(dashDir), "dashboard 目录应存在")
+  const html = fs.readdirSync(dashDir).filter((f) => f.endsWith(".html"))
+  assert.equal(html.length, 1, `应生成 1 份 dashboard，实际：${html.join(",")}`)
+  assert.match(html[0]!, /^wf2分析-Dashboard-\d{8}-01\.html$/, "命名应含项目名+日期+序号")
+  // --no-open 时必须把路径告诉用户（否则等于没生成）
+  assert.match(notes.at(-1)!.text, /Dashboard/, "应提示 dashboard 路径")
 })
 
 test("analyze：缺参数提示用法", async () => {
@@ -62,6 +68,8 @@ test("analyze：脚本不存在给出路径提示", async () => {
 test("analyze：usage 声明别名与关键开关", () => {
   assert.match(analyzeSubcommand.usage, /别名 anal/)
   assert.match(analyzeSubcommand.usage, /--no-suggest/)
+  assert.match(analyzeSubcommand.usage, /--no-open/)
+  assert.match(analyzeSubcommand.usage, /Dashboard/)
 })
 
 // ---- /workflows plan validate ----
@@ -112,7 +120,7 @@ test("analyze：--no-suggest 关闭 AI 建议（默认开启）", async () => {
   const dir = tmp()
   fs.writeFileSync(path.join(dir, "wf3.js"), "export const meta = { name: 'demo3' }\nawait agent('x')\nreturn 'ok'")
   const { notes, ctx } = ctxWith(dir)
-  await analyzeSubcommand.run(["wf3.js", "--no-suggest"], ctx, deps)
+  await analyzeSubcommand.run(["wf3.js", "--no-suggest", "--no-open"], ctx, deps)
   const out = notes.at(-1)!.text
   assert.match(out, /风险分/)
   assert.doesNotMatch(out, /AI 优化建议/, "关闭后不应出现 AI 建议行（静态建议仍保留）")

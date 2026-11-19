@@ -91,7 +91,24 @@ export interface AnalysisReport {
     maxRisk: number
     riskiest?: string
     rules: Record<string, number>
-    subWorkflows: Array<{ file: string; riskScore: number; callSites: number; totalFindings: number; topRule?: string }>
+    subWorkflows: Array<{
+      file: string
+      riskScore: number
+      callSites: number
+      totalFindings: number
+      topRule?: string
+      /** 子流程 finding 明细：Dashboard 问题列表要能展示，否则看似"规则全通过" */
+      findings: Array<{
+        ruleId: string
+        severity: string
+        confidence: number
+        startLine: number
+        endLine: number
+        evidence: string[]
+        suggestion?: string
+        snippet?: string
+      }>
+    }>
   }
 }
 

@@ -18,6 +18,8 @@ import fs from "node:fs"
 import path from "node:path"
 
 import { analyzeWorkflow, createPlannerAgent } from "../../../src/tools/workflow-analyze-tool.js"
+import { writeDashboard } from "../../../src/engine/analyzer/dashboard/build-dashboard.js"
+import { openInBrowser, shouldAutoOpen } from "../../../src/utils/open-browser.js"
 import { validatePlanFile } from "../../../src/tools/plan-tool.js"
 import { loadRegistry, readWorkflowScript } from "../../../src/engine/runtime/workflow-registry.js"
 import type { Subcommand } from "./types.js"
@@ -56,6 +58,8 @@ function renderSummary(input: {
   /** AI 建议条数（未开启时为 undefined） */
   aiRecommends?: number
   reportPath?: string
+  /** Dashboard 路径：并入摘要（单独发一条通知会把核心结论挤掉） */
+  dashboardPath?: string
   diagnostics: string[]
   subtree?: { files: number; callSites: number; maxRisk: number; riskiest?: string; totalFindings: number }
 }): string {
@@ -89,11 +93,12 @@ function renderSummary(input: {
   if (input.recommends > 0) lines.push(`\n静态建议 ${input.recommends} 条（expectedImpact 一律「待 Benchmark」，不虚构数值）`)
   if (input.diagnostics.length > 0) lines.push(`\n诊断：${input.diagnostics.slice(0, 3).join("；")}`)
   if (input.reportPath) lines.push(`\n完整报告：${input.reportPath}`)
+  if (input.dashboardPath) lines.push(`Dashboard：${input.dashboardPath}`)
   return lines.join("\n")
 }
 
 export const analyzeSubcommand: Subcommand = {
-  usage: "analyze <路径|名> [--no-suggest] [--json]  静态分析+AI建议（别名 anal；报告落盘）",
+  usage: "analyze <路径|名> [--no-suggest] [--no-open]  静态分析+AI建议+Dashboard（别名 anal）",
   async run(argv, ctx, deps) {
     try {
       await runAnalyze(argv, ctx, deps)
@@ -110,7 +115,7 @@ async function runAnalyze(argv: string[], ctx: any, deps: any): Promise<void> {
     const flags = new Set(argv.filter((a) => a.startsWith("--")))
     const ref = argv.find((a) => !a.startsWith("--"))
     if (!ref) {
-      ctx.ui.notify("用法: /workflows analyze <脚本路径|注册表名> [--no-suggest] [--json]", "warning")
+      ctx.ui.notify("用法: /workflows analyze <脚本路径|注册表名> [--no-suggest] [--no-open]", "warning")
       return
     }
 
@@ -141,8 +146,9 @@ ${ref}`, "info")
     }
 
     // 完整报告落盘（会话摘要无法承载数百行）
-    let reportPath: string | undefined
-    reportPath = writeReports(cwd, ref, result)
+    const written = writeReports(cwd, ref, result, { aiEnabled: withSuggestions })
+    let reportPath = written.mdPath
+    let dashboardPath = written.dashboardPath
 
     const r = result.report
     const summary = renderSummary({
@@ -165,6 +171,7 @@ ${ref}`, "info")
       recommends: r.recommendations.length,
       ...(result.planner ? { aiRecommends: result.planner.proposals.length } : {}),
       ...(reportPath ? { reportPath } : {}),
+      ...(dashboardPath ? { dashboardPath } : {}),
       diagnostics: r.diagnostics,
       ...(r.subtree
         ? {
@@ -192,8 +199,14 @@ ${ref}`, "info")
           format: "md",
         })
         if (ai.planner && ai.planner.proposals.length > 0) {
-          // 覆盖报告文件，让落盘版本包含 AI 建议
-          reportPath = writeReports(cwd, ref, ai)
+          // 覆盖报告与 dashboard（同一份 HTML 更新为「含 AI」版本，不新建 -02）
+          const aiWritten = writeReports(cwd, ref, ai, {
+            aiEnabled: true,
+            ...(ai.planner.analysisSummary ? { aiSummary: ai.planner.analysisSummary } : {}),
+            ...(dashboardPath ? { overwriteDashboard: dashboardPath } : {}),
+          })
+          reportPath = aiWritten.mdPath ?? reportPath
+          dashboardPath = aiWritten.dashboardPath ?? dashboardPath
           const lines = [`AI 优化建议 ${ai.planner.proposals.length} 条：`]
           for (const p of ai.planner.proposals.slice(0, 5)) {
             lines.push(`- [${p.severity}] ${p.title}`)
@@ -202,6 +215,7 @@ ${ref}`, "info")
           }
           if (ai.planner.proposals.length > 5) lines.push(`…另有 ${ai.planner.proposals.length - 5} 条，见报告文件`)
           lines.push(`\n完整报告：${reportPath ?? "(落盘失败)"}`)
+          if (dashboardPath) lines.push(`Dashboard：${dashboardPath}`)
           ctx.ui.notify(lines.join("\n"), "info")
         } else {
           const diag = ai.report?.diagnostics.find((d) => /AI 建议/.test(d))
@@ -212,6 +226,15 @@ ${ref}`, "info")
         }
       } catch (e) {
         ctx.ui.notify(`AI 建议失败（静态结果已给出）：${String((e as Error)?.message ?? e).slice(0, 200)}`, "warning")
+      }
+    }
+
+    // Dashboard 在静态阶段就已生成：无论 AI 成败都要能让用户打开
+    // 路径已在摘要里；这里只在真的尝试打开时补充动作结果（避免多一条通知把结论挤掉）
+    if (dashboardPath && !flags.has("--no-open") && shouldAutoOpen().open) {
+      const r = await openInBrowser(dashboardPath)
+      if (!r.ok) {
+        ctx.ui.notify(`Dashboard 已生成但打开失败（${r.error?.slice(0, 80)}）：${dashboardPath}`, "warning")
       }
     }
     void deps
@@ -244,7 +267,23 @@ async function runPlanValidate(argv: string[], ctx: any, deps: any): Promise<voi
 }
 
 /** 报告落盘：Markdown + JSON（两段式共用） */
-function writeReports(cwd: string, ref: string, result: { rendered?: string; report?: unknown }): string | undefined {
+interface WriteReportsResult {
+  mdPath?: string
+  dashboardPath?: string
+}
+
+/**
+ * 落盘报告：.md / .json / dashboard/*.html
+ * dashboard 失败不影响 md/json（报告主体优先）；AI 阶段用 overwriteDashboard 覆盖同一份 HTML，
+ * 避免同一次分析产生 -01/-02 两份（递增命名只用于多次运行之间）。
+ */
+function writeReports(
+  cwd: string,
+  ref: string,
+  result: { rendered?: string; report?: unknown },
+  opts: { aiEnabled?: boolean; aiSummary?: string; overwriteDashboard?: string } = {},
+): WriteReportsResult {
+  const out: WriteReportsResult = {}
   try {
     const dir = path.join(cwd, REPORT_DIR)
     fs.mkdirSync(dir, { recursive: true })
@@ -253,8 +292,22 @@ function writeReports(cwd: string, ref: string, result: { rendered?: string; rep
     fs.writeFileSync(mdPath, result.rendered ?? "", "utf8")
     fs.writeFileSync(path.join(dir, `${base}.analysis.json`), JSON.stringify(result.report ?? {}, null, 2), "utf8")
     // 返回绝对路径：相对路径在终端里既不能点也不好定位
-    return mdPath
-  } catch {
-    return undefined
+    out.mdPath = mdPath
+
+    if (result.report) {
+      const dw = writeDashboard({
+        report: result.report as Parameters<typeof writeDashboard>[0]["report"],
+        outDir: dir,
+        projectName: base,
+        ...(opts.aiEnabled !== undefined ? { aiEnabled: opts.aiEnabled } : {}),
+        ...(opts.aiSummary ? { aiSummary: opts.aiSummary } : {}),
+        ...(opts.overwriteDashboard ? { overwritePath: opts.overwriteDashboard } : {}),
+      })
+      out.dashboardPath = dw.htmlPath
+    }
+  } catch (e) {
+    // dashboard 生成失败不阻断报告落盘，但要留下痕迹（不能静默）
+    console.warn(`[pi-code-mode] Dashboard 生成失败：${String((e as Error)?.message ?? e)}`)
   }
+  return out
 }

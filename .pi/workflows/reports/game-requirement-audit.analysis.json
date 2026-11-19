@@ -1,0 +1,680 @@
+{
+  "schemaVersion": "1.0",
+  "ruleInventory": [
+    {
+      "id": "INPUT-001",
+      "severity": "high",
+      "description": "同一个输入对象被多次注入不同 agent → 重复序列化与 token 浪费",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "CONC-001",
+      "severity": "medium",
+      "description": "并行任务数超过并发上限 → 多波次执行（要求任务数静态可确定）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "CONC-002",
+      "severity": "medium",
+      "description": "并行任务数是运行时动态决定的分片（静态不可知，需人工确认分片数/并发/超时）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "SERIAL-001",
+      "severity": "low",
+      "description": "多个 agent 构成明确数据依赖链（合理串行，但可能是墙钟瓶颈）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "SERIAL-002",
+      "severity": "medium",
+      "description": "源码相邻但无数据引用的 agent 调用 → 可并行候选（需语义确认）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "TIMEOUT-001",
+      "severity": "medium",
+      "description": "agent 调用缺少 timeoutMs 且无 run 级超时 → 单点挂起会拖垮整阶段",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "RETRY-001",
+      "severity": "low",
+      "description": "retries 放大失败场景下的调用量与 token 消耗",
+      "hits": 1,
+      "status": "hit"
+    },
+    {
+      "id": "DET-001",
+      "severity": "low",
+      "description": "prompt 语义看起来可用确定性 JS 完成（统计/校验），交给 LLM 是浪费",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "REC-001",
+      "severity": "high",
+      "description": "大规模任务且无 phase 边界 → 失败后只能整 run 重跑",
+      "hits": 0,
+      "status": "pass"
+    }
+  ],
+  "analyzerVersion": "1.0.0",
+  "ruleSetVersion": "1.0.0",
+  "sourceHash": "sha256:5f238f9a3cdc59c8a3630e5d96d6f65bc12f101dce849ecaf8f239e382966d5c",
+  "generatedAt": "2026-11-19T09:32:49.202Z",
+  "file": ".opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js",
+  "summary": {
+    "riskScore": 2,
+    "counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 1
+    },
+    "totalFindings": 1
+  },
+  "executionEstimate": {
+    "callSites": 5,
+    "agentCallSites": 2,
+    "workflowCallSites": 3,
+    "estimatedTasks": 4,
+    "determined": false,
+    "dynamicNodes": 5
+  },
+  "callGraph": {
+    "nodes": [
+      {
+        "id": "call-1",
+        "kind": "agent",
+        "line": 129,
+        "label": "agent",
+        "dynamic": true
+      },
+      {
+        "id": "call-2",
+        "kind": "agent",
+        "line": 142,
+        "label": "agent",
+        "dynamic": true
+      },
+      {
+        "id": "call-3",
+        "kind": "checkpoint",
+        "line": 206,
+        "label": "checkpoint",
+        "dynamic": true
+      },
+      {
+        "id": "call-4",
+        "kind": "checkpoint",
+        "line": 363,
+        "label": "checkpoint",
+        "dynamic": false
+      },
+      {
+        "id": "call-5",
+        "kind": "workflow",
+        "line": 468,
+        "label": "workflow",
+        "dynamic": true
+      },
+      {
+        "id": "call-6",
+        "kind": "workflow",
+        "line": 543,
+        "label": "workflow",
+        "dynamic": false
+      },
+      {
+        "id": "call-7",
+        "kind": "parallel",
+        "line": 568,
+        "label": "parallel",
+        "dynamic": false
+      },
+      {
+        "id": "call-8",
+        "kind": "workflow",
+        "line": 573,
+        "label": "workflow",
+        "dynamic": true
+      }
+    ],
+    "edges": [
+      {
+        "from": "call-7",
+        "to": "call-8",
+        "confidence": "Structural"
+      }
+    ],
+    "counts": {
+      "agent": 2,
+      "checkpoint": 2,
+      "workflow": 3,
+      "parallel": 1
+    }
+  },
+  "dependencies": {
+    "serialChains": [],
+    "candidates": [],
+    "unknowns": [
+      {
+        "id": "call-1",
+        "line": 129,
+        "reason": "函数体被调用几次取决于调用方"
+      },
+      {
+        "id": "call-2",
+        "line": 142,
+        "reason": "函数体被调用几次取决于调用方"
+      },
+      {
+        "id": "call-3",
+        "line": 206,
+        "reason": "函数体被调用几次取决于调用方"
+      },
+      {
+        "id": "call-5",
+        "line": 468,
+        "reason": "函数体被调用几次取决于调用方"
+      },
+      {
+        "id": "call-8",
+        "line": 573,
+        "reason": "数组静态长度 0"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "ruleId": "RETRY-001",
+      "severity": "low",
+      "confidence": 0.8,
+      "location": {
+        "startLine": 129,
+        "endLine": 137,
+        "file": ".opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js"
+      },
+      "evidence": [
+        "retries 最高 2 次",
+        "agent 调用点 2 个",
+        "失败场景最坏调用量 ≈ 6"
+      ],
+      "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+      "snippet": "  return agent(\n    [\n      '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "OPT-001",
+      "title": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+      "ruleIds": [
+        "RETRY-001"
+      ],
+      "severity": "low",
+      "expectedImpact": "待 Benchmark 验证（静态估算不提供数值收益）",
+      "qualityRisk": "low",
+      "validation": [
+        "重新运行 Analyzer 确认风险消除",
+        "Benchmark 对比耗时与 Token 不劣化"
+      ]
+    },
+    {
+      "id": "OPT-002",
+      "title": "收紧 L129-137 agent 重试预算并区分可重试错误",
+      "ruleIds": [],
+      "severity": "low",
+      "expectedImpact": "待 Benchmark",
+      "qualityRisk": "low",
+      "validation": [
+        "故障注入：模拟持续可恢复失败，统计 agent 实际派发次数，最坏应从 ≈6 降至 ≈4（2 调用点 × (1+1)）",
+        "验证确定性失败在首次尝试后即中止且错误信息结构化",
+        "回归：正常路径（无失败）调用次数与输出结果与改造前一致",
+        "改动后运行 wf-syntax-check.cjs 语法自检通过"
+      ],
+      "source": "ai"
+    },
+    {
+      "id": "OPT-003",
+      "title": "L129/L142/L206/L468 调用点并行化潜力语义确认（需语义确认）",
+      "ruleIds": [],
+      "severity": "low",
+      "expectedImpact": "待 Benchmark",
+      "qualityRisk": "medium",
+      "validation": [
+        "产出依赖确认记录（两调用点输入/输出与共享上下文读写关系）",
+        "并行版本与串行版本对同一输入产出结果一致性比对",
+        "监控并行执行期间共享上下文无写冲突，且组数 ≤ 并发上限（一波跑完）"
+      ],
+      "source": "ai"
+    },
+    {
+      "id": "OPT-004",
+      "title": "L573 空数组语义确认：死代码清理或数据装配缺陷（需语义确认）",
+      "ruleIds": [],
+      "severity": "low",
+      "expectedImpact": "待 Benchmark（空集合迭代开销本身可忽略，主要收益是可读性与正确性）",
+      "qualityRisk": "low",
+      "validation": [
+        "记录数组来源与填充路径的确认结论",
+        "删除后（或修复后）用真实 args 完整跑一遍工作流，行为与产物与基线一致"
+      ],
+      "source": "ai"
+    }
+  ],
+  "diagnostics": [],
+  "subtree": {
+    "files": 12,
+    "callSites": 40,
+    "totalFindings": 23,
+    "maxRisk": 7,
+    "riskiest": "game-requirement-audit/1-scan-template.js",
+    "rules": {
+      "RETRY-001": 12,
+      "SERIAL-002": 9,
+      "CONC-002": 2
+    },
+    "subWorkflows": [
+      {
+        "file": "game-requirement-audit/1-scan-template.js",
+        "riskScore": 7,
+        "callSites": 2,
+        "totalFindings": 2,
+        "topRule": "SERIAL-002",
+        "findings": [
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.7,
+            "startLine": 101,
+            "endLine": 180,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-1, call-2）"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const scan = await agent(\n  [\n    '你是需求规格工作流的模板结构扫描器，工作目录为项目根目录。只做章节扫描与归类，不解读内容。',"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 101,
+            "endLine": 120,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 2 个",
+              "失败场景最坏调用量 ≈ 6"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const scan = await agent(\n  [\n    '你是需求规格工作流的模板结构扫描器，工作目录为项目根目录。只做章节扫描与归类，不解读内容。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/10-unified-spec.js",
+        "riskScore": 7,
+        "callSites": 4,
+        "totalFindings": 3,
+        "topRule": "CONC-002",
+        "findings": [
+          {
+            "ruleId": "CONC-002",
+            "severity": "medium",
+            "confidence": 0.4,
+            "startLine": 177,
+            "endLine": 177,
+            "evidence": [
+              "并行任务数来自运行时集合 `structure.stages`（map），静态不可知",
+              "并发上限：未声明（运行时默认 CPU-2，上限 16）",
+              "单次超时：3600s"
+            ],
+            "suggestion": "确认三件事：①分片数（决定波次数）②并发上限是否匹配（setConcurrency 或 run 参数）③单次超时是否够。分片多 + 单次长会造成多波次长尾，是墙钟主要来源",
+            "snippet": "const stageResults = await parallel("
+          },
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.7,
+            "startLine": 274,
+            "endLine": 312,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-4, call-5）"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const plannerResult = await agent(\n  plannerPrompt,\n  withWriteModel({"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 58,
+            "endLine": 104,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 4 个",
+              "失败场景最坏调用量 ≈ 12"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const structure = await agent(\n  [\n    '你是规格结构读取器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/11-human-review.js",
+        "riskScore": 7,
+        "callSites": 2,
+        "totalFindings": 2,
+        "topRule": "SERIAL-002",
+        "findings": [
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.7,
+            "startLine": 66,
+            "endLine": 120,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-1, call-2）"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const applic = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 66,
+            "endLine": 101,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 2 个",
+              "失败场景最坏调用量 ≈ 6"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const applic = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/2-atomize-requirements.js",
+        "riskScore": 2,
+        "callSites": 2,
+        "totalFindings": 2,
+        "topRule": "CONC-002",
+        "findings": [
+          {
+            "ruleId": "CONC-002",
+            "severity": "medium",
+            "confidence": 0.4,
+            "startLine": 159,
+            "endLine": 159,
+            "evidence": [
+              "并行任务数来自运行时集合 `stageSections`（map），静态不可知",
+              "并发上限：未声明（运行时默认 CPU-2，上限 16）",
+              "单次超时：3600s"
+            ],
+            "suggestion": "确认三件事：①分片数（决定波次数）②并发上限是否匹配（setConcurrency 或 run 参数）③单次超时是否够。分片多 + 单次长会造成多波次长尾，是墙钟主要来源",
+            "snippet": "const atomizeResults = await parallel("
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 161,
+            "endLine": 170,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 2 个",
+              "失败场景最坏调用量 ≈ 6"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "    agent(\n      atomizePrompt(s),\n      withModel({"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/3-build-registry.js",
+        "riskScore": 2,
+        "callSites": 1,
+        "totalFindings": 1,
+        "topRule": "RETRY-001",
+        "findings": [
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 51,
+            "endLine": 76,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 1 个",
+              "失败场景最坏调用量 ≈ 3"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const stats = await agent(\n  [\n    '你是注册表统计回读器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/4-client-verify.js",
+        "riskScore": 2,
+        "callSites": 7,
+        "totalFindings": 3,
+        "topRule": "SERIAL-002",
+        "findings": [
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.4,
+            "startLine": 301,
+            "endLine": 364,
+            "evidence": [
+              "3 个调用源码相邻但无数据引用（call-4, call-5, call-6）",
+              "组内含动态或存在 Explicit 依赖的节点：call-5——需语义确认后才可并行化"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const rsPatch = await agent(\n  [\n    '你是分支状态更新器。工作目录为项目根目录。',"
+          },
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.4,
+            "startLine": 379,
+            "endLine": 412,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-7, call-8）",
+              "组内含动态或存在 Explicit 依赖的节点：call-7——需语义确认后才可并行化"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "  await agent(\n    [\n      '任务：把下面 PART-BEGIN 与 PART-END 之间的文本逐字写入文件 ' + filesTxtPath + '（每行一个文件路径，UTF-8）。',"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 66,
+            "endLine": 98,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 7 个",
+              "失败场景最坏调用量 ≈ 21"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const manifestRead = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/5-server-verify.js",
+        "riskScore": 2,
+        "callSites": 7,
+        "totalFindings": 3,
+        "topRule": "SERIAL-002",
+        "findings": [
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.4,
+            "startLine": 283,
+            "endLine": 339,
+            "evidence": [
+              "3 个调用源码相邻但无数据引用（call-4, call-5, call-6）",
+              "组内含动态或存在 Explicit 依赖的节点：call-5——需语义确认后才可并行化"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const rsPatch = await agent(\n  [\n    '你是分支状态更新器。工作目录为项目根目录。',"
+          },
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.4,
+            "startLine": 353,
+            "endLine": 381,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-7, call-8）",
+              "组内含动态或存在 Explicit 依赖的节点：call-7——需语义确认后才可并行化"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "  await agent(\n    [\n      '任务：把下面 PART-BEGIN 与 PART-END 之间的文本逐字写入文件 ' + filesTxtPath + '（每行一个路径，UTF-8）。',"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 64,
+            "endLine": 95,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 7 个",
+              "失败场景最坏调用量 ≈ 21"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const manifestRead = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/6-merge-evidence.js",
+        "riskScore": 2,
+        "callSites": 1,
+        "totalFindings": 1,
+        "topRule": "RETRY-001",
+        "findings": [
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 30,
+            "endLine": 60,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 1 个",
+              "失败场景最坏调用量 ≈ 3"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const stats = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/7-business-behavior.js",
+        "riskScore": 7,
+        "callSites": 4,
+        "totalFindings": 2,
+        "topRule": "SERIAL-002",
+        "findings": [
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.7,
+            "startLine": 50,
+            "endLine": 118,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-1, call-2）"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const ua = await agent(\n  [\n    '你是 unified-atoms 读取器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 50,
+            "endLine": 84,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 4 个",
+              "失败场景最坏调用量 ≈ 12"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const ua = await agent(\n  [\n    '你是 unified-atoms 读取器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/8-difference-review.js",
+        "riskScore": 7,
+        "callSites": 4,
+        "totalFindings": 2,
+        "topRule": "SERIAL-002",
+        "findings": [
+          {
+            "ruleId": "SERIAL-002",
+            "severity": "medium",
+            "confidence": 0.7,
+            "startLine": 43,
+            "endLine": 96,
+            "evidence": [
+              "2 个调用源码相邻但无数据引用（call-1, call-2）"
+            ],
+            "suggestion": "经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据",
+            "snippet": "const plan = await agent(\n  [\n    '你是复核计划读取器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          },
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 43,
+            "endLine": 74,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 4 个",
+              "失败场景最坏调用量 ≈ 12"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const plan = await agent(\n  [\n    '你是复核计划读取器，工作目录为项目根目录。只做读取与转写，不做解读。',"
+          }
+        ]
+      },
+      {
+        "file": "game-requirement-audit/9-classify-l7.js",
+        "riskScore": 2,
+        "callSites": 1,
+        "totalFindings": 1,
+        "topRule": "RETRY-001",
+        "findings": [
+          {
+            "ruleId": "RETRY-001",
+            "severity": "low",
+            "confidence": 0.8,
+            "startLine": 30,
+            "endLine": 57,
+            "evidence": [
+              "retries 最高 2 次",
+              "agent 调用点 1 个",
+              "失败场景最坏调用量 ≈ 3"
+            ],
+            "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+            "snippet": "const stats = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',"
+          }
+        ]
+      }
+    ]
+  }
+}

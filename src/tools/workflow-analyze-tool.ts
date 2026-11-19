@@ -96,6 +96,7 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
               callSites: sw.callSites,
               totalFindings: sw.totalFindings,
               ...(sw.topRule ? { topRule: sw.topRule } : {}),
+              findings: sw.findings,
             })),
           },
         }

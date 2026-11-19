@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow 分析 Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #161a22; --card2: #1c2130; --line: #262d3d;
+    --tx: #e6e9ef; --tx2: #9aa4b8; --tx3: #6b7689;
+    --crit: #DC5148; --high: #E8A044; --med: #4389D5; --low: #7a8798;
+    --ok: #3fb27f; --ai: #9A6FE0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--tx);
+    font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header { padding: 18px 24px 0; }
+  h1 { font-size: 18px; margin: 0 0 6px; font-weight: 650; }
+  .sub { color: var(--tx2); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 10px;
+    align-items: center; margin-top: 4px; }
+  .sub .path { background: var(--card2); padding: 2px 7px; border-radius: 4px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub .sep { color: var(--tx3); }
+  nav { display: flex; gap: 4px; padding: 14px 24px 0; flex-wrap: wrap; }
+  nav button { background: transparent; border: 1px solid var(--line); color: var(--tx2);
+    padding: 7px 14px; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 13px; }
+  nav button.active { background: var(--card); color: var(--tx); border-bottom-color: var(--card); font-weight: 600; }
+  main { padding: 0 24px 40px; }
+  section { display: none; }
+  section.active { display: block; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-top: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 14px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .kpi .v { font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .kpi .l { color: var(--tx2); font-size: 12px; margin-top: 3px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; cursor: pointer; }
+  .bar-row:hover .fill { filter: brightness(1.25); }
+  .bar-row .bl { width: 92px; flex: none; font-size: 12.5px; color: var(--tx2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track { flex: 1; height: 16px; background: var(--card2); border-radius: 4px; overflow: hidden; }
+  .fill { display: block; height: 100%; border-radius: 4px; transition: width .2s; }
+  .val { width: 92px; flex: none; text-align: right; font-size: 12.5px; color: var(--tx2); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--tx2); font-weight: 600; font-size: 12px; text-transform: none; }
+  tbody tr:hover { background: var(--card2); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 11.5px; font-weight: 600; }
+  .tag.critical { background: rgba(220,81,72,.18); color: var(--crit); }
+  .tag.high { background: rgba(232,160,68,.18); color: var(--high); }
+  .tag.medium { background: rgba(67,137,213,.18); color: var(--med); }
+  .tag.low { background: rgba(122,135,152,.18); color: var(--low); }
+  .tag.pass { background: rgba(63,178,127,.16); color: var(--ok); }
+  .tag.hit { background: rgba(232,160,68,.18); color: var(--high); }
+  .tag.err { background: rgba(220,81,72,.18); color: var(--crit); }
+  .tag.ai { background: rgba(154,111,224,.18); color: var(--ai); }
+  .tag.static { background: var(--card2); color: var(--tx3); }
+  details { margin: 10px 0; border-left: 2px solid var(--line); padding-left: 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+  summary::-webkit-details-marker { color: var(--tx3); }
+  pre { background: #0b0d12; border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 12px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin: 8px 0;
+    white-space: pre-wrap; word-break: break-word; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .muted { color: var(--tx3); }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .filters button { background: var(--card2); border: 1px solid var(--line); color: var(--tx2);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+  .filters button.on { border-color: var(--med); color: var(--tx); background: rgba(67,137,213,.14); }
+  .note { background: rgba(67,137,213,.09); border: 1px solid rgba(67,137,213,.3);
+    border-radius: 8px; padding: 10px 12px; color: var(--tx2); font-size: 12.5px; margin-top: 12px; }
+  .empty { color: var(--tx3); padding: 12px 0; }
+  .rec { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 10px 0; background: var(--card2); }
+  .rec h3 { font-size: 13.5px; margin: 0 0 8px; font-weight: 600; }
+  .rec dl { margin: 0; display: grid; grid-template-columns: 88px 1fr; gap: 5px 10px; font-size: 12.5px; }
+  .rec dt { color: var(--tx3); }
+  .rec dd { margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Workflow 分析 Dashboard</h1>
+  <div class="sub" id="hdr"></div>
+</header>
+<nav id="tabs">
+  <button data-v="overview" class="active">概览</button>
+  <button data-v="rules">规则检查</button>
+  <button data-v="issues">问题列表</button>
+  <button data-v="subtree">子 Workflow</button>
+  <button data-v="recs">建议与 AI</button>
+</nav>
+<main>
+  <section id="v-overview" class="active"></section>
+  <section id="v-rules"></section>
+  <section id="v-issues"></section>
+  <section id="v-subtree"></section>
+  <section id="v-recs"></section>
+</main>
+
+<script type="application/json" id="report-data">{"meta":{"file":".opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js","generatedAt":"2026-11-19T09:34:23.069Z","riskScore":2,"analyzerVersion":"1.0.0","ruleSetVersion":"1.0.0","sourceHash":"sha256:5f238f9a3cdc59c8a3630e5d96d6f65bc12f101dce849ecaf8f239e382966d5c","aiEnabled":true,"aiSummary":"整体风险分仅 2/100，优化空间有限：唯一可确定处理的是 L129-137 重试策略（置信度 0.80），其余静态不可判定项均需语义确认后才能考虑并行化或清理。"},"estimate":{"callSites":5,"agentCallSites":2,"workflowCallSites":3,"estimatedTasks":4,"determined":false,"dynamicNodes":5},"summary":{"totalFindings":23,"counts":{"low":12,"medium":11}},"rules":[{"id":"INPUT-001","severity":"high","description":"同一个输入对象被多次注入不同 agent → 重复序列化与 token 浪费","hits":0,"status":"pass"},{"id":"CONC-001","severity":"medium","description":"并行任务数超过并发上限 → 多波次执行（要求任务数静态可确定）","hits":0,"status":"pass"},{"id":"CONC-002","severity":"medium","description":"并行任务数是运行时动态决定的分片（静态不可知，需人工确认分片数/并发/超时）","hits":2,"status":"hit"},{"id":"SERIAL-001","severity":"low","description":"多个 agent 构成明确数据依赖链（合理串行，但可能是墙钟瓶颈）","hits":0,"status":"pass"},{"id":"SERIAL-002","severity":"medium","description":"源码相邻但无数据引用的 agent 调用 → 可并行候选（需语义确认）","hits":9,"status":"hit"},{"id":"TIMEOUT-001","severity":"medium","description":"agent 调用缺少 timeoutMs 且无 run 级超时 → 单点挂起会拖垮整阶段","hits":0,"status":"pass"},{"id":"RETRY-001","severity":"low","description":"retries 放大失败场景下的调用量与 token 消耗","hits":13,"status":"hit"},{"id":"DET-001","severity":"low","description":"prompt 语义看起来可用确定性 JS 完成（统计/校验），交给 LLM 是浪费","hits":0,"status":"pass"},{"id":"REC-001","severity":"high","description":"大规模任务且无 phase 边界 → 失败后只能整 run 重跑","hits":0,"status":"pass"}],"findings":[{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":".opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js","startLine":129,"endLine":137,"evidence":["retries 最高 2 次","agent 调用点 2 个","失败场景最坏调用量 ≈ 6"],"snippet":"  return agent(\n    [\n      '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.7,"file":"game-requirement-audit/1-scan-template.js","startLine":101,"endLine":180,"evidence":["2 个调用源码相邻但无数据引用（call-1, call-2）"],"snippet":"const scan = await agent(\n  [\n    '你是需求规格工作流的模板结构扫描器，工作目录为项目根目录。只做章节扫描与归类，不解读内容。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/1-scan-template.js","startLine":101,"endLine":120,"evidence":["retries 最高 2 次","agent 调用点 2 个","失败场景最坏调用量 ≈ 6"],"snippet":"const scan = await agent(\n  [\n    '你是需求规格工作流的模板结构扫描器，工作目录为项目根目录。只做章节扫描与归类，不解读内容。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"CONC-002","confidence":0.4,"file":"game-requirement-audit/10-unified-spec.js","startLine":177,"endLine":177,"evidence":["并行任务数来自运行时集合 `structure.stages`（map），静态不可知","并发上限：未声明（运行时默认 CPU-2，上限 16）","单次超时：3600s"],"snippet":"const stageResults = await parallel(","suggestion":"确认三件事：①分片数（决定波次数）②并发上限是否匹配（setConcurrency 或 run 参数）③单次超时是否够。分片多 + 单次长会造成多波次长尾，是墙钟主要来源"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.7,"file":"game-requirement-audit/10-unified-spec.js","startLine":274,"endLine":312,"evidence":["2 个调用源码相邻但无数据引用（call-4, call-5）"],"snippet":"const plannerResult = await agent(\n  plannerPrompt,\n  withWriteModel({","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/10-unified-spec.js","startLine":58,"endLine":104,"evidence":["retries 最高 2 次","agent 调用点 4 个","失败场景最坏调用量 ≈ 12"],"snippet":"const structure = await agent(\n  [\n    '你是规格结构读取器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.7,"file":"game-requirement-audit/11-human-review.js","startLine":66,"endLine":120,"evidence":["2 个调用源码相邻但无数据引用（call-1, call-2）"],"snippet":"const applic = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/11-human-review.js","startLine":66,"endLine":101,"evidence":["retries 最高 2 次","agent 调用点 2 个","失败场景最坏调用量 ≈ 6"],"snippet":"const applic = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"CONC-002","confidence":0.4,"file":"game-requirement-audit/2-atomize-requirements.js","startLine":159,"endLine":159,"evidence":["并行任务数来自运行时集合 `stageSections`（map），静态不可知","并发上限：未声明（运行时默认 CPU-2，上限 16）","单次超时：3600s"],"snippet":"const atomizeResults = await parallel(","suggestion":"确认三件事：①分片数（决定波次数）②并发上限是否匹配（setConcurrency 或 run 参数）③单次超时是否够。分片多 + 单次长会造成多波次长尾，是墙钟主要来源"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/2-atomize-requirements.js","startLine":161,"endLine":170,"evidence":["retries 最高 2 次","agent 调用点 2 个","失败场景最坏调用量 ≈ 6"],"snippet":"    agent(\n      atomizePrompt(s),\n      withModel({","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/3-build-registry.js","startLine":51,"endLine":76,"evidence":["retries 最高 2 次","agent 调用点 1 个","失败场景最坏调用量 ≈ 3"],"snippet":"const stats = await agent(\n  [\n    '你是注册表统计回读器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.4,"file":"game-requirement-audit/4-client-verify.js","startLine":301,"endLine":364,"evidence":["3 个调用源码相邻但无数据引用（call-4, call-5, call-6）","组内含动态或存在 Explicit 依赖的节点：call-5——需语义确认后才可并行化"],"snippet":"const rsPatch = await agent(\n  [\n    '你是分支状态更新器。工作目录为项目根目录。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.4,"file":"game-requirement-audit/4-client-verify.js","startLine":379,"endLine":412,"evidence":["2 个调用源码相邻但无数据引用（call-7, call-8）","组内含动态或存在 Explicit 依赖的节点：call-7——需语义确认后才可并行化"],"snippet":"  await agent(\n    [\n      '任务：把下面 PART-BEGIN 与 PART-END 之间的文本逐字写入文件 ' + filesTxtPath + '（每行一个文件路径，UTF-8）。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/4-client-verify.js","startLine":66,"endLine":98,"evidence":["retries 最高 2 次","agent 调用点 7 个","失败场景最坏调用量 ≈ 21"],"snippet":"const manifestRead = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.4,"file":"game-requirement-audit/5-server-verify.js","startLine":283,"endLine":339,"evidence":["3 个调用源码相邻但无数据引用（call-4, call-5, call-6）","组内含动态或存在 Explicit 依赖的节点：call-5——需语义确认后才可并行化"],"snippet":"const rsPatch = await agent(\n  [\n    '你是分支状态更新器。工作目录为项目根目录。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.4,"file":"game-requirement-audit/5-server-verify.js","startLine":353,"endLine":381,"evidence":["2 个调用源码相邻但无数据引用（call-7, call-8）","组内含动态或存在 Explicit 依赖的节点：call-7——需语义确认后才可并行化"],"snippet":"  await agent(\n    [\n      '任务：把下面 PART-BEGIN 与 PART-END 之间的文本逐字写入文件 ' + filesTxtPath + '（每行一个路径，UTF-8）。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/5-server-verify.js","startLine":64,"endLine":95,"evidence":["retries 最高 2 次","agent 调用点 7 个","失败场景最坏调用量 ≈ 21"],"snippet":"const manifestRead = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/6-merge-evidence.js","startLine":30,"endLine":60,"evidence":["retries 最高 2 次","agent 调用点 1 个","失败场景最坏调用量 ≈ 3"],"snippet":"const stats = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.7,"file":"game-requirement-audit/7-business-behavior.js","startLine":50,"endLine":118,"evidence":["2 个调用源码相邻但无数据引用（call-1, call-2）"],"snippet":"const ua = await agent(\n  [\n    '你是 unified-atoms 读取器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/7-business-behavior.js","startLine":50,"endLine":84,"evidence":["retries 最高 2 次","agent 调用点 4 个","失败场景最坏调用量 ≈ 12"],"snippet":"const ua = await agent(\n  [\n    '你是 unified-atoms 读取器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"medium","ruleId":"SERIAL-002","confidence":0.7,"file":"game-requirement-audit/8-difference-review.js","startLine":43,"endLine":96,"evidence":["2 个调用源码相邻但无数据引用（call-1, call-2）"],"snippet":"const plan = await agent(\n  [\n    '你是复核计划读取器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"经语义确认业务独立后可改为 parallel；静态 Candidate 不构成自动并行化依据"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/8-difference-review.js","startLine":43,"endLine":74,"evidence":["retries 最高 2 次","agent 调用点 4 个","失败场景最坏调用量 ≈ 12"],"snippet":"const plan = await agent(\n  [\n    '你是复核计划读取器，工作目录为项目根目录。只做读取与转写，不做解读。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"},{"severity":"low","ruleId":"RETRY-001","confidence":0.8,"file":"game-requirement-audit/9-classify-l7.js","startLine":30,"endLine":57,"evidence":["retries 最高 2 次","agent 调用点 1 个","失败场景最坏调用量 ≈ 3"],"snippet":"const stats = await agent(\n  [\n    '你是文件回读器，工作目录为项目根目录。只做读取与转写。',","suggestion":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务"}],"recommendations":[{"id":"OPT-001","title":"全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务","ruleIds":["RETRY-001"],"severity":"low","expectedImpact":"待 Benchmark 验证（静态估算不提供数值收益）","qualityRisk":"low","validation":["重新运行 Analyzer 确认风险消除","Benchmark 对比耗时与 Token 不劣化"]},{"id":"OPT-002","title":"收紧 L129-137 agent 重试预算并区分可重试错误","ruleIds":[],"severity":"low","expectedImpact":"待 Benchmark","qualityRisk":"low","validation":["故障注入：模拟持续可恢复失败，统计 agent 实际派发次数，最坏应从 ≈6 降至 ≈4（2 调用点 × (1+1)）","验证确定性失败在首次尝试后即中止且错误信息结构化","回归：正常路径（无失败）调用次数与输出结果与改造前一致","改动后运行 wf-syntax-check.cjs 语法自检通过"],"source":"ai"},{"id":"OPT-003","title":"L129/L142/L206/L468 调用点并行化潜力语义确认（需语义确认）","ruleIds":[],"severity":"low","expectedImpact":"待 Benchmark","qualityRisk":"medium","validation":["产出依赖确认记录（两调用点输入/输出与共享上下文读写关系）","并行版本与串行版本对同一输入产出结果一致性比对","监控并行执行期间共享上下文无写冲突，且组数 ≤ 并发上限（一波跑完）"],"source":"ai"},{"id":"OPT-004","title":"L573 空数组语义确认：死代码清理或数据装配缺陷（需语义确认）","ruleIds":[],"severity":"low","expectedImpact":"待 Benchmark（空集合迭代开销本身可忽略，主要收益是可读性与正确性）","qualityRisk":"low","validation":["记录数组来源与填充路径的确认结论","删除后（或修复后）用真实 args 完整跑一遍工作流，行为与产物与基线一致"],"source":"ai"}],"unknowns":[{"line":129,"id":"call-1","reason":"函数体被调用几次取决于调用方"},{"line":142,"id":"call-2","reason":"函数体被调用几次取决于调用方"},{"line":206,"id":"call-3","reason":"函数体被调用几次取决于调用方"},{"line":468,"id":"call-5","reason":"函数体被调用几次取决于调用方"},{"line":573,"id":"call-8","reason":"数组静态长度 0"}],"diagnostics":[],"subtree":{"files":12,"callSites":40,"maxRisk":7,"riskiest":"game-requirement-audit/1-scan-template.js","totalFindings":23,"rules":{"RETRY-001":12,"SERIAL-002":9,"CONC-002":2},"subWorkflows":[{"file":"game-requirement-audit/1-scan-template.js","riskScore":7,"callSites":2,"totalFindings":2,"topRule":"SERIAL-002"},{"file":"game-requirement-audit/10-unified-spec.js","riskScore":7,"callSites":4,"totalFindings":3,"topRule":"CONC-002"},{"file":"game-requirement-audit/11-human-review.js","riskScore":7,"callSites":2,"totalFindings":2,"topRule":"SERIAL-002"},{"file":"game-requirement-audit/2-atomize-requirements.js","riskScore":2,"callSites":2,"totalFindings":2,"topRule":"CONC-002"},{"file":"game-requirement-audit/3-build-registry.js","riskScore":2,"callSites":1,"totalFindings":1,"topRule":"RETRY-001"},{"file":"game-requirement-audit/4-client-verify.js","riskScore":2,"callSites":7,"totalFindings":3,"topRule":"SERIAL-002"},{"file":"game-requirement-audit/5-server-verify.js","riskScore":2,"callSites":7,"totalFindings":3,"topRule":"SERIAL-002"},{"file":"game-requirement-audit/6-merge-evidence.js","riskScore":2,"callSites":1,"totalFindings":1,"topRule":"RETRY-001"},{"file":"game-requirement-audit/7-business-behavior.js","riskScore":7,"callSites":4,"totalFindings":2,"topRule":"SERIAL-002"},{"file":"game-requirement-audit/8-difference-review.js","riskScore":7,"callSites":4,"totalFindings":2,"topRule":"SERIAL-002"},{"file":"game-requirement-audit/9-classify-l7.js","riskScore":2,"callSites":1,"totalFindings":1,"topRule":"RETRY-001"}]}}</script>
+<script>
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('report-data').textContent);
+  var SEV = ['critical', 'high', 'medium', 'low'];
+  var SEV_COLOR = { critical: '#DC5148', high: '#E8A044', medium: '#4389D5', low: '#7a8798' };
+  var state = { sev: null, rule: null };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function tag(cls, text) { return '<span class="tag ' + cls + '">' + esc(text) + '</span>'; }
+  function sevTag(s) { return tag(s, s); }
+  function el(id) { return document.getElementById(id); }
+
+  // ---------- 头部 ----------
+  el('hdr').innerHTML = [
+    '<span class="path" title="' + esc(D.meta.file) + '">' + esc(D.meta.file) + '</span>',
+    '<span>风险分 <b>' + D.meta.riskScore + '/100</b></span>',
+    '<span>analyzer ' + esc(D.meta.analyzerVersion) + ' / ruleSet ' + esc(D.meta.ruleSetVersion) + '</span>',
+    '<span>生成于 ' + esc(String(D.meta.generatedAt).replace('T', ' ').slice(0, 19)) + '</span>',
+    '<span>AI 复核：' + (D.meta.aiEnabled ? tag('ai', '已开启') : tag('static', '未开启')) + '</span>'
+  ].join('<span class="sep">·</span>');
+
+  // ---------- 概览 ----------
+  (function () {
+    var e = D.estimate;
+    var kpis = [
+      { v: D.meta.riskScore, l: '风险分 / 100' },
+      { v: D.summary.totalFindings, l: '问题条数' },
+      { v: e.callSites, l: '调用点（agent ' + e.agentCallSites + '）' },
+      { v: e.estimatedTasks + (e.determined ? '' : '↓'), l: '估算任务量' + (e.determined ? '' : '（下限）') },
+      { v: D.subtree ? D.subtree.files : 1, l: D.subtree ? '聚合文件数' : '分析文件数' },
+      { v: D.rules.filter(function (r) { return r.hits > 0; }).length + '/' + D.rules.length, l: '命中规则 / 总数' }
+    ];
+    if (e.concurrency !== undefined) kpis.push({ v: e.concurrency, l: '并发上限' });
+    if (e.estimatedWaves !== undefined) kpis.push({ v: e.estimatedWaves, l: '预计波次' });
+    if (e.dynamicNodes > 0) kpis.push({ v: e.dynamicNodes, l: '动态节点（静态不可知）' });
+
+    var h = '<div class="kpis">' + kpis.map(function (k) {
+      return '<div class="kpi"><div class="v">' + esc(k.v) + '</div><div class="l">' + esc(k.l) + '</div></div>';
+    }).join('') + '</div>';
+
+    // 严重度分布
+    var total = D.summary.totalFindings || 0;
+    var rows = SEV.map(function (s) {
+      var n = D.summary.counts[s] || 0;
+      if (!n) return '';
+      var pct = total ? (n / total * 100) : 0;
+      return '<div class="bar-row" onclick="window.__f(\'sev\',\'' + s + '\')">' +
+        '<span class="bl">' + s + '</span>' +
+        '<span class="track"><span class="fill" style="width:' + pct + '%;background:' + SEV_COLOR[s] + '"></span></span>' +
+        '<span class="val">' + n + ' · ' + pct.toFixed(1) + '%</span></div>';
+    }).join('');
+    h += '<div class="card"><h2>严重度分布（点击筛选问题列表）</h2>' + (rows || '<div class="empty">无问题</div>') + '</div>';
+
+    // 规则命中分布
+    var hitRules = D.rules.slice().sort(function (a, b) { return b.hits - a.hits; });
+    var maxHit = hitRules.length ? Math.max.apply(null, hitRules.map(function (r) { return r.hits; })) : 1;
+    var rrows = hitRules.map(function (r) {
+      var pct = maxHit ? (r.hits / maxHit * 100) : 0;
+      var color = r.status === 'error' ? '#DC5148' : (r.hits > 0 ? SEV_COLOR[r.severity] || '#4389D5' : '#2c3444');
+      return '<div class="bar-row" onclick="window.__f(\'rule\',\'' + esc(r.id) + '\')">' +
+        '<span class="bl">' + esc(r.id) + '</span>' +
+        '<span class="track"><span class="fill" style="width:' + pct + '%;background:' + color + '"></span></span>' +
+        '<span class="val">' + (r.status === 'error' ? '执行失败' : (r.hits > 0 ? r.hits + ' 命中' : '通过')) + '</span></div>';
+    }).join('');
+    h += '<div class="card"><h2>规则命中分布（全部 ' + D.rules.length + ' 条规则均已执行）</h2>' + rrows + '</div>';
+
+    if (D.meta.aiSummary) {
+      h += '<div class="card"><h2>' + tag('ai', 'AI') + ' 总体判断</h2><div>' + esc(D.meta.aiSummary) + '</div></div>';
+    }
+    if (D.diagnostics.length) {
+      h += '<div class="card"><h2>诊断信息</h2><ul>' + D.diagnostics.map(function (d) {
+        return '<li>' + esc(d) + '</li>';
+      }).join('') + '</ul></div>';
+    }
+    el('v-overview').innerHTML = h;
+  })();
+
+  // ---------- 规则检查（核心：全量规则 + 是否命中 + 检查说明） ----------
+  (function () {
+    var byStatus = { hit: [], pass: [], error: [] };
+    D.rules.forEach(function (r) { byStatus[r.status].push(r); });
+    var h = '<div class="card"><h2>规则检查清单</h2>' +
+      '<div class="note">共 ' + D.rules.length + ' 条规则全部执行：命中 ' + byStatus.hit.length +
+      ' 条、通过 ' + byStatus.pass.length + ' 条、执行失败 ' + byStatus.error.length + ' 条。' +
+      '「通过」表示该规则检查过且未发现问题，不是没检查。</div>' +
+      '<table><thead><tr><th>规则</th><th>严重度</th><th>结果</th><th>检查项</th></tr></thead><tbody>';
+    D.rules.forEach(function (r) {
+      var res = r.status === 'error' ? tag('err', '执行失败')
+        : r.hits > 0 ? tag('hit', '命中 ' + r.hits) : tag('pass', '通过');
+      h += '<tr><td><code>' + esc(r.id) + '</code></td><td>' + sevTag(r.severity) + '</td><td>' + res +
+        '</td><td>' + esc(r.description) + (r.error ? '<div class="muted">错误：' + esc(r.error) + '</div>' : '') + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+    el('v-rules').innerHTML = h;
+  })();
+
+  // ---------- 问题列表（筛选） ----------
+  function renderIssues() {
+    var list = D.findings.filter(function (f) {
+      return (!state.sev || f.severity === state.sev) && (!state.rule || f.ruleId === state.rule);
+    });
+    var h = '<div class="card"><h2>问题列表（' + list.length + ' / ' + D.findings.length + '）</h2>';
+    h += '<div class="filters"><span class="muted">严重度：</span>';
+    h += '<button data-sev="" class="' + (state.sev ? '' : 'on') + '">全部</button>';
+    SEV.forEach(function (s) {
+      var n = D.summary.counts[s] || 0;
+      if (!n) return;
+      h += '<button data-sev="' + s + '" class="' + (state.sev === s ? 'on' : '') + '">' + s + ' ' + n + '</button>';
+    });
+    if (state.rule) {
+      h += '<span class="muted" style="margin-left:8px">规则：</span><button data-rule="">' + esc(state.rule) + ' ×</button>';
+    }
+    h += '</div>';
+    if (!list.length) {
+      h += '<div class="empty">没有匹配的问题。</div>';
+    }
+    list.forEach(function (f, i) {
+      h += '<details' + (i < 3 ? ' open' : '') + '><summary>' + sevTag(f.severity) + ' <code>' + esc(f.ruleId) +
+        '</code> ' + (f.file ? esc(f.file) + ' ' : '') + 'L' + f.startLine + '-' + f.endLine +
+        ' <span class="muted">置信度 ' + f.confidence.toFixed(2) +
+        (f.confidence < 0.5 ? '（提示性，不计入风险分）' : '') + '</span></summary>' +
+        '<ul>' + f.evidence.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>' +
+        (f.snippet ? '<pre>' + esc(f.snippet) + '</pre>' : '') +
+        (f.suggestion ? '<div><b>建议：</b>' + esc(f.suggestion) + '</div>' : '') +
+        '</details>';
+    });
+    h += '</div>';
+    el('v-issues').innerHTML = h;
+    el('v-issues').querySelectorAll('button[data-sev]').forEach(function (b) {
+      b.onclick = function () { state.sev = b.getAttribute('data-sev') || null; renderIssues(); };
+    });
+    el('v-issues').querySelectorAll('button[data-rule]').forEach(function (b) {
+      b.onclick = function () { state.rule = null; renderIssues(); };
+    });
+  }
+  window.__f = function (kind, val) {
+    if (kind === 'sev') { state.sev = val; state.rule = null; }
+    if (kind === 'rule') { state.rule = val; state.sev = null; }
+    renderIssues();
+    switchTab('issues');
+    window.scrollTo(0, 0);
+  };
+
+  // ---------- 子 Workflow ----------
+  (function () {
+    var h = '';
+    if (!D.subtree) {
+      h = '<div class="card"><h2>子 Workflow</h2><div class="empty">本次分析未聚合子 Workflow（单文件或入口无同目录子流程）。</div></div>';
+    } else {
+      var s = D.subtree;
+      h = '<div class="card"><h2>聚合概览</h2><div class="note">聚合口径：取最危险单文件的风险分（不求和，避免虚高）。' +
+        '共 ' + s.files + ' 个文件 / ' + s.callSites + ' 个调用点 / ' + s.totalFindings + ' 条问题，最高风险 ' +
+        s.maxRisk + '/100' + (s.riskiest ? '（' + esc(s.riskiest) + '）' : '') + '。</div>' +
+        '<div class="filters"><span class="muted">规则分布：</span>' +
+        Object.keys(s.rules).sort(function (a, b) { return s.rules[b] - s.rules[a]; }).map(function (k) {
+          return tag('static', k + ' ×' + s.rules[k]);
+        }).join(' ') + '</div></div>';
+
+      var sorted = s.subWorkflows.slice().sort(function (a, b) { return b.riskScore - a.riskScore; });
+      var maxRisk = sorted.length ? Math.max.apply(null, sorted.map(function (x) { return x.riskScore; })) : 1;
+      h += '<div class="card"><h2>各文件风险（点击按主要规则筛选）</h2>';
+      h += sorted.map(function (x) {
+        var pct = maxRisk ? (x.riskScore / maxRisk * 100) : 0;
+        return '<div class="bar-row"' + (x.topRule ? ' onclick="window.__f(\'rule\',\'' + esc(x.topRule) + '\')"' : '') + '>' +
+          '<span class="bl" title="' + esc(x.file) + '">' + esc(x.file) + '</span>' +
+          '<span class="track"><span class="fill" style="width:' + pct + '%;background:' + (x.riskScore >= 20 ? '#DC5148' : (x.riskScore >= 10 ? '#E8A044' : '#4389D5')) + '"></span></span>' +
+          '<span class="val">' + x.riskScore + ' · ' + x.totalFindings + ' 问题</span></div>';
+      }).join('');
+      h += '</div>';
+
+      h += '<div class="card"><h2>明细</h2><table><thead><tr><th>文件</th><th>风险分</th><th>调用点</th><th>问题数</th><th>主要规则</th></tr></thead><tbody>' +
+        sorted.map(function (x) {
+          return '<tr><td>' + esc(x.file) + '</td><td>' + x.riskScore + '</td><td>' + x.callSites +
+            '</td><td>' + x.totalFindings + '</td><td>' + (x.topRule ? '<code>' + esc(x.topRule) + '</code>' : '-') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    el('v-subtree').innerHTML = h;
+  })();
+
+  // ---------- 建议与 AI ----------
+  (function () {
+    var ai = D.recommendations.filter(function (r) { return r.source === 'ai'; });
+    var st = D.recommendations.filter(function (r) { return r.source !== 'ai'; });
+    var h = '<div class="card"><h2>建议总览</h2><div class="note">' +
+      '共 ' + D.recommendations.length + ' 条建议：' + tag('ai', 'AI 复核 ' + ai.length) + ' 条、' +
+      tag('static', '静态规则 ' + st.length) + ' 条。AI 建议的 expectedImpact 无基准时一律「待 Benchmark」。' +
+      (D.meta.aiEnabled ? '' : '（本次未开启 AI，用 --suggest 可开启）') + '</div></div>';
+
+    function block(list, title, emptyText) {
+      var s = '<div class="card"><h2>' + title + '（' + list.length + '）</h2>';
+      if (!list.length) return s + '<div class="empty">' + emptyText + '</div></div>';
+      list.forEach(function (r) {
+        s += '<div class="rec"><h3>' + esc(r.id) + ' ' + esc(r.title) + ' ' +
+          (r.source === 'ai' ? tag('ai', 'AI') : tag('static', '静态')) + ' ' + sevTag(r.severity) + '</h3><dl>' +
+          '<dt>关联规则</dt><dd>' + (r.ruleIds.length ? r.ruleIds.map(function (x) { return '<code>' + esc(x) + '</code>'; }).join(' ') : '<span class="muted">由 AI 语义分析得出，无静态规则关联</span>') + '</dd>' +
+          '<dt>预期收益</dt><dd>' + esc(r.expectedImpact) + '</dd>' +
+          '<dt>质量风险</dt><dd>' + esc(r.qualityRisk) + '</dd>' +
+          '<dt>验证条件</dt><dd><ul>' + r.validation.map(function (v) { return '<li>' + esc(v) + '</li>'; }).join('') + '</ul></dd>' +
+          '</dl></div>';
+      });
+      return s + '</div>';
+    }
+    h += block(ai, 'AI 复核建议', D.meta.aiEnabled ? 'AI 未产出结构化建议（可能超时或输出不合规，见诊断）' : '本次未开启 AI 复核');
+    h += block(st, '静态规则建议', '无静态建议');
+
+    if (D.unknowns.length) {
+      h += '<div class="card"><h2>静态不可判定（禁止据此自动并行化）</h2><ul>' +
+        D.unknowns.map(function (u) { return '<li>L' + u.line + ' <code>' + esc(u.id) + '</code>：' + esc(u.reason) + '</li>'; }).join('') +
+        '</ul></div>';
+    }
+    el('v-recs').innerHTML = h;
+  })();
+
+  // ---------- Tab 切换 ----------
+  function switchTab(v) {
+    document.querySelectorAll('#tabs button').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-v') === v);
+    });
+    ['overview', 'rules', 'issues', 'subtree', 'recs'].forEach(function (n) {
+      el('v-' + n).classList.toggle('active', n === v);
+    });
+  }
+  document.getElementById('tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]');
+    if (b) { switchTab(b.getAttribute('data-v')); window.scrollTo(0, 0); }
+  });
+
+  renderIssues();
+})();
+</script>
+</body>
+</html>
