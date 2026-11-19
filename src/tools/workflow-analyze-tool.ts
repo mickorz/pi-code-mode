@@ -121,8 +121,8 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
     report.diagnostics.push("已请求 AI 建议但当前入口未配置 Planner（静态分析结果仍有效）")
   }
   if (input.includeSuggestions && input.plannerAgent) {
-    const snippet = file ? extractSnippet(source, report) : undefined
-    const prompt = buildPlannerPrompt(report, { ...(snippet ? { codeSnippet: snippet } : {}) })
+    // 不传源码片段：2026-11-19 实测 4000 字符源码会让模型 120s+ 零响应（见 buildPlannerPrompt 注释）
+    const prompt = buildPlannerPrompt(report)
     try {
       const text = await input.plannerAgent(prompt)
       const parsed = parsePlannerResponse(text)
@@ -162,21 +162,12 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
   }
 }
 
-/** 抽取 finding 附近代码片段（控制 prompt 体积，不塞整文件） */
-function extractSnippet(source: string, report: AnalysisReport, contextLines = 12): string {
-  const lines = source.split("\n")
-  const ranges = report.findings.slice(0, 5).map((f) => [Math.max(1, f.location.startLine - 3), Math.min(lines.length, f.location.endLine + 3)])
-  const picked = new Set<number>()
-  for (const [a, b] of ranges) for (let i = a; i <= b && i - a < contextLines * 2; i++) picked.add(i)
-  return [...picked]
-    .sort((x, y) => x - y)
-    .map((n) => `${String(n).padStart(4)}| ${lines[n - 1] ?? ""}`)
-    .join("\n")
-}
-
 /**
  * 构造真实 Planner agent（M6-P1-3 接线）：用 PiAgentAdapter 跑一次性分析调用。
  * 审计发现此前 includeSuggestions:true 静默无效（未注入 plannerAgent）。
+ *
+ * 默认超时 240s：2026-11-19 实测瘦身后 prompt 需 63~145s（模型输出长度波动），
+ * 原 60s 默认必然失败（给 1.6 倍余量覆盖实测最坏值）。
  */
 export function createPlannerAgent(options: { cwd?: string; agentDir?: string; model?: string; timeoutMs?: number } = {}) {
   return async (prompt: string): Promise<string> => {
@@ -188,7 +179,7 @@ export function createPlannerAgent(options: { cwd?: string; agentDir?: string; m
     })
     // 注意：AgentRequest.timeoutMs 当前未被 PiAgentAdapter 消费（只认 signal），
     // 因此必须用 AbortController 施加真实超时——否则模型调用挂住会让调用方永久静默等待。
-    const timeoutMs = options.timeoutMs ?? 60_000
+    const timeoutMs = options.timeoutMs ?? 240_000
     const controller = new AbortController()
     const executionId = `analyze-planner-${Date.now()}`
 
@@ -352,7 +343,7 @@ export function createWorkflowOptimizeTool(deps: {
         },
         propose: async ({ report, source }) => {
           if (!deps.plannerAgent) return { recommendations: report.recommendations }
-          const prompt = buildPlannerPrompt(report, { codeSnippet: source.slice(0, 4000) })
+          const prompt = buildPlannerPrompt(report)
           const parsed = parsePlannerResponse(await deps.plannerAgent(prompt))
           if (!parsed.ok || !parsed.output) return { recommendations: report.recommendations }
           const merged = mergeRecommendations(report.recommendations, parsed.output)

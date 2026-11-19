@@ -33,14 +33,19 @@ const goodProposal = {
 
 test("buildPlannerPrompt：包含硬性要求、报告摘要、禁止虚构收益", () => {
   const report = buildReport({ source: read("repeated-context.js"), file: "rc.js" })
-  const prompt = buildPlannerPrompt(report, { codeSnippet: "const x = 1" })
+  const prompt = buildPlannerPrompt(report)
   assert.match(prompt, /不得虚构数值收益/)
   assert.match(prompt, /待 Benchmark/)
   assert.match(prompt, /Evidence Reference/)
   assert.match(prompt, /## 分析报告摘要/)
   assert.match(prompt, /## Findings/)
-  assert.match(prompt, /## 相关代码片段/)
-  assert.ok(prompt.length < 8000, `prompt 过长 ${prompt.length}`)
+  // 不塞源码：2026-11-19 实测 4000 字符源码会让模型 120s+ 零响应
+  assert.doesNotMatch(prompt, /## 相关代码片段/)
+  // 输出格式必须是「照抄示例」而不是「schema 描述」——后者会让该模型长时间无输出
+  assert.match(prompt, /## 输出格式（照抄这个结构）/)
+  assert.match(prompt, /\{"analysisSummary":"一句话","proposals":\[/)
+  // 体积守卫：瘦身版实测 784 字符；超 1500 视为回退（源码/嵌套列表被塞回来了）
+  assert.ok(prompt.length < 1500, `prompt 过长 ${prompt.length}，AI 建议可能超时`)
 })
 
 test("validatePlannerOutput：合法输出通过", () => {
@@ -82,15 +87,42 @@ test("parsePlannerResponse：无 JSON 时报错", () => {
   assert.equal(r.ok, false)
 })
 
-test("mergeRecommendations：静态建议保留，AI 建议去重叠加", () => {
+test("mergeRecommendations：同源 AI 建议替换静态建议（不丢弃）", () => {
+  const report = buildReport({ source: read("repeated-context.js"), file: "rc.js" })
+  // problem 提到静态建议的 ruleId（INPUT-001）→ 判为同源，应替换该条而不是丢弃
+  const sameSource = { ...goodProposal, problem: "INPUT-001：allRequirements 被三次注入" }
+  const ai = validatePlannerOutput({ analysisSummary: "s", proposals: [sameSource] }).output
+  const merged = mergeRecommendations(report.recommendations, ai)
+  // 旧实现 `if (dup) continue` 会把同源 AI 建议整条丢弃，用户只能看到静态模板文案
+  const replaced = merged.find((r) => r.title === "提取公共上下文")
+  assert.ok(replaced, "AI 建议必须出现在结果里（旧实现会丢弃）")
+  assert.equal(merged.length, report.recommendations.length, "同源应替换而非追加")
+  assert.deepEqual(replaced!.ruleIds, ["INPUT-001"], "替换项应保留静态 ruleIds 关联")
+  assert.equal(replaced!.validation.length, 2, "内容应是 AI 版本（2 条验收）")
+})
+
+test("mergeRecommendations：不同源 AI 建议追加", () => {
   const report = buildReport({ source: read("repeated-context.js"), file: "rc.js" })
   const ai = validatePlannerOutput({ analysisSummary: "s", proposals: [goodProposal] }).output
   const merged = mergeRecommendations(report.recommendations, ai)
-  assert.ok(merged.length >= report.recommendations.length)
-  assert.ok(merged.some((r) => r.title === "提取公共上下文"))
-  // 静态建议的收益文案不被覆盖
-  const statics = merged.filter((r) => r.ruleIds.length > 0)
-  assert.ok(statics.every((r) => /待 Benchmark/.test(r.expectedImpact)))
+  assert.equal(merged.length, report.recommendations.length + 1, "不同源应追加一条")
+  assert.deepEqual(merged.at(-1)!.ruleIds, [], "追加项无静态 ruleId 关联")
+})
+
+test("mergeRecommendations：追加的 AI 建议不得与静态 id 撞号", () => {
+  const report = buildReport({ source: read("repeated-context.js"), file: "rc.js" })
+  // 静态建议已占用 OPT-001..003；AI 也从 OPT-001 起编号（真实模型行为）
+  const ai = validatePlannerOutput({
+    analysisSummary: "s",
+    proposals: [
+      { ...goodProposal, id: "OPT-001", title: "全新建议甲", problem: "完全不同的问题甲" },
+      { ...goodProposal, id: "OPT-002", title: "全新建议乙", problem: "完全不同的问题乙" },
+    ],
+  }).output
+  const merged = mergeRecommendations(report.recommendations, ai)
+  const ids = merged.map((r) => r.id)
+  assert.equal(new Set(ids).size, ids.length, `id 必须唯一，实际：${ids.join(",")}`)
+  assert.equal(merged.length, report.recommendations.length + 2)
 })
 
 test("mergeRecommendations：AI 缺失时仅返回静态建议", () => {

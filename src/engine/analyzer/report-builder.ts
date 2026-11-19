@@ -29,6 +29,12 @@ export interface ExecutionEstimate {
   dynamicNodes: number
 }
 
+/** finding + 命中处源码片段（报告里直接看代码，不用回跳文件） */
+export interface AnalysisFindingWithSnippet extends AnalyzerFinding {
+  /** 命中行的源码（最多 3 行，已去缩进前缀） */
+  snippet?: string
+}
+
 export interface Recommendation {
   id: string
   title: string
@@ -38,6 +44,8 @@ export interface Recommendation {
   expectedImpact: string
   qualityRisk: "low" | "medium" | "high"
   validation: string[]
+  /** 来源：缺省=静态规则生成；"ai"=模型复核生成的详细方案（报告里标 [AI]） */
+  source?: "ai"
 }
 
 export interface AnalysisReport {
@@ -63,7 +71,16 @@ export interface AnalysisReport {
     candidates: Array<{ ids: string[]; risk?: string }>
     unknowns: Array<{ id: string; line: number; reason: string }>
   }
-  findings: AnalyzerFinding[]
+  /** 全量规则检查清单：每条规则检查了什么、命中几条（0 = 通过） */
+  ruleInventory: Array<{
+    id: string
+    severity: string
+    description: string
+    hits: number
+    status: "hit" | "pass" | "error"
+    error?: string
+  }>
+  findings: AnalysisFindingWithSnippet[]
   recommendations: Recommendation[]
   diagnostics: string[]
   /** 跨文件聚合（分析入口 + 子 workflow 时填充） */
@@ -147,13 +164,32 @@ export function buildReport(input: {
   /** 固定输出时间（测试确定性用；缺省当前时间） */
   generatedAt?: string
 }): AnalysisReport {
-  const { findings, context } = runRules(input.source, {
+  const { findings, context, ruleRuns } = runRules(input.source, {
     ...(input.file ? { file: input.file } : {}),
   })
   const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 }
   for (const f of findings) counts[f.severity]++
+  const sourceLines = input.source.split("\n")
+  const findingsWithSnippet: AnalysisFindingWithSnippet[] = findings.map((f) => {
+    const from = Math.max(1, f.location.startLine)
+    const to = Math.min(sourceLines.length, Math.max(from, f.location.endLine))
+    const snippetLines = sourceLines.slice(from - 1, Math.min(to, from + 2))
+    return {
+      ...f,
+      ...(snippetLines.length > 0 ? { snippet: snippetLines.join("\n").trimEnd() } : {}),
+    }
+  })
+
   return {
     schemaVersion: "1.0",
+    ruleInventory: ruleRuns.map((r) => ({
+      id: r.id,
+      severity: r.severity,
+      description: r.description,
+      hits: r.hits,
+      status: r.error ? ("error" as const) : r.hits > 0 ? ("hit" as const) : ("pass" as const),
+      ...(r.error ? { error: r.error } : {}),
+    })),
     analyzerVersion: ANALYZER_VERSION,
     ruleSetVersion: RULE_SET_VERSION,
     sourceHash: `sha256:${createHash("sha256").update(input.source).digest("hex")}`,
@@ -177,7 +213,7 @@ export function buildReport(input: {
       candidates: context.deps.candidates.map((c) => ({ ids: c.ids, ...(c.risk ? { risk: c.risk } : {}) })),
       unknowns: context.deps.unknowns.map((u) => ({ id: u.id, line: u.line, reason: u.reason })),
     },
-    findings,
+    findings: findingsWithSnippet,
     recommendations: recommend(findings),
     diagnostics: context.ast.diagnostics,
   }
@@ -186,64 +222,100 @@ export function buildReport(input: {
 /** Markdown 渲染（人类可读摘要） */
 export function renderMarkdown(report: AnalysisReport): string {
   const lines: string[] = []
+  const e = report.executionEstimate
   lines.push(`# Workflow Analysis: ${report.file ?? "(inline)"}`)
   lines.push("")
   lines.push(`- analyzer ${report.analyzerVersion} / ruleSet ${report.ruleSetVersion}`)
   lines.push(`- sourceHash: \`${report.sourceHash.slice(0, 23)}…\``)
   lines.push(`- **Risk Score: ${report.summary.riskScore}/100**`)
+  if (report.subtree && report.subtree.files > 1) {
+    lines.push(
+      `- 跨文件聚合: ${report.subtree.files} 个文件 / ${report.subtree.callSites} 调用点 / ${report.subtree.totalFindings} finding / 最高 ${report.subtree.maxRisk}（${report.subtree.riskiest ?? "-"}）`,
+    )
+  }
   lines.push("")
   lines.push("## 调用结构")
   lines.push("")
-  const e = report.executionEstimate
   lines.push(`- 调用点: ${e.callSites}（agent ${e.agentCallSites} / workflow ${e.workflowCallSites}）`)
   lines.push(`- 估算任务量: ${e.estimatedTasks}${e.determined ? "" : "（含动态节点，为下限估算）"}`)
   if (e.concurrency !== undefined) lines.push(`- 并发上限: ${e.concurrency}`)
   if (e.estimatedWaves !== undefined) lines.push(`- 预计波次: ${e.estimatedWaves}`)
   if (e.dynamicNodes > 0) lines.push(`- 动态节点: ${e.dynamicNodes}（静态不可精确判定）`)
+
+  // ---- 检查清单（关键：让用户看到"检查了什么"，未命中也列出） ----
   lines.push("")
-  lines.push("## 发现的问题")
+  lines.push("## 检查清单（全部规则都执行过）")
   lines.push("")
-  if (report.findings.length === 0) lines.push("无。")
-  for (const f of report.findings) {
-    lines.push(
-      `- **${f.severity.toUpperCase()}** \`${f.ruleId}\` (L${f.location.startLine}-${f.location.endLine}, conf ${f.confidence.toFixed(2)})`,
-    )
-    for (const ev of f.evidence) lines.push(`  - ${ev}`)
-    if (f.suggestion) lines.push(`  - 建议：${f.suggestion}`)
+  lines.push("| 规则 | 严重度 | 结果 | 检查项 |")
+  lines.push("| --- | --- | --- | --- |")
+  for (const r of report.ruleInventory) {
+    const status = r.status === "error" ? "**执行失败**" : r.hits > 0 ? `命中 ${r.hits}` : "通过"
+    lines.push(`| \`${r.id}\` | ${r.severity} | ${status} | ${r.description} |`)
   }
+
+  // ---- findings 详情（带代码片段） ----
+  lines.push("")
+  lines.push(`## 发现的问题（${report.findings.length}）`)
+  lines.push("")
+  if (report.findings.length === 0) {
+    lines.push("全部规则检查通过，未发现静态风险。")
+  }
+  for (const f of report.findings) {
+    lines.push(`### ${f.severity.toUpperCase()} \`${f.ruleId}\` @ L${f.location.startLine}-${f.location.endLine}`)
+    lines.push("")
+    lines.push(`- 置信度: ${f.confidence.toFixed(2)}${f.confidence < 0.5 ? "（提示性，不计入风险分）" : ""}`)
+    for (const ev of f.evidence) lines.push(`- ${ev}`)
+    if (f.snippet) {
+      lines.push("")
+      lines.push("```js")
+      lines.push(f.snippet)
+      lines.push("```")
+    }
+    if (f.suggestion) {
+      lines.push("")
+      lines.push(`**建议**：${f.suggestion}`)
+    }
+    lines.push("")
+  }
+
+  // ---- 子 workflow 明细 ----
   if (report.subtree && report.subtree.files > 1) {
+    lines.push("## 子 Workflow 明细")
     lines.push("")
-    lines.push(`## 子 Workflow（聚合 ${report.subtree.files} 个文件，共 ${report.subtree.callSites} 个调用点）`)
-    lines.push("")
-    lines.push(`- 聚合风险（取最危险单文件）：**${report.subtree.maxRisk}/100**${report.subtree.riskiest ? `（${report.subtree.riskiest}）` : ""}`)
-    lines.push(`- 全部 finding：${report.subtree.totalFindings} 条`)
+    lines.push(`- 聚合口径：取最危险单文件（不相加，避免虚高）`)
+    lines.push(`- 规则分布：${Object.entries(report.subtree.rules).map(([k, v]) => `${k}×${v}`).join(", ")}`)
     lines.push("")
     lines.push("| 文件 | 风险分 | 调用点 | finding | 主要规则 |")
     lines.push("| --- | --- | --- | --- | --- |")
     for (const sw of report.subtree.subWorkflows) {
       lines.push(`| ${sw.file} | ${sw.riskScore} | ${sw.callSites} | ${sw.totalFindings} | ${sw.topRule ?? "-"} |`)
     }
+    lines.push("")
   }
-  lines.push("")
+
+  // ---- 优化建议 ----
   lines.push("## 优化建议")
   lines.push("")
   if (report.recommendations.length === 0) lines.push("无。")
   for (const r of report.recommendations) {
-    lines.push(`### ${r.id} ${r.title}`)
+    lines.push(`### ${r.id} ${r.title}${r.source === "ai" ? " `[AI]`" : ""}`)
     lines.push(`- 严重度: ${r.severity} / 质量风险: ${r.qualityRisk}`)
     lines.push(`- 预期收益: ${r.expectedImpact}`)
     lines.push(`- 验证条件: ${r.validation.join("；")}`)
-  }
-  if (report.dependencies.unknowns.length > 0) {
     lines.push("")
+  }
+
+  if (report.dependencies.unknowns.length > 0) {
     lines.push("## 静态不可判定（禁止自动采纳）")
     lines.push("")
     for (const u of report.dependencies.unknowns) lines.push(`- L${u.line} ${u.id}: ${u.reason}`)
+    lines.push("")
   }
   if (report.diagnostics.length > 0) {
-    lines.push("")
     lines.push("## 诊断")
+    lines.push("")
     for (const d of report.diagnostics) lines.push(`- ${d}`)
+    lines.push("")
   }
   return lines.join("\n")
 }

@@ -1,0 +1,7 @@
+{
+  "tiers": {
+    "fast": "cc-switch-zhipu-glm-copy/deepseek-v4.1-flash-official",
+    "big": "cc-switch-zhipu-glm-copy/BF_ULTRA",
+    "ultra": "cc-switch-zhipu-glm-copy/gpt-5.6-terra"
+  }
+}

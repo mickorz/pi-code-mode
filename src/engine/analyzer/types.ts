@@ -31,5 +31,7 @@ export interface AnalyzerRule {
   id: string
   version: string
   severity: Severity
+  /** 一句话说明这条规则检查什么（报告里作为"检查项"展示，让用户知道覆盖范围） */
+  description: string
   analyze(context: AnalyzerContext): AnalyzerFinding[]
 }

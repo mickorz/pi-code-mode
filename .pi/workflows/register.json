@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "workflows": [
+    {
+      "id": "smoke_test",
+      "name": "smoke_test",
+      "description": "最小冒烟：2 个 agent 并行",
+      "file": "dev-examples/sample-project-acceptance/A-basic/smoke-test.js",
+      "registeredAt": "2026-11-16T12:25:36.574Z"
+    }
+  ]
+}

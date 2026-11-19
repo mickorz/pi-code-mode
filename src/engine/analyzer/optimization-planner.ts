@@ -40,48 +40,60 @@ export interface PlannerOutput {
   proposals: OptimizationProposal[]
 }
 
-/** 构造精简 Prompt：只给报告摘要 + 局部代码（不塞整文件） */
-export function buildPlannerPrompt(report: AnalysisReport, opts: { codeSnippet?: string; maxFindings?: number } = {}): string {
+/**
+ * 构造精简 Prompt
+ *
+ * 2026-11-19 实测（glm-5.3-flash，当前唯一可用 provider，reasoning 模型）：
+ *  - 原版 5126 字符（含 4000 字符源码片段 + TS schema 描述）→ 120~260s 零响应，60s/180s 全超时
+ *  - 瘦身版 784 字符（无源码 + findings 一行一条 + JSON 示例）→ 63~71s 正常返回
+ *
+ * 结论：① 不塞源码——模型只看结构摘要就能给建议；② 输出格式用「照抄示例」而不是
+ * 「schema 描述」（`{ analysisSummary: string, ... }` 这种形态会让该模型长时间无任何输出）。
+ * 参数只有 maxFindings/maxProposals：体积与条数直接决定成败，其余调参无实测依据。
+ */
+export function buildPlannerPrompt(report: AnalysisReport, opts: { maxFindings?: number; maxProposals?: number } = {}): string {
   const maxFindings = opts.maxFindings ?? 12
+  const maxProposals = opts.maxProposals ?? 3
   const top = report.findings.slice(0, maxFindings)
+  const e = report.executionEstimate
   const lines: string[] = []
-  lines.push("你是 Workflow 性能优化顾问。基于以下**静态分析报告**提出结构化优化方案。")
-  lines.push("")
-  lines.push("硬性要求：")
-  lines.push("1. 不要重新分析整个项目，只用给定信息；信息不足时明确说「信息不足」而不是猜测。")
-  lines.push("2. 只对 confidence ≥ 0.5 的 finding 提建议；Candidate/Unknown 必须标注「需语义确认」。")
-  lines.push("3. 每条建议必须说明：依赖关系（为什么能改）、修改方式（可执行）、验证条件。")
-  lines.push("4. **不得虚构数值收益**：没有基准数据时写「待 Benchmark」。")
-  lines.push("5. 涉及共享上下文压缩的建议，必须保留原始证据可按需读取（Evidence Reference 层）。")
-  lines.push("6. 不要建议直接修改生产脚本；输出建议即可，应用需走授权链。")
+  lines.push("你是 Workflow 性能优化顾问。仅基于下面的静态分析摘要提建议，不要重新分析项目，信息不足就说信息不足。")
   lines.push("")
   lines.push("## 分析报告摘要")
-  lines.push(`- 文件: ${report.file ?? "(inline)"}`)
-  lines.push(`- 风险分: ${report.summary.riskScore}/100`)
-  lines.push(`- 调用点: ${report.executionEstimate.callSites}（agent ${report.executionEstimate.agentCallSites}）`)
-  lines.push(`- 估算任务量: ${report.executionEstimate.estimatedTasks}${report.executionEstimate.determined ? "" : "（含动态，下限）"}`)
-  if (report.executionEstimate.concurrency !== undefined) lines.push(`- 并发上限: ${report.executionEstimate.concurrency}`)
-  if (report.executionEstimate.estimatedWaves !== undefined) lines.push(`- 预计波次: ${report.executionEstimate.estimatedWaves}`)
+  lines.push(
+    `- 文件: ${report.file ?? "(inline)"} | 风险分 ${report.summary.riskScore}/100 | 调用点 ${e.callSites}（agent ${e.agentCallSites}）| 估算任务量 ${e.estimatedTasks}${e.determined ? "" : "（含动态，下限）"}`,
+  )
+  if (e.concurrency !== undefined) {
+    lines.push(`- 并发上限 ${e.concurrency}${e.estimatedWaves !== undefined ? ` | 预计波次 ${e.estimatedWaves}` : ""}`)
+  }
   lines.push("")
   lines.push("## Findings")
-  for (const f of top) {
-    lines.push(`- [${f.severity}/${f.confidence.toFixed(2)}] ${f.ruleId} L${f.location.startLine}-${f.location.endLine}`)
-    for (const ev of f.evidence) lines.push(`  - ${ev}`)
+  // 一行一条：证据合并到同一行，避免嵌套列表把 prompt 撑大
+  if (top.length === 0) lines.push("（无）")
+  for (const [i, f] of top.entries()) {
+    lines.push(
+      `${i + 1}. ${f.ruleId} (${f.severity}, 置信度${f.confidence.toFixed(2)}) L${f.location.startLine}-${f.location.endLine}: ${f.evidence.join("；")}`,
+    )
   }
   if (report.dependencies.unknowns.length > 0) {
     lines.push("")
-    lines.push("## 静态不可判定（不可据此自动并行化）")
-    for (const u of report.dependencies.unknowns) lines.push(`- L${u.line}: ${u.reason}`)
-  }
-  if (opts.codeSnippet) {
-    lines.push("")
-    lines.push("## 相关代码片段")
-    lines.push("```js")
-    lines.push(opts.codeSnippet.slice(0, 4000))
-    lines.push("```")
+    lines.push("## 静态不可判定（禁止据此自动并行化）")
+    lines.push(report.dependencies.unknowns.map((u) => `L${u.line}: ${u.reason}`).join("；"))
   }
   lines.push("")
-  lines.push("输出 JSON：{ analysisSummary: string, proposals: [{ id, title, severity, target:{startLine,endLine}, problem, proposal:{type,action,codeSketch?}, dependencyAnalysis, expectedImpact:{note}, qualityRisk, validation: string[] }] }")
+  lines.push("## 要求")
+  lines.push(`- 最多 ${maxProposals} 条建议，只针对上面列出的问题`)
+  lines.push("- 每条必须说明：能否改（依赖关系）、怎么改（可执行动作）、怎么验证")
+  lines.push("- 只对置信度 ≥ 0.5 的问题给确定建议；置信度 < 0.5 的必须标注「需语义确认」")
+  lines.push("- 不得虚构数值收益，没有基准数据就写「待 Benchmark」")
+  lines.push("- 涉及共享上下文压缩时，必须保留原始证据可按需读取（Evidence Reference 层）")
+  lines.push("- 不要建议直接修改生产脚本：输出建议即可，应用需走授权链")
+  lines.push("- 只输出 JSON，不要 markdown 围栏，不要解释文字")
+  lines.push("")
+  lines.push("## 输出格式（照抄这个结构）")
+  lines.push(
+    '{"analysisSummary":"一句话","proposals":[{"id":"OPT-001","title":"标题","severity":"medium","target":{"startLine":1,"endLine":2},"problem":"问题","proposal":{"type":"parallel","action":"动作"},"dependencyAnalysis":"依赖","expectedImpact":{"note":"待 Benchmark"},"qualityRisk":"low","validation":["验收1"]}]}',
+  )
   return lines.join("\n")
 }
 
@@ -171,17 +183,38 @@ export function mergeRecommendations(staticRecs: Recommendation[], ai: PlannerOu
   const out = [...staticRecs]
   if (!ai) return out
   for (const p of ai.proposals) {
-    const dup = out.find((r) => r.title === p.title || r.ruleIds.some((id) => p.problem.includes(id)))
-    if (dup) continue
-    out.push({
-      id: p.id,
+    const toRec = (ruleIds: string[], id: string): Recommendation => ({
+      id,
       title: p.title,
-      ruleIds: [],
+      ruleIds,
       severity: p.severity,
       expectedImpact: p.expectedImpact.note,
       qualityRisk: p.qualityRisk,
       validation: p.validation,
+      source: "ai" as const,
     })
+    // 同源（静态建议的 ruleId 出现在 AI 的问题描述里）→ 用 AI 版本**替换**而不是丢弃。
+    // 2026-11-19 修复：旧实现 `if (dup) continue` 把 AI 精心写的行动方案/依赖分析整条扔掉，
+    // 用户看到的仍是一行静态模板文案——AI 检查的价值被完全抵消。
+    const idx = out.findIndex((r) => r.ruleIds.some((ruleId) => p.problem.includes(ruleId)))
+    if (idx >= 0) {
+      const prev = out[idx]!
+      // 保留静态的 id 与 ruleIds（位置对应，避免编号跳号），内容换成 AI 详细版
+      out[idx] = toRec(prev.ruleIds, prev.id)
+      continue
+    }
+    if (out.some((r) => r.title === p.title)) continue // 标题相同视为同一条，不重复追加
+    // AI 自己从 OPT-001 开始编号，与静态建议必然撞号：冲突则分配未占用的编号
+    const used = new Set(out.map((r) => r.id))
+    let id = p.id
+    if (used.has(id)) {
+      let n = 1
+      do {
+        id = `OPT-${String(n).padStart(3, "0")}`
+        n += 1
+      } while (used.has(id))
+    }
+    out.push(toRec([], id))
   }
   return out
 }

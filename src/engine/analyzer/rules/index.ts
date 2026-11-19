@@ -53,6 +53,7 @@ export const dynamicParallel: AnalyzerRule = {
   id: "CONC-002",
   version: "1.0",
   severity: "medium",
+  description: "并行任务数是运行时动态决定的分片（静态不可知，需人工确认分片数/并发/超时）",
   analyze(ctx) {
     const findings: AnalyzerFinding[] = []
     // 并行调用的第一个参数是 X.map(...) / X.filter(...).map(...) 这类运行时集合表达式
@@ -101,6 +102,7 @@ export const concWaves: AnalyzerRule = {
   id: "CONC-001",
   version: "1.0",
   severity: "medium",
+  description: "并行任务数超过并发上限 → 多波次执行（要求任务数静态可确定）",
   analyze(ctx) {
     const { concurrency, total } = staticsOf(ctx)
     const parallelNodes = ctx.ast.nodes.filter((n) => n.kind === "parallel" || n.kind === "pipeline")
@@ -141,6 +143,7 @@ export const inputRepeat: AnalyzerRule = {
   id: "INPUT-001",
   version: "1.0",
   severity: "high",
+  description: "同一个输入对象被多次注入不同 agent → 重复序列化与 token 浪费",
   analyze(ctx) {
     const findings: AnalyzerFinding[] = []
     // 统计每个标识符在多少个 agent/workflow 调用参数中出现（含动态模板引用）
@@ -191,6 +194,7 @@ export const serialChain: AnalyzerRule = {
   id: "SERIAL-001",
   version: "1.0",
   severity: "low",
+  description: "多个 agent 构成明确数据依赖链（合理串行，但可能是墙钟瓶颈）",
   analyze(ctx) {
     return ctx.deps.serialChains
       .filter((c) => c.length >= 3)
@@ -214,6 +218,7 @@ export const parallelCandidate: AnalyzerRule = {
   id: "SERIAL-002",
   version: "1.0",
   severity: "medium",
+  description: "源码相邻但无数据引用的 agent 调用 → 可并行候选（需语义确认）",
   analyze(ctx) {
     return ctx.deps.candidates.map((c) => ({
       ruleId: "SERIAL-002",
@@ -235,6 +240,7 @@ export const timeoutMissing: AnalyzerRule = {
   id: "TIMEOUT-001",
   version: "1.0",
   severity: "medium",
+  description: "agent 调用缺少 timeoutMs 且无 run 级超时 → 单点挂起会拖垮整阶段",
   analyze(ctx) {
     const findings: AnalyzerFinding[] = []
     // 粗粒度：统计 agent( 调用与 timeoutMs 出现次数
@@ -261,6 +267,7 @@ export const retryCost: AnalyzerRule = {
   id: "RETRY-001",
   version: "1.0",
   severity: "low",
+  description: "retries 放大失败场景下的调用量与 token 消耗",
   analyze(ctx) {
     const retries = [...ctx.source.matchAll(/retries\s*:\s*(\d+)/g)].map((m) => Number(m[1]))
     if (retries.length === 0) return []
@@ -286,6 +293,7 @@ export const deterministicCandidate: AnalyzerRule = {
   id: "DET-001",
   version: "1.0",
   severity: "low",
+  description: "prompt 语义看起来可用确定性 JS 完成（统计/校验），交给 LLM 是浪费",
   analyze(ctx) {
     const patterns: Array<{ re: RegExp; hint: string }> = [
       { re: /agent\s*\(\s*[`'"][^`'"]*(统计|计数|去重|排序|编号|汇总数量)/, hint: "统计/计数/去重/排序类任务优先用 JS 确定性完成" },
@@ -314,6 +322,7 @@ export const recoveryRisk: AnalyzerRule = {
   id: "REC-001",
   version: "1.0",
   severity: "high",
+  description: "大规模任务且无 phase 边界 → 失败后只能整 run 重跑",
   analyze(ctx) {
     const { total, determined } = estimateTaskCount(ctx)
     const phases = (ctx.source.match(/\bphase\s*\(/g) ?? []).length

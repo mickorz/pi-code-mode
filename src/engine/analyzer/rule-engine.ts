@@ -30,17 +30,46 @@ export function buildContext(source: string, opts: RunRulesOptions = {}): Analyz
   }
 }
 
-export function runRules(source: string, opts: RunRulesOptions = {}): { findings: AnalyzerFinding[]; context: AnalyzerContext } {
+/** 单条规则的执行记录（报告里的"检查清单"来源） */
+export interface RuleRun {
+  id: string
+  severity: Severity
+  description: string
+  /** 命中条数（0 = 检查通过） */
+  hits: number
+  /** 执行的规则抛错（hits 记 0 但并不代表通过） */
+  error?: string
+}
+
+export function runRules(source: string, opts: RunRulesOptions = {}): {
+  findings: AnalyzerFinding[]
+  context: AnalyzerContext
+  ruleRuns: RuleRun[]
+} {
   const context = buildContext(source, opts)
   const rules = [...BUILTIN_RULES, ...(opts.extraRules ?? [])]
   const findings: AnalyzerFinding[] = []
+  const ruleRuns: RuleRun[] = []
   for (const rule of rules) {
     try {
       const produced = rule.analyze(context)
+      ruleRuns.push({
+        id: rule.id,
+        severity: rule.severity,
+        description: rule.description,
+        hits: produced.length,
+      })
       for (const f of produced) {
         findings.push({ ...f, location: { ...f.location, ...(opts.file ? { file: opts.file } : {}) } })
       }
     } catch (e) {
+      ruleRuns.push({
+        id: rule.id,
+        severity: rule.severity,
+        description: rule.description,
+        hits: 0,
+        error: String((e as Error)?.message ?? e),
+      })
       // 单条规则失败不阻断整体分析（记一条低置信提示）
       findings.push({
         ruleId: rule.id,
@@ -58,7 +87,7 @@ export function runRules(source: string, opts: RunRulesOptions = {}): { findings
       a.location.startLine - b.location.startLine ||
       a.ruleId.localeCompare(b.ruleId),
   )
-  return { findings, context }
+  return { findings, context, ruleRuns }
 }
 
 /** 危险等级（0-100，越高越危险）；仅统计 confidence ≥ 0.5 的 finding */

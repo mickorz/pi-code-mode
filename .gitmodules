@@ -61,3 +61,9 @@
 	path = thirdparties/PrdGameSkill
 	url = https://github.com/mickorz/PrdGameSkill.git
 	branch = main
+[submodule "thirdparties/pi-background-tasks"]
+	path = thirdparties/PrdGameSkill
+	url = https://github.com/ismailsaleekh/pi-background-tasks
+	branch = main
+
+

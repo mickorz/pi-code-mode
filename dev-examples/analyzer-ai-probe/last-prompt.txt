@@ -1,0 +1,146 @@
+你是 Workflow 性能优化顾问。基于以下**静态分析报告**提出结构化优化方案。
+
+硬性要求：
+1. 不要重新分析整个项目，只用给定信息；信息不足时明确说「信息不足」而不是猜测。
+2. 只对 confidence ≥ 0.5 的 finding 提建议；Candidate/Unknown 必须标注「需语义确认」。
+3. 每条建议必须说明：依赖关系（为什么能改）、修改方式（可执行）、验证条件。
+4. **不得虚构数值收益**：没有基准数据时写「待 Benchmark」。
+5. 涉及共享上下文压缩的建议，必须保留原始证据可按需读取（Evidence Reference 层）。
+6. 不要建议直接修改生产脚本；输出建议即可，应用需走授权链。
+
+## 分析报告摘要
+- 文件: E:/WorkProjects/PrdGameSkill/.opencode-workflows/workflows/game-requirement-audit/4-client-verify.js
+- 风险分: 2/100
+- 调用点: 7（agent 7）
+- 估算任务量: 6（含动态，下限）
+
+## Findings
+- [medium/0.40] SERIAL-002 L301-364
+  - 3 个调用源码相邻但无数据引用（call-4, call-5, call-6）
+  - 组内含动态或存在 Explicit 依赖的节点：call-5——需语义确认后才可并行化
+- [medium/0.40] SERIAL-002 L379-412
+  - 2 个调用源码相邻但无数据引用（call-7, call-8）
+  - 组内含动态或存在 Explicit 依赖的节点：call-7——需语义确认后才可并行化
+- [low/0.80] RETRY-001 L66-98
+  - retries 最高 2 次
+  - agent 调用点 7 个
+  - 失败场景最坏调用量 ≈ 21
+
+## 静态不可判定（不可据此自动并行化）
+- L242: 数组静态长度 0
+
+## 相关代码片段
+```js
+// Game-Requirement-Audit 子流程 S4：客户端查证（agent 链路，评审 P1-1 整改）
+//
+// 执行文档 §5 S4、§13.2/§13.3、§19.2、§21。**Prompt 全文在本文件**（评审 P1-4 要求）。
+//
+// 职责链（确定性脚本与 agent 严格分工）：
+//   1. prepare-verify-input.mjs（branch=client）→ 分片 + run-status 骨架（全 pending）
+//   2. 每分片一个 agent：读分片 + 读真实客户端源码 → 写 verify-output 分片（含落盘闸门）
+//   3. 落盘成功的分片 → run-status 置 completed（失败的保持 pending，不产 entry）
+//   4. collect-source-manifest.mjs → 归集证据文件 + dependencyFiles，分仓 commit/contentHash
+//   5. merge-branch-evidence.mjs → 确定性合并（M1~M8 + 统计不变式 + 版本回填）
+//
+// 铁律：agent 不得执行 git、不得自填 sourceRevision/contentHash/verifiedAt、不得写正式产物。
+//
+// 由主 workflow 经显式路径调用：
+//   await workflow({ scriptPath: DIR + '/4-client-verify.js', label: '客户端查证' }, { runDir, date, codeDir, fguiDir, analysisModel, concurrency, stageIds })
+//
+// stageVersion：S4@1（specs：stage-specs.game-requirement-audit.json）
+
+export const meta = {
+  id: 'game-requirement-audit-client-verify',
+  name: 'game_requirement_audit_client_verify',
+  description: 'S4 客户端查证：分片准备 → agent 读源码产出 CLE 与 verdict → 源码清单采集 → 确定性合并',
+  phases: [{ title: '准备查证输入' }, { title: '并行客户端查证' }, { title: '源码清单与合并' }],
+}
+
+const A = args || {}
+
+const runDir = String(A.runDir || '').trim()
+if (!runDir) throw new Error('runDir 必填（run 根目录，由主编排创建）')
+const date = String(A.date || '').trim()
+if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date 必填 YYYY-MM-DD')
+const codeDir = String(A.codeDir || 'source-code/client/Code')
+const fguiDir = String(A.fguiDir || 'source-code/client/Fgui/assets')
+const analysisModel =
+  A.analysisModel === undefined ? 'biangfeng-gateway/deepseek-v4.1-flash-official' : A.analysisModel
+const stageIds = String(A.stageIds || 'ALL')
+
+setConcurrency(A.concurrency || 16)
+
+function withModel(opts) {
+  return analysisModel ? { model: analysisModel, ...opts } : opts
+}
+const toPosix = (p) => String(p).replaceAll('\\', '/')
+
+const BRANCH_DIR = '2-client'
+const INPUT_DIR = runDir + '/' + BRANCH_DIR + '/runtime/verify-input'
+const OUTPUT_DIR = runDir + '/' + BRANCH_DIR + '/runtime/verify-output'
+const RUN_STATUS = runDir + '/' + BRANCH_DIR + '/runtime/run-status.json'
+const MANIFEST = runDir + '/' + BRANCH_DIR + '/runtime/source-manifest.json'
+
+const PART_RE = /^ST-C\d{2}-cp\d{2}\.json$/
+
+// ============================================================
+// 1. 准备查证输入（确定性）
+// ============================================================
+
+phase('准备查证输入')
+
+const prepOk = await commandSuccess(
+  'node ".opencode-workflows/scripts/prepare-verify-input.mjs" --run-dir "' + runDir +
+    '" --branch client --stage-ids "' + stageIds + '" --date "' + date + '"',
+  300000
+)
+if (!prepOk) throw new Error('S4 查证输入准备失败（见上方命令日志）')
+
+const manifestRead = await agent(
+  [
+    '你是文件回读器，工作目录为项目根目录。只做读取与转写，不做解读。',
+    '',
+    '任务：用 read 工具读取 ' + INPUT_DIR + '/manifest.json（全文小文件），原样返回全部阶段分片清单。',
+    '只输出结构化结果。',
+  ].join('\n'),
+  withModel({
+    label: '回读查证输入清单',
+    schema: {
+      type: 'object',
+      properties: {
+        totalAtomCount: { type: 'number' },
+        stages: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              stageId: { type: 'string' },
+              stageName: { type: 'string' },
+              atomCount: { type: 'number' },
+              partFiles: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['stageId', 'partFiles'],
+          },
+        },
+      },
+      required: ['totalAtomCount', 'stages'],
+    },
+    timeoutMs: 600000,
+    retries: 2,
+  })
+)
+if (!manifestRead || !Array.isArray(manifestRead.stages) || manifestRead.stages.length === 0) {
+  throw new Error('查证输入清单回读异常：' + JSON.stringify(manifestRead))
+}
+const partFiles = []
+for (const s of manifestRead.stages) {
+  for (const f of s.partFiles || []) {
+    if (!PART_RE.test(f)) throw new Error('分片命名不符（期望 ST-Cxx-cpNN.json）：' + f)
+    partFiles.push({ stageId: s.stageId, file: f })
+  }
+}
+if (partFiles.length === 0) throw new Error('查证输入清单无分片')
+log('S4 输入就绪：' + manifestRead.totalAtomCount + '
+```
+
+输出 JSON：{ analysisSummary: string, proposals: [{ id, title, severity, target:{startLine,endLine}, problem, proposal:{type,action,codeSketch?}, dependencyAnalysis, expectedImpact:{note}, qualityRisk, validation: string[] }] }
