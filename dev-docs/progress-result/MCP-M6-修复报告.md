@@ -102,3 +102,20 @@
 - **M5 Optimize 入口**：新增 `workflow_optimize` 工具与 `pi-code-mode optimize <script> [--suggest]` CLI；真实调用 Analyzer/Planner，默认独立工作区+授权闸门，不直接改生产脚本。Planner 无完整 patch 时不会猜测整文件。
 
 本轮回归：build 通过、engine 206/206、contract 97/97、M6 接线 15/15；M4/M5 库级模块已进入主要生产路径，但自动分片/parallel 完全接管与真实 Benchmark 执行器仍需显式配置/后续业务接线。
+
+## 八、四项剩余项完成（本轮收尾）
+
+| # | 项目 | 实现 | 测试 |
+| --- | --- | --- | --- |
+| 1 | `resume --tasks` 独立入口 | `/workflows resume <脚本> [--tasks\|--status]`：任务清单/状态统计渲染 + 任务级恢复执行 | `resume-command.test.ts` 4/4 |
+| 2 | parallel 自动分片接 BatchExecutor | 启用 taskRegistry 且任务数 ≥ `autoShardThreshold`（缺省 8）→ 走 BatchExecutor，获得跨 run 复用/租约/超时；失败仍塌缩 null | `auto-shard.test.ts` 3/3（10 任务第二轮零 agent 调用） |
+| 3 | AdaptiveScheduler 默认接管 | `autoAdaptive` 缺省 true：自动从 TaskCheckpoint 构建耗时画像参与 parallel 长任务先发，无需手填 `adaptiveProfiles` | `auto-adaptive.test.ts` 3/3 |
+| 4 | M5 真实 Benchmark 执行器 | `src/engine/evaluator/benchmark-runner.ts`：从 Plan 提取 Required Validation、before/after 真实测量、质量降级判定（变快但验证失败 → 不通过）、`workflow_benchmark` 工具（未注入 runOnce 明确报错，不伪造数据） | `benchmark-runner.test.ts` 8/8 + `benchmark-tool.test.ts` 3/3 |
+
+设计要点：
+
+- **不虚构收益**：benchmark 只输出真实测量值；无 ≥5% 改善则明确「不满足优化验收」
+- **质量优先**：Required Validation 未满足 / after 执行失败 / 失败 Agent 增加 → 一律判降级、不通过
+- **安全默认**：`workflow_benchmark` 未配置执行器时报错而非造数据；优化闭环仍走独立工作区 + 授权闸门
+
+最终回归：build 通过、engine **206/206**、contract **110/110**（含本轮 +13）。

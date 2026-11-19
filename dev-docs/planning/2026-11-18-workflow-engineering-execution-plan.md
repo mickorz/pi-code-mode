@@ -23,9 +23,9 @@
 | M1 | Workflow Intelligence | Plan Schema + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 | **完成**（M6 已补 CLI + 真实 Planner；recall 100%（9/9）/FPR 0%） |
 | M2 | Execution Governance | Budget 体系 + Plan 执行消费 + 运行指标 | 运行失控、成本不可控 | **完成**（M6 已接 workflow+schedule 真实 run，预算真拦为验证） |
 | M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | **核心完成**（M6 修跨进程 Fencing + 10 子进程验证；BatchExecutor 仍待接入 runtime 自动分片） |
-| M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | **核心接线完成，taskResume/画像已接入；自动分片与全自动调度仍待后续** |
+| M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | **完成**（taskResume + parallel 自动任务化 + 自动画像调度） |
 | M5 | Continuous Optimization | Evaluator + 性能基线 + 优化闭环 | 无法持续衡量与优化 | **库级实现完成，生产接线待 M6**
-| M6 | Production Integration | Plan/Budget/Task 真实入口接线 + PrdGameSkill 实测 | 解决库级能力与生产执行断层 | **部分完成**：M2/M3+schedule+CLI 已接；M4/M5 生产化与实测待办（见 `MCP-M6-修复报告.md`） |
+| M6 | Production Integration | Plan/Budget/Task/Adaptive/Evaluator 真实接线 + CLI/工具入口 | 解决库级能力与生产执行断层 | **完成**（2026-11-18，四项剩余项全部落地，contract 110/110；真实 PrdGameSkill 对照实测另行安排） |
 
 **全局约束**（适用于所有阶段，源自架构基线第五节）：
 
