@@ -17,6 +17,7 @@ import fs from "node:fs"
 import path from "node:path"
 
 import type { TaskFingerprint } from "./task-fingerprint.js"
+import { withFileLock, writeFileAtomic } from "./file-lock.js"
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped"
 
@@ -74,23 +75,6 @@ export interface AcquireResult {
 
 const DEFAULT_LEASE_MS = 10 * 60_000
 
-/** 原子写文件（临时文件 + rename；Windows rename 覆盖失败先 unlink） */
-export function writeFileAtomic(file: string, content: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  fs.writeFileSync(tmp, content, "utf8")
-  try {
-    fs.renameSync(tmp, file)
-  } catch {
-    try {
-      fs.rmSync(file, { force: true })
-    } catch {
-      /* ignore */
-    }
-    fs.renameSync(tmp, file)
-  }
-}
-
 export class TaskRegistry {
   readonly dir: string
   readonly workflowId: string
@@ -103,7 +87,25 @@ export class TaskRegistry {
   }
 
   private get file(): string {
-    return path.join(this.dir, `${this.workflowId}.tasks.json`)
+    // M6-P0-4：workflowId 进文件名必须清洗（防 ../ 写出目录）
+    return path.join(this.dir, `${safeName(this.workflowId)}.tasks.json`)
+  }
+
+  private get lockFile(): string {
+    return `${this.file}.lock`
+  }
+
+  /** 在跨进程文件锁保护下执行：进入临界区时强制从磁盘重读（M6-P0-4 核心修复） */
+  private critical<T>(fn: () => T): T {
+    return withFileLock(
+      this.lockFile,
+      () => {
+        // 关键：每次临界区都重读磁盘，使 CAS 判定基于最新事实而非构造时快照
+        this.data = this.load()
+        return fn()
+      },
+      { timeoutMs: 15_000, staleMs: 30_000 },
+    )
   }
 
   private load(): TaskRegistryFile {
@@ -144,6 +146,17 @@ export class TaskRegistry {
     /** 强制重跑：跳过 already-done 复用（resume=false 场景） */
     force?: boolean
   }): AcquireResult {
+    return this.critical(() => this.acquireLocked(input))
+  }
+
+  private acquireLocked(input: {
+    taskKey: string
+    taskFingerprint: string
+    runId: string
+    leaseMs?: number
+    now?: number
+    force?: boolean
+  }): AcquireResult {
     const now = input.now ?? Date.now()
     const existing = this.data.tasks[input.taskKey]
     if (!input.force && existing?.status === "done" && existing.taskFingerprint === input.taskFingerprint) {
@@ -181,6 +194,10 @@ export class TaskRegistry {
 
   /** 续租（长任务） */
   renew(input: { taskKey: string; runId: string; leaseGeneration: number; leaseMs?: number; now?: number }): boolean {
+    return this.critical(() => this.renewLocked(input))
+  }
+
+  private renewLocked(input: { taskKey: string; runId: string; leaseGeneration: number; leaseMs?: number; now?: number }): boolean {
     const now = input.now ?? Date.now()
     const cp = this.data.tasks[input.taskKey]
     if (!cp || cp.leaseOwner !== input.runId || cp.leaseGeneration !== input.leaseGeneration) return false
@@ -206,6 +223,19 @@ export class TaskRegistry {
     sideEffect?: Partial<SideEffectState>
     now?: number
   }): { ok: boolean; reason?: "lease-lost" | "artifact-missing"; checkpoint?: TaskCheckpoint } {
+    return this.critical(() => this.commitLocked(input))
+  }
+
+  private commitLocked(input: {
+    taskKey: string
+    runId: string
+    leaseGeneration: number
+    taskFingerprint: string
+    result?: unknown
+    resultRef?: string
+    sideEffect?: Partial<SideEffectState>
+    now?: number
+  }): { ok: boolean; reason?: "lease-lost" | "artifact-missing"; checkpoint?: TaskCheckpoint } {
     const now = input.now ?? Date.now()
     const cp = this.data.tasks[input.taskKey]
     if (!cp || cp.leaseOwner !== input.runId || cp.leaseGeneration !== input.leaseGeneration) {
@@ -218,7 +248,9 @@ export class TaskRegistry {
     // 产物落盘（原子写）
     let resultRef = input.resultRef
     if (input.result !== undefined) {
-      const rel = path.join("artifacts", `${safeName(input.taskKey)}.${input.leaseGeneration}.json`)
+      // M6-P0-4：artifact 名带指纹片段，避免 safeName 碰撞（"stage:1" vs "stage 1"）互相覆盖
+      const fpPart = input.taskFingerprint.replace(/^sha256:/, "").slice(0, 12)
+      const rel = path.join("artifacts", `${safeName(input.taskKey)}.${fpPart}.${input.leaseGeneration}.json`)
       writeFileAtomic(path.resolve(this.dir, rel), JSON.stringify(input.result, null, 2))
       resultRef = rel
     }
@@ -245,6 +277,10 @@ export class TaskRegistry {
 
   /** 标记失败（保留 attempt / generation） */
   fail(input: { taskKey: string; runId: string; leaseGeneration: number; error: string; now?: number }): boolean {
+    return this.critical(() => this.failLocked(input))
+  }
+
+  private failLocked(input: { taskKey: string; runId: string; leaseGeneration: number; error: string; now?: number }): boolean {
     const now = input.now ?? Date.now()
     const cp = this.data.tasks[input.taskKey]
     if (!cp || cp.leaseOwner !== input.runId || cp.leaseGeneration !== input.leaseGeneration) return false
@@ -269,6 +305,10 @@ export class TaskRegistry {
 
   /** 一致性重建：Registry 状态可从 Checkpoint 校正（规则 1） */
   rebuildFromCheckpoints(): { corrected: number } {
+    return this.critical(() => this.rebuildLocked())
+  }
+
+  private rebuildLocked(): { corrected: number } {
     let corrected = 0
     for (const cp of Object.values(this.data.tasks)) {
       // done 但产物缺失 → 降级为 failed（避免误判安全完成）

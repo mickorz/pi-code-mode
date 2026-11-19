@@ -9,7 +9,7 @@
 import fs from "node:fs"
 import path from "node:path"
 
-import { writeFileAtomic } from "../governance/task-registry.js"
+import { writeFileAtomic } from "../governance/file-lock.js"
 import type { EvaluationReport } from "./evaluator.js"
 
 export interface BaselineSample {
