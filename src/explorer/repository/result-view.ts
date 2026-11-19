@@ -84,7 +84,11 @@ export function formatResultBody(value: unknown, outputType: ResultOutputType): 
  * outputType 缺省时按值类型推断（老 journal 无该字段）。
  */
 export function resolveResultState(input: ResultDetailInput): ResultState {
-  if (input.status === "failed") return { state: "error", message: input.error ?? "Agent failed" }
+  // 注意状态词有两套来源：agent/workflow 用 failed|aborted|ok，
+  // 工具节点（ToolExecutionRecord）用 ok|error|running —— 两套都要认，否则工具失败会显示成「无结果返回」
+  if (input.status === "failed" || input.status === "error") {
+    return { state: "error", message: input.error ?? "Agent failed" }
+  }
   if (input.status === "running") return { state: "pending" }
   if (input.result != null) {
     const outputType: ResultOutputType =

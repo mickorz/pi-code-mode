@@ -139,3 +139,70 @@ return r`,
   assert.ok(text.includes("输出 structured"), "详情头部标注输出类型")
   explorer.dispose()
 })
+
+// ---- 真实运行数据回归（2026-11-19 现场验收 journal）----
+// run-1795066380553-qcs7cy：SchemaAgent(structured 230B) + BigTextAgent(text 12.8KB)
+//                            + runTool(probe-fail.js, 只有 executions 无 result)
+test("真实数据: 工具失败节点状态是 error（不是 failed），必须显示错误原因", () => {
+  const state = resolveResultState({
+    status: "error",
+    error: 'exit 1: ',
+  })
+  assert.equal(state.state, "error", "tool 的 status=error 也要走 error 分支")
+  if (state.state === "error") assert.match(state.message, /exit 1/)
+
+  // 对照：仅 executions、无 result 的成功工具仍应是 empty 而不是 error
+  assert.deepEqual(resolveResultState({ status: "ok" }), { state: "empty" })
+})
+
+test("真实数据: 工具节点详情不显示「无结果返回」而是错误（端到端渲染）", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tool-err-"))
+  const bus = new RuntimeEventBus()
+  const rm = new RunManager(4, bus)
+  const journal = createRunJournal(dir)
+  rm.register("run-toolerr", { label: "toolerr" })
+  // 事件形状对齐 runtime 的 tool.finished（status=error + error 文案）
+  bus.publish({
+    runId: "run-toolerr",
+    type: "workflow.started",
+    scopePath: ["root"],
+    payload: { name: "t", label: "t", scopePath: ["root"], startedAt: 1, status: "running" },
+  })
+  bus.publish({
+    runId: "run-toolerr",
+    type: "tool.finished",
+    scopePath: ["root"],
+    payload: {
+      toolId: "run-toolerr:0",
+      name: "probe-fail.js",
+      kind: "runtime",
+      scopePath: ["root"],
+      status: "error",
+      startedAt: 1,
+      endedAt: 30,
+      durationMs: 23,
+      error: "exit 1: ",
+    },
+  })
+  journal.recordExecution("run-toolerr", "run-toolerr:0", {
+    executionId: "run-toolerr:0:t1",
+    attempt: 1,
+    status: "failed",
+    label: "tool probe-fail.js",
+    error: "exit 1: ",
+    startedAt: 1,
+    durationMs: 23,
+  })
+
+  const explorer = new ExplorerController({ runManager: rm, eventBus: bus, cwd: dir, journal })
+  explorer.open(() => {})
+  const toolNode = explorer.view().rows.find((r) => r.kind === "tool")!
+  explorer.nav.select(toolNode.nodeKey)
+  explorer.nav.openDetail()
+  const text = renderExplorerBox(explorer.view(), 100, 24, theme).join("\n")
+  assert.ok(text.includes("错误:"), "显示错误区块")
+  assert.ok(text.includes("exit 1"), "错误原因可见")
+  assert.ok(!text.includes("（无结果返回）"), "不应显示空态文案")
+  assert.ok(text.includes("#1 [FAIL]"), "attempts 历史仍可见")
+  explorer.dispose()
+})

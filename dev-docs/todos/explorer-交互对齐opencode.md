@@ -82,7 +82,18 @@ REF-001 的 `result-view.ts` 语义已对齐（`src/explorer/repository/result-v
 - [x] outputType 缺省按值类型推断（老 journal 兼容）；详情头部显示 `输出 structured|text`
 - [x] 复用仓库既有 `truncateUtf8ByBytes` / `redactValue`（数组 50 项封顶与 REF 同语义）
 
-测试：`tests/contract/explorer-result-view.test.ts`（9 用例，含 schema→journal→渲染的端到端断言）
+测试：`tests/contract/explorer-result-view.test.ts`（11 用例，含 schema→journal→渲染的端到端断言）
+
+**现场验收发现并修复（2026-11-19，run-1795066380553-qcs7cy）**：
+
+1. 工具节点状态值是 `error`（不是 `failed`），结果判定只认 `failed` → 失败工具被显示成「（无结果返回）」，
+   错误原因丢失。已让判定同时接受 `error`。
+2. Controller 只对 `kind === "agent"` 读取 journal → 工具节点拿不到 attempts 历史（journal key 与 agent 同构）。
+   已扩展到 `tool`。
+3. agent/tool 的错误被头部与结果区各打一遍 → 头部仅对 workflow/phase 显示错误。
+
+同批次数据观察：`BigTextAgent` 实产 12851B（未达 20KB），截断路径由单测确定性覆盖；
+`model` 字段为空是「用会话默认模型」的正常表现（未显式指定 model/tier 时不写该字段）。
 
 ## 5. 执行顺序
 

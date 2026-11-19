@@ -100,24 +100,24 @@ function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: Them
   if (node.metadata?.replayed) meta.push("[回放]")
   if (node.metadata?.outputType) meta.push(`输出 ${node.metadata.outputType}`)
   if (meta.length) lines.push(truncateToWidth(meta.join("  "), width))
-  if (node.metadata?.error) {
+  // agent/tool 的错误在下方结果区统一呈现（避免同一个错误打两遍）
+  if (node.metadata?.error && node.kind !== "agent" && node.kind !== "tool") {
     lines.push(...wrapByWidth(theme.fg("accent", `错误: ${node.metadata.error}`), width).map((l) => truncateToWidth(l, width)))
   }
   if (d.ancestors.length) {
     lines.push(truncateToWidth(theme.fg("muted", `路径: ${d.ancestors.map((a) => a.label).reverse().join(" / ")}`), width))
   }
-  if (d.agent) {
-    const a = d.agent
-    if (a.prompt) {
-      lines.push(theme.fg("muted", "-- prompt --"))
-      lines.push(...wrapByWidth(a.prompt, width).slice(0, 8).map((l) => truncateToWidth(l, width)))
-    }
-    // 结果区（对齐 REF-001：structured JSON pretty-print + 渲染期脱敏 + 20KB 截断提示 + 空态三分）
+  if (d.agent?.prompt) {
+    lines.push(theme.fg("muted", "-- prompt --"))
+    lines.push(...wrapByWidth(d.agent.prompt, width).slice(0, 8).map((l) => truncateToWidth(l, width)))
+  }
+  // 结果区：agent 与 tool 节点都渲染（对齐 REF-001 的空态三分 + 脱敏 + 20KB 截断提示）
+  if (node.kind === "agent" || node.kind === "tool") {
     const resultState = resolveResultState({
       status: node.status,
       error: node.metadata?.error,
-      result: a.result,
-      outputType: a.outputType,
+      result: d.agent?.result,
+      outputType: d.agent?.outputType,
       outputPreview: node.metadata?.outputPreview,
     })
     lines.push(theme.fg("muted", "-- result --"))
@@ -136,6 +136,9 @@ function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: Them
         lines.push(theme.fg("muted", `  （结果已截断，原始 ${(resultState.view.originalBytes / 1024).toFixed(1)} KB）`))
       }
     }
+  }
+  if (d.agent) {
+    const a = d.agent
     if (a.executions.length) {
       lines.push(theme.fg("muted", `-- attempts (${a.executions.length}) --`))
       for (const e of a.executions.slice(-5)) {

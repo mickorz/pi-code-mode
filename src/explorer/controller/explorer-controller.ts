@@ -171,7 +171,10 @@ export class ExplorerController {
     const node = tree.getNode(nodeKey)
     if (!node) return undefined
     const ancestors = tree.ancestorsOf(nodeKey)
-    const agent = node.kind === "agent" ? this.repo().getAgentDetail(localAgentId(nodeKey)) : undefined
+    // tool 节点的 journal key 与 agent 同构（runId:callIndex），同样要读：
+    // 工具失败只有 executions 没有 result，不读会丢掉 attempts 与错误原因
+    const agent =
+      node.kind === "agent" || node.kind === "tool" ? this.repo().getAgentDetail(localAgentId(nodeKey)) : undefined
     return { node, agent, ancestors }
   }
 
