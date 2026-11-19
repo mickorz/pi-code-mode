@@ -36,6 +36,8 @@ import { createRenderScheduler } from "../src/manager/render-scheduler.js"
 import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 import { registerExplorerCommand } from "./commands/explorer.js"
+import { toggleExplorer } from "./explorer/index.js"
+import { installExplorerStatusLine } from "./explorer/status-line.js"
 import { ExplorerController } from "../src/explorer/controller/explorer-controller.js"
 import { createRunJournal } from "../src/manager/run-journal.js"
 
@@ -187,6 +189,33 @@ export default function extension(pi: ExtensionAPI): void {
   for (const tool of makeScheduleTools({ scheduler, cwd: process.cwd() })) {
     pi.registerTool(tool as any)
   }
+
+  // ---- A1: 全局快捷键 ctrl+b 开关 Explorer（免记命令；对齐 opencode 的 keybind 入口）----
+  // ctrl+b 在 pi 内置 keybind 中未被占用；再按一次关闭（toggle），不弹提示保持 IDE 手感
+  pi.registerShortcut("ctrl+b", {
+    description: "打开/关闭 Workflow Explorer（工作流执行观察器）",
+    handler: async (ctx: any) => {
+      if (!ctx.hasUI) return
+      try {
+        await toggleExplorer(explorer, ctx.ui)
+      } catch (e) {
+        // 快捷键回调无宿主编排兜底：异常必须自己兜住，否则打死 TUI
+        ctx.ui.notify(`Explorer 打开失败: ${String((e as Error)?.message ?? e)}`, "error")
+      }
+    },
+  })
+
+  // ---- A2: 常驻状态行（在途 run 单行进度；无在途时自动清空）----
+  let disposeStatusLine: (() => void) | undefined
+  pi.on("session_start", (_event, ctx) => {
+    if (!ctx.hasUI) return
+    disposeStatusLine?.()
+    disposeStatusLine = installExplorerStatusLine(runManager, ctx.ui)
+  })
+  pi.on("session_shutdown", () => {
+    disposeStatusLine?.()
+    disposeStatusLine = undefined
+  })
 
   // ---- 斜杠命令（实现见 extensions/commands/，一命令一文件）----
   registerWorkflowsCommand(pi, { runManager, makeDeps, deliver })
