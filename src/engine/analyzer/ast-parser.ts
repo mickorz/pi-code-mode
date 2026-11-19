@@ -377,7 +377,10 @@ export function analyzeAst(source: string): AstAnalysis {
       case "FunctionExpression":
       case "ArrowFunctionExpression":
         // 函数体内视为动态上下文（调用次数不可知）
-        dynamicStack.push({ reason: "函数体执行次数静态不可知", bounds: { min: 0, reason: "调用方决定" } })
+        dynamicStack.push({
+          reason: "位于函数体内的调用：执行次数由调用方次数决定，静态不可判定",
+          bounds: { min: 0, reason: "函数体被调用几次取决于调用方" },
+        })
         visitStmt(stmt.body)
         dynamicStack.pop()
         return

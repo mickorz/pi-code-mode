@@ -234,7 +234,8 @@ function writeReports(cwd: string, ref: string, result: { rendered?: string; rep
     const mdPath = path.join(dir, `${base}.analysis.md`)
     fs.writeFileSync(mdPath, result.rendered ?? "", "utf8")
     fs.writeFileSync(path.join(dir, `${base}.analysis.json`), JSON.stringify(result.report ?? {}, null, 2), "utf8")
-    return path.relative(cwd, mdPath)
+    // 返回绝对路径：相对路径在终端里既不能点也不好定位
+    return mdPath
   } catch {
     return undefined
   }
