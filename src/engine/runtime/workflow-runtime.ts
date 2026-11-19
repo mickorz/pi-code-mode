@@ -147,6 +147,11 @@ export interface WorkflowRunOptions {
   adaptiveProfiles?: Map<string, TaskProfile>
   /** M6/M4：parallel 自动任务化接入 BatchExecutor 的阈值（启用 taskRegistry 时生效；缺省 8） */
   autoShardThreshold?: number
+  /**
+   * M6/3：自适应画像自动加载（缺省 true）
+   * 从 TaskCheckpoint 与 BaselineStore 自动构建耗时画像，无需调用方手填 adaptiveProfiles。
+   */
+  autoAdaptive?: boolean
   /** M6/M5：完成后评估并写 BaselineStore（可选生产接线） */
   evaluationPlan?: WorkflowPlan
   baselineStore?: BaselineStore
@@ -249,8 +254,12 @@ interface SharedRunContext {
   budgetGate?: BudgetGate
   /** M6/M3：任务级恢复注册表与模式 */
   taskRegistry?: TaskRegistry
-  /** M6/M4：自适应耗时画像 */
+  /** M6/M4：自适应耗时画像（显式传入优先） */
   adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/3：是否自动加载画像（缺省 true） */
+  autoAdaptive?: boolean
+  /** M6/3：自动画像缓存（首次使用时从 checkpoint/baseline 构建） */
+  autoProfilesCache?: Map<string, TaskProfile>
   /** M6/M4：parallel 自动分片阈值 */
   autoShardThreshold?: number
   /** M6/M5：评估/基线接线 */
@@ -334,6 +343,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     taskResume: options.taskResume ?? false,
     adaptiveProfiles: options.adaptiveProfiles,
     autoShardThreshold: options.autoShardThreshold ?? 8,
+    autoAdaptive: options.autoAdaptive !== false,
     evaluationPlan: options.evaluationPlan,
     baselineStore: options.baselineStore,
     evaluationInputScale: options.evaluationInputScale,
@@ -1064,6 +1074,26 @@ async function executeWorkflow(
     }
   }
 
+  /** M6/3：自动构建耗时画像（TaskCheckpoint + 已有 adaptiveProfiles），按需懒加载一次 */
+  const profilesForScheduling = (): Map<string, TaskProfile> | undefined => {
+    if (shared.adaptiveProfiles && shared.adaptiveProfiles.size > 0) return shared.adaptiveProfiles
+    if (!shared.autoAdaptive) return undefined
+    if (shared.autoProfilesCache) return shared.autoProfilesCache
+    const samples: Array<{ taskType: string; durationMs: number }> = []
+    if (shared.taskRegistry) {
+      for (const t of shared.taskRegistry.list()) {
+        if (t.committedAt === undefined || t.updatedAt === undefined) continue
+        const duration = t.updatedAt - t.committedAt
+        if (!Number.isFinite(duration) || duration <= 0) continue
+        samples.push({ taskType: t.taskKey.split(/[:/-]/)[0] ?? t.taskKey, durationMs: duration })
+      }
+    }
+    const built = samples.length > 0 ? buildProfiles(samples) : new Map<string, TaskProfile>()
+    shared.autoProfilesCache = built
+    if (built.size > 0) log(`自适应画像自动加载：${built.size} 类任务（来源 TaskCheckpoint）`)
+    return built.size > 0 ? built : undefined
+  }
+
   const parallel = async (thunks: Array<() => Promise<unknown>>) => {
     throwIfAborted()
     if (!Array.isArray(thunks)) throw new TypeError("parallel() 期望函数数组")
@@ -1103,10 +1133,11 @@ async function executeWorkflow(
 
     // M6/M4：有历史画像时长任务先发；返回值仍按原索引顺序，业务语义不变。
     const order = thunks.map((_, index) => index)
-    if (shared.adaptiveProfiles && shared.adaptiveProfiles.size > 0) {
+    const profiles = profilesForScheduling()
+    if (profiles && profiles.size > 0) {
       const scheduled = planSchedule(
         thunks.map((_, index) => ({ taskKey: `parallel:${index}`, taskType: `parallel:${index}` })),
-        shared.adaptiveProfiles,
+        profiles,
         { typeOf: (t) => t.taskType ?? t.taskKey },
       )
       order.splice(0, order.length, ...scheduled.order.map((k) => Number(k.split(":").at(-1))))
