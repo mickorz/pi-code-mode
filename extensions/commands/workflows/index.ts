@@ -52,8 +52,9 @@ export function registerWorkflowsCommand(pi: ExtensionAPI, deps: WorkflowsComman
     description:
       "workflow 命令入口（无参数显示帮助）；ui 打开 Navigator 全屏面板；watch <runId> 单 run 专注视图；list 列出注册表；register|reg 注册脚本；unregister|unreg 注销；run <路径|名> [k=v...] 后台执行；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
     // Tab 参数补全：子命令名 / 注册表 workflowId / runId（宿主 getArgumentCompletions，无 ctx，cwd 取进程根）
+    // 注意：这里只能引用 deps.*，裸 runManager 不在作用域（曾是线上 ReferenceError：按 Tab 即崩宿主）
     getArgumentCompletions: (prefix: string) =>
-      completeWorkflowsArgs(prefix, { runManager, cwd: process.cwd() }),
+      completeWorkflowsArgs(prefix, { runManager: deps.runManager, cwd: process.cwd() }),
     handler: async (args: string, ctx: any) => {
       const argv = args.trim().split(/\s+/).filter(Boolean)
       if (!argv.length) {

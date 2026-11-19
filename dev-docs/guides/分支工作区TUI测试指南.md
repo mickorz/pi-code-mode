@@ -64,8 +64,12 @@ pi -ne -e .
 ### 3.1 启动前：类型关卡
 
 ```powershell
-npm run build          # tsc 类型检查（宿主与单测都不做类型检查，只有这一步拦得住）
+npm run build          # src + extensions 双份 tsc（宿主与单测都不做类型检查，只有这一步拦得住）
 ```
+
+> `build` 现在会额外跑一遍 `tsconfig.extensions.json`。原因是 extensions 曾长期不在类型检查范围内，
+> 导致 `getArgumentCompletions` 里的未定义变量一直没被发现，按 Tab 补全直接崩宿主
+> （见 `dev-docs/experience/extensions-未类型检查导致宿主崩溃.md`）。
 
 ### 3.2 自动化验证（不需要 TUI）
 
@@ -92,7 +96,11 @@ npm run test:engine    # 引擎语义（含 runTool / composite / resume）
    /explorer run-xxxxxxxx
    ```
 
-4. 逐项核对（对应 Explorer 的验收点）：
+4. **先按一次 Tab 补全**（`/workflows ` 或 `/explorer ` 后按 Tab）：
+   这是暴露“装配期引用错误”的最短路径——那类错误没有降级，会直接打死宿主进程。
+   补全正常出现候选后再继续。
+
+5. 逐项核对（对应 Explorer 的验收点）：
 
    | 操作 | 期望 |
    | ---- | ---- |
@@ -110,7 +118,7 @@ npm run test:engine    # 引擎语义（含 runTool / composite / resume）
    | 运行中打开、等 agent 完成 | 节点状态自动刷新；**详情能看到新写入的 prompt/result**（不陈旧） |
    | 终端调窄到 ~80 列 | 自动退化为单栏（树/详情切换），行不超宽不错位 |
 
-5. 收尾：`Ctrl+C` 或 `/exit` 退出会话。
+6. 收尾：`Ctrl+C` 或 `/exit` 退出会话。
 
 ## 4. 常见问题
 
@@ -122,6 +130,7 @@ npm run test:engine    # 引擎语义（含 runTool / composite / resume）
 | 加载的是旧代码 | 确认没有把 `pi install` 的全局版本一起加载；用 `-ne`（跳过已装扩展） |
 | 端口冲突 / 多个会话互相干扰 | 用 `BILI_PI_INLINE=1`，或给另一会话设 `ACP_PORT=18799` |
 | 面板样式错乱、边框错位 | 终端宽度不足或被别的 widget 挤占；放大窗口后再开 `/explorer` |
+| 按 Tab 补全时 pi 直接崩溃（uncaughtException） | 装配期闭包引用错误或宿主回调抛异常；先 `npm run build`（含 extensions 检查），再看 `dev-docs/experience/extensions-未类型检查导致宿主崩溃.md` |
 
 ## 5. 分支 vs main 的差别
 

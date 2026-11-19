@@ -61,7 +61,7 @@ export async function openNavigator(runManager: RunManager, cwd: string, ui: any
       file: w.filePath,
     }))
 
-  await ui.custom<void>(
+  await ui.custom(
     // 宿主签名：(tui, theme, keybindings, done) => Component；本面板只用 tui/theme/done
     (tui: any, theme: any, _keybindings: unknown, done: () => void) => {
       const requestRender = () => tui.requestRender()
@@ -76,10 +76,13 @@ export async function openNavigator(runManager: RunManager, cwd: string, ui: any
       const bodyRows = (): number => Math.max(6, Math.floor((tui?.terminal?.rows ?? 24) * 0.92) - 4)
 
       const component: Component & { dispose(): void } = {
+        /** 宿主 Component 契约要求；本组件按需渲染，无需缓存失效 */
+        invalidate(): void {},
         render(width: number): string[] {
           try {
             model.setData(buildRuns(), buildSaved())
-            return renderOverlayBox(model.snapshot(), width, bodyRows(), themeLike)
+            // snapshot 需要视口行数（滚动钳制用）；漏传会让钳制算出 NaN
+            return renderOverlayBox(model.snapshot(bodyRows()), width, bodyRows(), themeLike)
           } catch (e) {
             // 渲染自防御（同 widget render 教训：异常击穿宿主进程），根因打日志暴露
             console.error("[pi-code-mode] navigator render 失败:", String((e as Error)?.message ?? e))

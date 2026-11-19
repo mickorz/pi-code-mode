@@ -125,6 +125,8 @@ function installTaskWidget(pi: ExtensionAPI): void {
       const scheduler = createRenderScheduler(() => tui.requestRender())
       const unsubscribe = runManager.onEvent((e) => scheduler.schedule(e.type === "progress" ? "progress" : "lifecycle"))
       return {
+        // 宿主 Component 契约要求；本组件按需渲染，无需缓存失效
+        invalidate: () => {},
         render,
         dispose: () => {
           unsubscribe()
