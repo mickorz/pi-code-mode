@@ -21,6 +21,7 @@
 | REF-013 | pi-web（Epsilondelta） | https://github.com/Epsilondelta-ai/pi-web.git | thirdparties/pi-web-epsilondelta | 8b8bf7b2f162617ca1a7823bb4a52a4ac35cac35 | MIT | 技术实现参考：Go Backend + Astro/SSE/AG-UI 兼容 endpoint（session/file/git/terminal realtime），与本项目事件流（onMcpCall/Node Inspector）的 SSE 化方向对照 | 2026-11-18 引入。目录名带后缀避免与 REF-011 同名冲突 |
 | REF-014 | pi-web-ui | https://github.com/Watercol/pi-web-ui.git | thirdparties/pi-web-ui | b7af6603b15bd80296a366ded805bcbf60385e35 | MIT | 技术实现参考：Web 页面控制 pi --mode rpc 的最小实现（RPC 通道研究样本） | 2026-11-18 引入。研究「Web 控制 Pi RPC」的最小实现样本 |
 | REF-015 | awesome-agent-clients | https://github.com/arach/awesome-agent-clients.git | thirdparties/awesome-agent-clients | 117c8b8ecf2ff0bd4684372a96971abfbf2966d6 | CC0-1.0 | 资料索引：Agent Client/Orchestration Dashboard 清单（Mission Control/Vibe Kanban/T3 Code 等），为 Workflow Dashboard 的编排形态对照提供目录 | 2026-11-18 引入。Mission Control/Vibe Kanban 等编排类项目的入口索引 |
+| REF-016 | PrdGameSkill | https://github.com/mickorz/PrdGameSkill.git | thirdparties/PrdGameSkill | d28ed0a16cad8d9c23dde925e591ef326b81874d | 未发现 LICENSE 文件（作者自有仓库，仅本机测试用） | 真实场景验收样本：13 个生产 workflow（game-prd-check / game-requirement-audit / output-spec-generate / server-rule-verify 等）+ 历史 journal，用作 Workflow Engineering Framework（Plan/Analyzer/恢复/自适应/评估）的端到端实测数据源 | 2026-11-19 引入。M1-T0 基线与 M6 真实联调均以此仓库为样本 |
 
 ## Submodule 引入与登记流程
 
