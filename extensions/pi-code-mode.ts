@@ -37,11 +37,20 @@ import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 import { registerExplorerCommand } from "./commands/explorer.js"
 import { ExplorerController } from "../src/explorer/controller/explorer-controller.js"
+import { createRunJournal } from "../src/manager/run-journal.js"
 
 const runManager = new RunManager(16, getRuntimeEventBus())
+// run journal 单实例：写入方（workflow 工具 / schedule runner）与读取方（Explorer 详情）共用同一实例，
+// 否则读侧会命中陈旧内存缓存（评审修复 H1）
+const runJournal = createRunJournal(process.cwd())
 // Workflow Explorer 单实例（模块级常驻：Controller/树模型/导航状态与会话同寿，
 // Overlay 视图按需创建销毁——关闭面板不丢选中节点）
-const explorer = new ExplorerController({ runManager, eventBus: getRuntimeEventBus(), cwd: process.cwd() })
+const explorer = new ExplorerController({
+  runManager,
+  eventBus: getRuntimeEventBus(),
+  cwd: process.cwd(),
+  journal: runJournal,
+})
 // tier 配置引导（可发现性）：工程 .pi/workflows/model-tiers.json 不存在时创建带中文说明的空模板
 // （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）。
 // 创建结果通过 session_start 的 ui.notify 通知（TUI 吞掉扩展 console.log，工厂期无 ctx.ui 可用）
@@ -67,6 +76,7 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
   return {
     runManager,
     eventBus: getRuntimeEventBus(),
+    journal: runJournal,
     adapterFactory: () => withGlobalGate(new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd() }), runManager.gate),
     cwd,
     // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）；
@@ -158,7 +168,13 @@ export default function extension(pi: ExtensionAPI): void {
   pi.registerTool(makeWorkflowControlTool(makeDeps()) as any)
 
   // ---- schedule_* 工具族 ×8 + 调度循环（M4）----
-  const scheduleRunner = new PiScheduleRunner({ runManager, deliver, cwd: process.cwd() })
+  const scheduleRunner = new PiScheduleRunner({
+    runManager,
+    deliver,
+    cwd: process.cwd(),
+    eventBus: getRuntimeEventBus(),
+    journal: runJournal,
+  })
   const scheduler = new ScheduleRuntime({
     client: undefined, // pi 版实现不直调 client（root session 由 PiScheduleRunner 创建）
     directory: process.cwd(),

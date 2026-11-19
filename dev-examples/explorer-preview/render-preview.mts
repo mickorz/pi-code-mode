@@ -57,6 +57,8 @@ const state: ExplorerViewState = {
   activeRunId: "run-demo",
   activeTab: "workflow",
   rows,
+  listRows: rows,
+  listSelectedIndex: 8,
   collapsedNodeKeys: new Set(),
   selectedIndex: 8,
   focus: "tree",

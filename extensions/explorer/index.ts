@@ -44,7 +44,10 @@ export async function openExplorer(explorer: ExplorerController, ui: any, option
       const component: any = {
         render(width: number): string[] {
           try {
-            return renderExplorerBox(explorer.view(), width, bodyRows(), themeLike)
+            return renderExplorerBox(explorer.view(), width, bodyRows(), themeLike, {
+              // 详情滚动钳制：内容行数只有这里知道（评审修复 M3：End/连续 ↓ 不再越界白屏）
+              onDetailMaxScroll: (max) => explorer.noteDetailMaxScroll(max),
+            })
           } catch (e) {
             // 渲染自防御：异常不得击穿宿主进程（见 dev-docs/experience/）
             console.error("[pi-code-mode] explorer render 失败:", String((e as Error)?.message ?? e))

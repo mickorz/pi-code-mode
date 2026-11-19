@@ -24,6 +24,9 @@ export function mapKey(data: string): string {
       return "escape"
     case "\t":
       return "tab"
+    case "\x1b[Z":
+      // Shift+Tab（部分终端发 CSI Z）：Explorer 用它反向切 Tab
+      return "shiftTab"
   }
   // 单个可打印字符原样透传（含中文；filter 模式逐字符追加）
   if (data.length === 1 && data >= " ") return data

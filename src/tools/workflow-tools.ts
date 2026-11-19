@@ -16,9 +16,8 @@ import { agentAdapterToRunner } from "../adapter/agent-adapter.js"
 import type { AgentAdapter } from "../adapter/types.js"
 import { renderWorkflowRunResult } from "./render-text.js"
 import { RunManager } from "../manager/run-manager.js"
+import { createRunJournal, persistRunSummary } from "../manager/run-journal.js"
 import type { RuntimeEventBus } from "../engine/events/runtime-event-bus.js"
-
-const JOURNAL_DIR = path.join(".pi", "workflows", "journal")
 
 export interface WorkflowToolDeps {
   runManager: RunManager
@@ -29,6 +28,11 @@ export interface WorkflowToolDeps {
   deliver?: (text: string) => Promise<void>
   /** Runtime 统一事件总线（M1：Explorer / Web Dashboard 共用；缺省不发布事件） */
   eventBus?: RuntimeEventBus
+  /**
+   * run journal（评审修复 H1）：必须与 Explorer 详情读取共用同一实例，否则读侧会命中陈旧缓存。
+   * 缺省按 cwd 新建（单测/独立调用场景）。
+   */
+  journal?: JournalStore
   /** 模型分层解析：tier 名 -> provider/modelId（M4 tier 体系；未配置回退会话默认模型） */
   resolveTier?: (tier: string) => string | undefined
   /** tier 名 -> 模型池（v2 池化；优先于 resolveTier，未配置返回 undefined） */
@@ -135,7 +139,7 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
       const resuming = typeof params.resumeFromRunId === "string" && params.resumeFromRunId.length > 0
       const runId = resuming ? params.resumeFromRunId : `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       const run = deps.runManager.register(runId, { label: sourceLabel, externalSignal: signal })
-      const journal = new JournalStore(cwd, path.join(cwd, JOURNAL_DIR))
+      const journal = deps.journal ?? createRunJournal(cwd)
       const resumeJournal = resuming ? journal.load(params.resumeFromRunId) : undefined
 
       // checkpoint 确认通道（M2）：宿主 TUI 的 ui.confirm 对话框；无 ui 环境（headless）走引擎缺省值
@@ -163,6 +167,8 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         replayPolicy: "explicit" as const,
         confirm,
         onAgentJournal: (entry: any) => journal.append(runId, entry.key, entry),
+        // 评审修复 M2：失败/中止 attempt 的执行历史（details 面板与 Journal Tab 的数据源）
+        onAgentExecution: (payload: any) => journal.recordExecution(runId, payload.key, payload.execution),
         onAgentUpdate: (record: any) => deps.runManager.attach(runId, record),
         // M1：统一事件出口（RunManager 已订阅总线，节点快照由 attachEvent 维护）
         onRuntimeEvent: deps.eventBus ? (event: any) => deps.eventBus!.publish(event) : undefined,
@@ -174,14 +180,14 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
           .then((outcome) => {
             const preview = JSON.stringify(outcome.result ?? null)
             deps.runManager.finish(runId, { status: "completed", resultPreview: preview })
-            persistRunSummary(journal, runId, outcome, "completed")
+            persistRunSummary(journal, runId, outcome, "completed", undefined, { lastSequence: deps.eventBus?.lastSequence(runId), startedAt: run.startedAt })
             return deps.deliver?.(renderWorkflowRunResult(outcome, { runId, sourceLabel: `background:${sourceLabel}` }))
           })
           .catch(async (e) => {
             const msg = String((e as Error)?.message ?? e)
             const cancelled = run.controller.signal.aborted
             deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
-            persistRunSummary(journal, runId, undefined, cancelled ? "cancelled" : "failed", msg)
+            persistRunSummary(journal, runId, undefined, cancelled ? "cancelled" : "failed", msg, { lastSequence: deps.eventBus?.lastSequence(runId), startedAt: run.startedAt })
             await deps.deliver?.(`[workflow ${cancelled ? "已停止" : "失败"}] runId=${runId}
 ${msg}
 已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。`)
@@ -198,7 +204,7 @@ ${msg}
         const outcome = await runWorkflow(script, runOpts())
         const preview = JSON.stringify(outcome.result ?? null)
         deps.runManager.finish(runId, { status: "completed", resultPreview: preview })
-        persistRunSummary(journal, runId, outcome, "completed")
+        persistRunSummary(journal, runId, outcome, "completed", undefined, { lastSequence: deps.eventBus?.lastSequence(runId), startedAt: run.startedAt })
         return {
           content: [{ type: "text" as const, text: renderWorkflowRunResult(outcome, { runId, sourceLabel }) }],
           details: { runId, sourceLabel },
@@ -208,7 +214,7 @@ ${msg}
         const msg = String((e as Error)?.message ?? e)
         const cancelled = run.controller.signal.aborted
         deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
-        persistRunSummary(journal, runId, undefined, cancelled ? "cancelled" : "failed", msg)
+        persistRunSummary(journal, runId, undefined, cancelled ? "cancelled" : "failed", msg, { lastSequence: deps.eventBus?.lastSequence(runId), startedAt: run.startedAt })
         const resumeHint = cancelled ? `
 已完成部分在 journal 中，可用 workflow(resumeFromRunId="${runId}") 续跑。` : ""
         return {
@@ -263,36 +269,3 @@ function toolText(text: string) {
   return { content: [{ type: "text" as const, text }], details: {} }
 }
 
-/**
- * run 终态写 V2 journal 观测快照（M5）：一次性写入，不写高频事件。
- * 只改 metadata/observability 两个字段，entries（Agent 结果回放）原样保留 —— 回放语义不变。
- * 失败不阻断运行（journal 仅影响历史回看与 Node Detail 展示）。
- */
-function persistRunSummary(
-  journal: JournalStore,
-  runId: string,
-  outcome: { workflows?: unknown[]; phases?: unknown[]; composites?: unknown[]; agents?: unknown[]; toolCount?: number; meta?: { name?: string; id?: string } } | undefined,
-  status: string,
-  error?: string,
-): void {
-  try {
-    journal.recordRunSummary(runId, {
-      metadata: {
-        workflowId: outcome?.meta?.id,
-        workflowName: outcome?.meta?.name,
-        label: status,
-        status,
-        ...(error ? { error } : {}),
-        endedAt: Date.now(),
-      } as any,
-      observability: {
-        workflows: outcome?.workflows,
-        phases: outcome?.phases,
-        composites: outcome?.composites,
-        agents: outcome?.agents,
-      },
-    })
-  } catch {
-    // 展示层可失败：不因 journal 写入失败影响 run 结果返回
-  }
-}

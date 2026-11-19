@@ -90,3 +90,23 @@ Workflow / Agents / Tools / Journal 四 Tab 数据源统一由 `ExplorerControll
 3. **MCP 工具节点只发 finished**：`McpToolCallSummary` 在调用结束才产生，Tools Tab 无 running 态（不影响结构正确性）。
 4. **Prompt 仍是 4KB 截断预览**：详情面板展示的是 journal 里的预览字段，完整 prompt 未存储（设计 §7.6 已标注该边界）。
 5. **历史 run 树依赖内存**：`RECENT_KEEP=20` 之外的 run 只能靠 Journal V2 `observability` 回看（当前 UI 尚未读该快照，仅提供 Repository 接口）。
+
+## 5. 评审修复（2026-11-18 第二轮）
+
+独立评审在 M0-M6 落地后发现 3 个高优先级 + 4 个中优先级缺陷，全部已修复并补回归测试
+（`tests/contract/explorer-fixes.test.ts`，8 用例）。
+
+| 级别 | 缺陷 | 根因 | 修复 |
+| ---- | ---- | ---- | ---- |
+| H1 | 运行中打开 Explorer 后详情永久陈旧 | 读侧自建 JournalStore，`read()` 首次读盘后永久命中内存缓存，写入方是另一个实例 | 单例 `createRunJournal()` 注入写入方（workflow 工具 / schedule runner）与读取方（Controller） |
+| H2 | r1→r2→r1 后导航指向错误的树 | `ensureTree` 树已存在时早退，`NavigationModel` 的 host 闭包捕获的是首次创建的树 | 单一 Nav，host 动态解析 `this.tree`（activeRunId） |
+| H3 | schedule run 在 Explorer 里只剩根节点 | `PiScheduleRunner.start` 未传 `onRuntimeEvent`/`onAgentJournal` | 接入 eventBus + journal + onAgentExecution + 终态摘要 |
+| M1 | child 内 runTool 节点不可见；child 内 MCP 错显在 root | tool 事件用裸 `currentPhase`（与 display 标题不一致，父 phase 永不存在）；MCP scopePath 硬编码 `["root"]` | 新增 `eventPhase()` 复用 agent 的 displayPhase 规则；onMcpCall 增 scope 上下文参数 |
+| M2 | attempts 历史恒空 | `onAgentExecution` 未接线，`recordExecution` 无调用方 | workflow 工具与 schedule runner 均接 `journal.recordExecution` |
+| M3 | 详情 End/连续 ↓ 白屏 | `end()` 设 `MAX_SAFE_INTEGER`，渲染 `slice` 越界 | 渲染层回报 `detailMaxScroll`，导航状态钳制 |
+| M4 | 折叠树后 Agents/Tools Tab 行消失；Tab 内按键无反馈 | Tab 复用 `rows`（已折叠过滤） | 新增 `listRows`（全树过滤）+ Tab 内独立移动 + 选中高亮 |
+| L1 | resume 同 runId 时旧树节点残留 | 树按 runId 缓存且不重建 | `run.started` 时重建该 runId 树 |
+| L2 | Shift+Tab 不可达 | `mapKey` 未映射 CSI Z | 映射为 `shiftTab` |
+
+验证：`npm run build` 通过；contract 132/132（含新增 8 用例）；engine 206/206；
+真实宿主 `pi -ne -e . -p "只回复 ok"` 通过。

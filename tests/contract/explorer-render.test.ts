@@ -44,11 +44,14 @@ function state(over: Partial<ExplorerViewState> = {}): ExplorerViewState {
   root.children = ["wf"]
   wf.children = ["phase"]
   phase.children = [agent.nodeKey]
+  const rows = [root, wf, phase, agent]
   return {
     runs: [{ runId: "r1", label: "r1", status: "running", startedAt: 1, workflows: 1, agentsTotal: 1, agentsDone: 1 }],
     activeRunId: "r1",
     activeTab: "workflow",
-    rows: [root, wf, phase, agent],
+    rows,
+    listRows: rows,
+    listSelectedIndex: 3,
     collapsedNodeKeys: new Set(),
     selectedIndex: 3,
     focus: "tree",
@@ -64,6 +67,8 @@ test("渲染: 空态（无 run）不崩且给出提示", () => {
     runs: [],
     activeTab: "workflow",
     rows: [],
+    listRows: [],
+    listSelectedIndex: -1,
     collapsedNodeKeys: new Set(),
     selectedIndex: -1,
     focus: "tree",

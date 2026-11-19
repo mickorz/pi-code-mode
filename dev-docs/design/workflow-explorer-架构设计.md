@@ -18,6 +18,20 @@
 | M5 Journal Detail | `src/engine/persistence/journal.ts`（V2）、`src/explorer/repository/detail-repository.ts` | `tests/contract/journal-v2.test.ts` |
 | M6 端到端 | — | `tests/contract/explorer-e2e.test.ts` |
 
+已实施评审修复（2026-11-18 第二轮，问题与修复一一对应）：
+
+| 编号 | 问题 | 修复 | 回归测试 |
+| ---- | ---- | ---- | -------- |
+| H1 | Explorer 自建 JournalStore，首次读盘后永久命中陈旧缓存（运行中详情不再更新） | 单例 `createRunJournal()` 由写入方与读取方共用（`src/manager/run-journal.ts`） | `explorer-fixes.test.ts` H1 |
+| H2 | 切回已存在树的 run 时导航仍绑定旧树（`ensureTree` 早退漏重绑） | 单一 NavigationModel，host 动态解析当前 activeRunId 的树 | H2 |
+| H3 | schedule 触发的 run 未接事件/journal，树只剩根节点 | PiScheduleRunner 接 eventBus + journal + onAgentExecution + 摘要落盘 | H3 |
+| M1 | child workflow 内 runTool 用裸 phase 标题 → 挂到不存在的 phase（节点不可见）；MCP 硬编码 root | Runtime 新增 `eventPhase()`（与 agent displayPhase 同构）；onMcpCall 携带调用点 scope | M1 |
+| M2 | `onAgentExecution` 未接线 → attempts 历史恒空 | workflow 工具与 schedule runner 均接 `journal.recordExecution` | M2 |
+| M3 | 详情 End/连续 ↓ 越界成白屏 | `detailMaxScroll` 由渲染层回报，`end()`/`scrollDetail()` 钳制 | M3 |
+| M4 | Agents/Tools Tab 复用树可见行（折叠即消失）且无导航 | `listRows`（全树过滤）+ Tab 内 up/down/home/end 移动 + 选中高亮 | M4 |
+| L1 | resume 复用 runId 时旧树节点残留 | `run.started` 触发该 runId 的树重建 | L1 |
+| L2 | Shift+Tab（CSI Z）未映射，反向切 Tab 不可达 | `mapKey` 增 `[Z` → `shiftTab` | `navigator.test.ts` |
+
 两处与设计文档的实现偏差（已按实现为准）：
 
 1. **展开态用 `collapsedNodeKeys` 而非 `expandedNodeKeys`**：默认全展开（运行中树仅几十节点），仅显式收起时剪枝——用户打开面板即看到完整结构。

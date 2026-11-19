@@ -92,8 +92,8 @@ function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, sel
   return selected ? theme.fg("accent", theme.bold(line)) : line
 }
 
-/** 详情面板：节点身份 + 状态 + 指标 + prompt/result + 执行历史 */
-function renderDetail(d: NodeDetailView | undefined, width: number, scrollTop: number, bodyRows: number, theme: ThemeLike): string[] {
+/** 详情面板全量内容行（滚动与切片由调用方负责，以便钳制越界滚动） */
+function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: ThemeLike): string[] {
   if (!d) return [theme.fg("muted", "  （未选中节点）")]
   const { node } = d
   const lines: string[] = []
@@ -130,34 +130,58 @@ function renderDetail(d: NodeDetailView | undefined, width: number, scrollTop: n
       }
     }
   }
-  const view = lines.slice(scrollTop, scrollTop + Math.max(1, bodyRows))
+  return lines
+}
+
+/** 详情视口：把全量内容按 clamp 后的起点切片，并回报最大滚动起点 */
+function renderDetail(
+  d: NodeDetailView | undefined,
+  width: number,
+  scrollTop: number,
+  bodyRows: number,
+  theme: ThemeLike,
+  onMaxScroll?: (maxStart: number) => void,
+): string[] {
+  const lines = detailLinesOf(d, width, theme)
+  const maxStart = Math.max(0, lines.length - Math.max(1, bodyRows))
+  onMaxScroll?.(maxStart)
+  const start = Math.min(Math.max(0, scrollTop), maxStart)
+  const view = lines.slice(start, start + Math.max(1, bodyRows))
   while (view.length < bodyRows) view.push("")
   return view
 }
 
+/** Tab 列表行（带选中标记；listRows 是全树过滤，不受树折叠影响） */
+function tabListRow(text: string, selected: boolean, width: number, theme: ThemeLike): string {
+  const line = `${selected ? "> " : "  "}${text}`
+  return truncateToWidth(selected ? theme.fg("accent", theme.bold(line)) : line, width)
+}
+
 function renderAgentsTab(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
-  const agents = state.rows.filter((r) => r.kind === "agent")
+  const agents = (state.listRows ?? state.rows).filter((r) => r.kind === "agent")
   if (!agents.length) return [theme.fg("muted", "  （无 Agent 节点）")]
-  return agents.slice(0, bodyRows).map((a) => {
+  return agents.slice(0, bodyRows).map((a, idx) => {
     const parts = [statusIcon(a.status), a.label, fmtDuration(a.durationMs)]
     if (a.metadata?.model) parts.push(a.metadata.model)
     if (a.metadata?.tokens != null) parts.push(`${a.metadata.tokens}tok`)
     if (a.metadata?.replayed) parts.push("[回放]")
-    return truncateToWidth(parts.filter(Boolean).join("  "), width)
+    return tabListRow(parts.filter(Boolean).join("  "), idx === state.listSelectedIndex, width, theme)
   })
 }
 
 function renderToolsTab(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
-  const tools = state.rows.filter((r) => r.kind === "tool")
+  const tools = (state.listRows ?? state.rows).filter((r) => r.kind === "tool")
   if (!tools.length) return [theme.fg("muted", "  （无工具节点——runTool / MCP 调用会出现在这里）")]
-  return tools.slice(0, bodyRows).map((t) => truncateToWidth(`${statusIcon(t.status)} ${t.label}  ${fmtDuration(t.durationMs)}`, width))
+  return tools
+    .slice(0, bodyRows)
+    .map((t, idx) => tabListRow(`${statusIcon(t.status)} ${t.label}  ${fmtDuration(t.durationMs)}`, idx === state.listSelectedIndex, width, theme))
 }
 
 function renderJournalTab(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
-  const agents = state.rows.filter((r) => r.kind === "agent")
+  const agents = (state.listRows ?? state.rows).filter((r) => r.kind === "agent")
   const lines: string[] = []
-  for (const a of agents) {
-    lines.push(truncateToWidth(`${a.label}  ${statusIcon(a.status)}${a.metadata?.replayed ? "  [replayed]" : ""}`, width))
+  for (const [idx, a] of agents.entries()) {
+    lines.push(tabListRow(`${a.label}  ${statusIcon(a.status)}${a.metadata?.replayed ? "  [replayed]" : ""}`, idx === state.listSelectedIndex, width, theme))
     const detail = state.detail?.node.nodeKey === a.nodeKey ? state.detail : undefined
     for (const e of detail?.agent?.executions ?? []) {
       lines.push(truncateToWidth(`  #${e.attempt} ${statusIcon(e.status)} ${fmtDuration(e.durationMs)}${e.error ? `  ${e.error.slice(0, 60)}` : ""}`, width))
@@ -167,8 +191,19 @@ function renderJournalTab(state: ExplorerViewState, width: number, bodyRows: num
   return lines.slice(0, bodyRows)
 }
 
+export interface RenderHooks {
+  /** 详情内容最大滚动起点（渲染层才知道内容行数）；Controller 用它钳制 End/↓ */
+  onDetailMaxScroll?: (maxStart: number) => void
+}
+
 /** 主渲染：返回 overlay 正文行（不含边框） */
-export function renderExplorerFrame(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
+export function renderExplorerFrame(
+  state: ExplorerViewState,
+  width: number,
+  bodyRows: number,
+  theme: ThemeLike,
+  hooks: RenderHooks = {},
+): string[] {
   const lines: string[] = []
 
   // Tab 栏 + 当前 run
@@ -198,7 +233,7 @@ export function renderExplorerFrame(state: ExplorerViewState, width: number, bod
     const treeLines = state.rows.map((node, idx) =>
       renderTreeRow(node, depthMap.get(node.nodeKey) ?? 0, leftWidth, idx === state.selectedIndex && state.focus === "tree", !state.collapsedNodeKeys.has(node.nodeKey), theme),
     )
-    const detailLines = renderDetail(state.detail, rightWidth, state.detailScrollTop, bodyHeight, theme)
+    const detailLines = renderDetail(state.detail, rightWidth, state.detailScrollTop, bodyHeight, theme, hooks.onDetailMaxScroll)
     const start = treeWindowStart(state, bodyHeight)
     for (let i = 0; i < bodyHeight; i++) {
       const l = treeLines[start + i] ?? ""
@@ -206,7 +241,7 @@ export function renderExplorerFrame(state: ExplorerViewState, width: number, bod
       lines.push(`${truncateToWidth(l, leftWidth, "", true)}${theme.fg("borderMuted", "|")}${truncateToWidth(r, rightWidth, "", true)}`)
     }
   } else if (state.focus === "detail") {
-    lines.push(...renderDetail(state.detail, width, state.detailScrollTop, bodyHeight, theme))
+    lines.push(...renderDetail(state.detail, width, state.detailScrollTop, bodyHeight, theme, hooks.onDetailMaxScroll))
   } else {
     const depthMap = depthMapOf(state.rows)
     const start = treeWindowStart(state, bodyHeight)
@@ -261,9 +296,15 @@ const BOX_LEFT = "| "
 const BOX_RIGHT = " |"
 
 /** 盒式包装（右侧栏视觉；宽度自适应） */
-export function renderExplorerBox(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
+export function renderExplorerBox(
+  state: ExplorerViewState,
+  width: number,
+  bodyRows: number,
+  theme: ThemeLike,
+  hooks: RenderHooks = {},
+): string[] {
   const inner = Math.max(20, width - BOX_LEFT.length - BOX_RIGHT.length)
-  const body = renderExplorerFrame(state, inner, bodyRows, theme)
+  const body = renderExplorerFrame(state, inner, bodyRows, theme, hooks)
   const title = theme.fg("accent", theme.bold(" Workflow Explorer "))
   const top = `+-${title}${"-".repeat(Math.max(0, inner - visibleWidth(title) - 1))}+`
   const bottom = `+${"-".repeat(inner + 2)}+`

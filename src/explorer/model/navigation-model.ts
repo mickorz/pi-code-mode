@@ -29,6 +29,8 @@ export interface ExplorerNavigationState {
   collapsedNodeKeys: Set<string>
   focus: ExplorerFocus
   detailScrollTop: number
+  /** 详情内容的最大滚动起点（渲染层回报；End/↓ 用它钳制，避免越界白屏） */
+  detailMaxScroll: number
 }
 
 export interface NavigationHost {
@@ -43,6 +45,7 @@ export class NavigationModel {
     collapsedNodeKeys: new Set<string>(),
     focus: "tree",
     detailScrollTop: 0,
+    detailMaxScroll: 0,
   }
 
   constructor(private readonly host: NavigationHost) {}
@@ -88,6 +91,7 @@ export class NavigationModel {
   select(nodeKey: string): void {
     this.state.selectedNodeKey = nodeKey
     this.state.detailScrollTop = 0
+    this.state.detailMaxScroll = 0
   }
 
   setTab(tab: ExplorerTab): void {
@@ -126,7 +130,7 @@ export class NavigationModel {
 
   end(): NavigationEffect[] {
     if (this.state.focus === "detail") {
-      this.state.detailScrollTop = Number.MAX_SAFE_INTEGER
+      this.state.detailScrollTop = this.state.detailMaxScroll
       return [{ kind: "redraw" }]
     }
     const rows = this.visibleRows()
@@ -188,9 +192,18 @@ export class NavigationModel {
   }
 
   scrollDetail(delta: number): NavigationEffect[] {
-    const next = Math.max(0, this.state.detailScrollTop + delta)
-    this.state.detailScrollTop = next
+    // 越界的旧值先钳到合法区间（内容变短 / End 后再按 ↑ 都从真实末尾回退）
+    const base = Math.min(this.state.detailScrollTop, this.state.detailMaxScroll)
+    this.state.detailScrollTop = Math.min(this.state.detailMaxScroll, Math.max(0, base + delta))
     return [{ kind: "redraw" }]
+  }
+
+  /** 渲染层回报详情内容的最大滚动起点（内容行数 - 视口行数） */
+  setDetailMaxScroll(maxStart: number): void {
+    this.state.detailMaxScroll = Math.max(0, Math.trunc(maxStart) || 0)
+    if (this.state.detailScrollTop > this.state.detailMaxScroll) {
+      this.state.detailScrollTop = this.state.detailMaxScroll
+    }
   }
 
   private moveSelection(delta: number): NavigationEffect[] {

@@ -129,8 +129,9 @@ export interface WorkflowRunOptions {
   onCompositeUpdate?: (record: CompositeRecord) => void
   /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
-  /** M4：workflow 直调 MCP 的审计回调（每条调用实时发）；宿主决定持久化（journal 文件或日志） */
-  onMcpCall?: (record: McpToolCallSummary) => void
+  /** M4：workflow 直调 MCP 的审计回调（每条调用实时发）；宿主决定持久化（journal 文件或日志）；
+   *  scope 为调用点所在 workflow scope（评审修复 M1：child 内 MCP 不再被误报为 root） */
+  onMcpCall?: (record: McpToolCallSummary, scope?: { scopePath: string[]; phase?: string }) => void
   /**
    * 统一 Runtime 事件出口（Explorer / Web Dashboard 共用；Workflow Explorer 架构 M1）：
    * sequence / eventId / timestamp 由 RuntimeEventBus 在 publish 时补齐。
@@ -226,8 +227,9 @@ interface SharedRunContext {
   mcpPool?: McpClientPool,
   /** M4：root meta.mcp 声明（child 可达面 = root 白名单 ∩ 自身声明） */
   mcpPoolPolicy?: McpPolicy,
-  /** M4：MCP 直调审计回调（每条调用实时发，宿主决定持久化） */
-  onMcpCall?: (record: McpToolCallSummary) => void
+  /** M4：MCP 直调审计回调（每条调用实时发，宿主决定持久化）；
+   *  scope 为调用点所在的 workflow scope（评审修复 M1：child 内 MCP 不再被误报为 root） */
+  onMcpCall?: (record: McpToolCallSummary, scope?: { scopePath: string[]; phase?: string }) => void
   /** M4：宿主全局配置目录（池读 mcp.json 用） */
   agentDir?: string
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
@@ -330,20 +332,22 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     },
     composites: [],
     cwd: options.cwd ?? process.cwd(),
-    onMcpCall: (record) => {
-      options.onMcpCall?.(record)
+    onMcpCall: (record, mcpScope) => {
+      options.onMcpCall?.(record, mcpScope)
       if (!emit) return
+      const scopePath = mcpScope?.scopePath?.length ? mcpScope.scopePath : ["root"]
       const toolId = `mcp:${record.toolName}#${record.toolCallId ?? `${++shared.toolSeq}`}`
       emit({
         runId,
         type: "tool.finished",
-        nodeKey: `tool:root#${toolId}`,
-        scopePath: ["root"],
+        nodeKey: `tool:${scopePath.join("/")}#${toolId}`,
+        scopePath,
         payload: {
           toolId,
           name: record.toolName,
           kind: "mcp" as const,
-          scopePath: ["root"],
+          scopePath,
+          phase: mcpScope?.phase,
           status: record.status === "ok" ? ("ok" as const) : ("error" as const),
           startedAt: Date.now() - (record.durationMs ?? 0),
           endedAt: Date.now(),
@@ -475,7 +479,7 @@ async function executeWorkflow(
         shared.toolCount++
       },
       onCall: (record) => {
-        shared.onMcpCall?.(record)
+        shared.onMcpCall?.(record, { scopePath: scope.pathKeys ?? ["root"], phase: eventPhase() })
         shared.toolCount++ // M4：MCP 直调计入确定性工具节点（纯 MCP workflow 合法，同 P4.1 runTool 语义）
         shared.logs.push(`mcp: ${record.server}/${record.toolName} ${record.status} ${record.durationMs ?? "-"}ms`)
       },
@@ -529,6 +533,15 @@ async function executeWorkflow(
     const display = scope.phasePrefix + title
     if (!shared.phases.includes(display)) shared.phases.push(display)
     emitPhase("phase.started", title)
+  }
+
+  /**
+   * 事件用的展示阶段名：与 agent() 的 displayPhase 完全同构（child 带 "▸ label / " 前缀）。
+   * 评审修复 M1：tool/MCP 事件若用裸标题，会挂到树里不存在的 phase 节点（永久 pending、节点不可见）。
+   */
+  function eventPhase(): string | undefined {
+    if (!scope.phasePrefix) return scope.currentPhase
+    return scope.currentPhase ? scope.phasePrefix + scope.currentPhase : scope.phasePrefix.replace(/ \/$/, "")
   }
 
   /** 阶段记录与事件（M1：scope 内同一 display 标题即同一个阶段；切换时关闭上一个未结束阶段） */
@@ -1201,7 +1214,7 @@ async function executeWorkflow(
           name: String(scriptPath),
           kind: "runtime" as const,
           scopePath: scope.pathKeys ?? ["root"],
-          phase: scope.currentPhase,
+          phase: eventPhase(),
           status: outcome.aborted ? ("error" as const) : outcome.ok ? ("ok" as const) : ("error" as const),
           startedAt,
           endedAt: Date.now(),
@@ -1262,7 +1275,7 @@ async function executeWorkflow(
         name: String(scriptPath),
         kind: "runtime" as const,
         scopePath: scope.pathKeys ?? ["root"],
-        phase: scope.currentPhase,
+        phase: eventPhase(),
         status: "running" as const,
         startedAt,
       },
