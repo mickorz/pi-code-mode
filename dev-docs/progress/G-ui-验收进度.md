@@ -50,6 +50,8 @@
 
 第三次复跑（run `run-1795078433379-4o4uqf`）三连一致；总时长 97.6s（前两次 6.5s）为调度/配额等待间隙，agent 本体 ~11s，无异常。
 
+配套 UI 改进（commit b254c92）：树行按节点类型着色（run=accent/workflow与composite=border/phase=warning/agent=text/tool=success，选中行 accent 加粗），用户交互 TUI 目视确认生效。
+
 ## 遗留
 
 - 验收点 1/2 的「目视」部分（面板缩进、[REDACTED] 显示效果）headless 无法核对，依赖 contract E2E 渲染断言兜底；如需人工目视，交互会话 Ctrl+B 打开 Explorer 选中 SchemaAgent 节点。
