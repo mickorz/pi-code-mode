@@ -38,6 +38,22 @@ npx tsx dev-examples/sample-project-acceptance/run-acceptance.ts <目录或脚�
 
 验收 runner（`run-acceptance.ts`）职责：读取脚本 → `runWorkflow`（PiAgentAdapter 真实模型）→ 按脚本类型断言 → 输出验收表。**注意**：脚本内 `agent()` 读 `docs/*.mdx` 等相对路径，runner 以 sample-project 为 cwd 执行（chain 适配版除外，自包含）。
 
+## 新增登记：subworkflow-tree-view（子 workflow 嵌套树显示）
+
+```bash
+# workflow 工具 scriptPath 后台跑（run-acceptance 接入待定，嵌套链需项目根相对路径）
+scriptPath: ./dev-examples/sample-project-acceptance/G-ui/subworkflow-tree-test.js
+```
+
+父 + 子双文件（`workflow()` 原语嵌套，scriptPath 相对项目根解析）：
+
+| 验收点 | 数据来源 |
+| --- | --- |
+| 树层级：父下挂 3 个子 workflow 节点（# 图标，缩进递增） | 串行 1 + 并行 2 |
+| 同脚本多实例不合并（label 并行A/并行B 区分） | `parallel` 双实例 |
+| 子内 phase 前缀「▸ label / 子层任务」 | 子脚本 `phase('子层任务')` |
+| childSeq 按调用序领号（wf0/wf1/wf2，不按完成序） | journal 键结构 |
+
 ## 新增登记：schema-result-view（结构化结果详情展示）
 
 ```bash

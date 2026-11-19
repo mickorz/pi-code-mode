@@ -29,6 +29,21 @@
 - contract `explorer-result-view.test.ts` 升至 **11/11**（上次 9/9，其间补 2 个真实数据回归：失败节点 error 状态、工具节点显示错误而非「无结果返回」），本 run 数据下全部通过。
 - 保留点 3 不变：模型输出仍 5.4KB 未触发实机截断，contract 用例兜底。
 
+### 2026-11-19 subworkflow-tree-view（run `run-1795076191834-w6opf2`）：✅ 通过（目视部分待人工）
+
+新增脚本 `G-ui/subworkflow-tree-test.js` + `subworkflow-child.js`（父 + 子双文件，workflow() 原语嵌套，scriptPath 相对项目根解析）。后台 run 7s：父 RootAgent + 串行子流程 + 并行 A/B（同脚本双实例）。
+
+| 验收点 | 结果 | 证据 |
+| --- | --- | --- |
+| 1. 树层级：父下挂 3 个子 workflow 节点（# 图标、缩进） | ✅ 结构层 | journal entry 键 `<runId>:<scopePath>:<localId>`，scopePath wf0/wf1/wf2 三层；树模型三层嵌套单测（explorer-tree 8/8）通过 |
+| 2. 同脚本多实例不合并 | ✅ | 并行 A/B 两个独立节点（label 区分、不同 scopePath）；同名不合并单测通过 |
+| 3. 子内 phase 前缀「▸ label / 子层任务」 | ✅ | run 节点列表实测：EchoAgent(serial) (▸ 串行子流程 / 子层任务) 等三个子 agent 均带前缀分组 |
+| 4. childSeq 按调用序领号（wf0/wf1/wf2 不按完成序） | ✅ | parallel-b 先完成（2331ms < 2654ms）但编号仍按调用序（wf1=并行A，wf2=并行B），节点列表顺序稳定 |
+| 5. 选中子 workflow 节点看详情（scopePath、子流程耗时） | ⬜ 目视待人工 | headless 无法核对渲染面板；确定性兑底：explorer-e2e 1/1（childA/childB 嵌套树 + Journal 详情 + resume 回放）通过 |
+
+- 确定性覆盖合计：explorer-tree 8/8 + explorer-e2e 1/1（含嵌套）。
+- 保留点：验收点 5 的目视部分需交互 TUI（Ctrl+B 展开树、选子 workflow 节点看详情）。
+
 ## 遗留
 
 - 验收点 1/2 的「目视」部分（面板缩进、[REDACTED] 显示效果）headless 无法核对，依赖 contract E2E 渲染断言兜底；如需人工目视，交互会话 Ctrl+B 打开 Explorer 选中 SchemaAgent 节点。
