@@ -45,6 +45,10 @@ import type {
   WorkflowRunResult,
 } from "../types/index.js"
 import { McpClientPool, makeMcpInvoker, type McpInvoker } from "../../mcp/mcp-client-pool.js"
+import { planSchedule, buildProfiles, type TaskProfile } from "../adaptive/adaptive-scheduler.js"
+import { evaluate, type EvaluationReport } from "../evaluator/evaluator.js"
+import { BaselineStore } from "../evaluator/baseline-store.js"
+import type { WorkflowPlan } from "../plan/schema.js"
 import { TaskRegistry } from "../governance/task-registry.js"
 import { computeTaskFingerprint, contentHash } from "../governance/task-fingerprint.js"
 import type { BudgetGate } from "../governance/budget-gate.js"
@@ -138,6 +142,13 @@ export interface WorkflowRunOptions {
   budgetGate?: BudgetGate
   /** M6/M3：任务级恢复注册表（可选；启用后按 agent call taskKey/fingerprint 复用） */
   taskRegistry?: TaskRegistry
+  /** M6/M4：可选历史耗时画像；parallel 有画像时长任务先发（不改变结果顺序） */
+  adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/M5：完成后评估并写 BaselineStore（可选生产接线） */
+  evaluationPlan?: WorkflowPlan
+  baselineStore?: BaselineStore
+  evaluationInputScale?: string
+  onEvaluation?: (report: EvaluationReport) => void
   /** M6/M3：任务级恢复模式；true 时跳过 done 且指纹一致任务 */
   taskResume?: boolean
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
@@ -235,6 +246,13 @@ interface SharedRunContext {
   budgetGate?: BudgetGate
   /** M6/M3：任务级恢复注册表与模式 */
   taskRegistry?: TaskRegistry
+  /** M6/M4：自适应耗时画像 */
+  adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/M5：评估/基线接线 */
+  evaluationPlan?: WorkflowPlan
+  baselineStore?: BaselineStore
+  evaluationInputScale?: string
+  onEvaluation?: (report: EvaluationReport) => void
   taskResume?: boolean
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
@@ -309,6 +327,11 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     budgetGate: options.budgetGate,
     taskRegistry: options.taskRegistry,
     taskResume: options.taskResume ?? false,
+    adaptiveProfiles: options.adaptiveProfiles,
+    evaluationPlan: options.evaluationPlan,
+    baselineStore: options.baselineStore,
+    evaluationInputScale: options.evaluationInputScale,
+    onEvaluation: options.onEvaluation,
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
     phaseFailed: [],
     continueOnAgentFailure: options.continueOnAgentFailure ?? false,
@@ -369,6 +392,32 @@ export async function runWorkflow<T = unknown>(
       WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
       { recoverable: false },
     )
+  }
+
+  // M6/M5：真实 run 完成后评估并写基线（此前 BaselineStore.record 无生产调用方）
+  if (shared.evaluationPlan && shared.baselineStore) {
+    const byStage = new Map<string, { agents: number; inputTokens: number; durationMs: number; failed: number }>()
+    for (const a of shared.agents) {
+      const stageId = a.phase ?? "root"
+      const current = byStage.get(stageId) ?? { agents: 0, inputTokens: 0, durationMs: 0, failed: 0 }
+      current.agents++
+      current.inputTokens += a.inputTokens ?? 0
+      current.durationMs += a.durationMs ?? 0
+      if (a.status === "failed") current.failed++
+      byStage.set(stageId, current)
+    }
+    const evaluation = evaluate({
+      plan: shared.evaluationPlan,
+      runId,
+      inputScale: shared.evaluationInputScale,
+      actuals: [...byStage.entries()].map(([stageId, v]) => ({ stageId, ...v })),
+    })
+    shared.baselineStore.record({
+      workflowId: shared.evaluationPlan.workflowId ?? meta.name,
+      scriptHash: shared.evaluationPlan.source.scriptHash ?? "unknown",
+      report: evaluation,
+    })
+    shared.onEvaluation?.(evaluation)
   }
 
   return {
@@ -1015,20 +1064,33 @@ async function executeWorkflow(
     if (thunks.some((thunk) => typeof thunk !== "function")) {
       throw new TypeError("parallel() 期望函数数组而非 Promise 数组，请用 () => agent(...) 包裹")
     }
-    return Promise.all(
-      thunks.map(async (thunk, index) => {
+    // M6/M4：有历史画像时长任务先发；返回值仍按原索引顺序，业务语义不变。
+    const order = thunks.map((_, index) => index)
+    if (shared.adaptiveProfiles && shared.adaptiveProfiles.size > 0) {
+      const scheduled = planSchedule(
+        thunks.map((_, index) => ({ taskKey: `parallel:${index}`, taskType: `parallel:${index}` })),
+        shared.adaptiveProfiles,
+        { typeOf: (t) => t.taskType ?? t.taskKey },
+      )
+      order.splice(0, order.length, ...scheduled.order.map((k) => Number(k.split(":").at(-1))))
+      log(`parallel 自适应调度：${scheduled.notes.join("；")}`)
+    }
+    const results = new Array<unknown>(thunks.length)
+    await Promise.all(
+      order.map(async (index) => {
+        const thunk = thunks[index]!
         try {
-          return await thunk()
+          results[index] = await thunk()
         } catch (error) {
           if (isAborted()) throw error
           const workflowError = wrapError(error)
-          // 不可恢复失败（脚本校验错/agent 超限）终止整个 run，不塌缩为 null
           if (!workflowError.recoverable) throw workflowError
           log(`parallel[${index}] 失败: ${workflowError.message}`)
-          return null
+          results[index] = null
         }
       }),
     )
+    return results
   }
 
   const pipeline = async (

@@ -14,6 +14,8 @@ import { loadRegistry, readWorkflowScript } from "../engine/runtime/workflow-reg
 import { resolvePlanContext, toRunConfig } from "../engine/plan/plan-runner.js"
 import { JournalStore } from "../engine/persistence/journal.js"
 import { TaskRegistry } from "../engine/governance/task-registry.js"
+import { buildProfiles, samplesFromCheckpoints } from "../engine/adaptive/adaptive-scheduler.js"
+import { BaselineStore } from "../engine/evaluator/baseline-store.js"
 import { agentAdapterToRunner } from "../adapter/agent-adapter.js"
 import type { AgentAdapter } from "../adapter/types.js"
 import { renderWorkflowRunResult } from "./render-text.js"
@@ -197,10 +199,23 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         confirm,
         // M6：Plan 预算闸接入真实 run（此前只在测试中传过）
         ...(planCtx ? { budgetGate: planCtx.budgetGate } : {}),
+        ...(planCtx
+          ? {
+              evaluationPlan: planCtx.plan,
+              baselineStore: new BaselineStore({ cwd }),
+              onEvaluation: (evaluation: any) => deps.runManager.attach(runId, { evaluation } as any),
+            }
+          : {}),
         ...(params.taskResume
           ? {
               taskRegistry: new TaskRegistry({ dir: path.join(cwd, ".pi", "workflows", "tasks"), workflowId: workflowIdForTasks ?? runId }),
               taskResume: true,
+              adaptiveProfiles: buildProfiles(
+                new TaskRegistry({ dir: path.join(cwd, ".pi", "workflows", "tasks"), workflowId: workflowIdForTasks ?? runId })
+                  .list()
+                  .filter((t) => t.committedAt !== undefined && t.updatedAt !== undefined)
+                  .map((t) => ({ taskKey: t.taskKey, taskType: t.taskKey.split(/[:\/-]/)[0] ?? t.taskKey, durationMs: Math.max(1, t.updatedAt - (t.committedAt ?? t.updatedAt)) })),
+              ),
             }
           : {}),
         onAgentJournal: (entry: any) => journal.append(runId, entry.key, entry),

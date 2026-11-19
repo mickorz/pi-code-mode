@@ -30,7 +30,7 @@ import {
   makeWorkflowControlTool,
   type WorkflowToolDeps,
 } from "../src/tools/workflow-tools.js"
-import { createPlannerAgent, createWorkflowAnalyzeTool } from "../src/tools/workflow-analyze-tool.js"
+import { createPlannerAgent, createWorkflowAnalyzeTool, createWorkflowOptimizeTool } from "../src/tools/workflow-analyze-tool.js"
 import { createPlanValidateTool } from "../src/tools/plan-tool.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 import { createRenderScheduler } from "../src/manager/render-scheduler.js"
@@ -161,6 +161,8 @@ export default function extension(pi: ExtensionAPI): void {
   )
   // plan_validate：M2 Plan 校验（Schema/Profile 边界/指纹/过期）
   pi.registerTool(createPlanValidateTool({ cwd: process.cwd() }) as any)
+  // workflow_optimize：M5 优化闭环（默认独立工作区 + 授权闸门，不直接改生产）
+  pi.registerTool(createWorkflowOptimizeTool({ cwd: process.cwd(), plannerAgent: createPlannerAgent({ cwd: process.cwd() }) }) as any)
 
   // ---- schedule_* 工具族 ×8 + 调度循环（M4）----
   const scheduleDeps = makeDeps()

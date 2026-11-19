@@ -18,6 +18,7 @@ import {
   type PlannerOutput,
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
+import { runOptimizationLoop, renderLoopResult } from "../engine/evaluator/optimization-loop.js"
 
 export interface AnalyzeInput {
   /** 脚本路径（与 source 二选一） */
@@ -203,6 +204,42 @@ export function createWorkflowAnalyzeTool(deps: {
       return {
         content: [{ type: "text" as const, text: `${summary}\n\n${result.rendered ?? ""}${result.reportPath ? `\n\n报告已写入：${result.reportPath}` : ""}` }],
       }
+    },
+  }
+}
+
+/** Pi 工具：workflow_optimize（真实接线；默认只在独立工作区建议，不自动改生产） */
+export function createWorkflowOptimizeTool(deps: { cwd?: string; plannerAgent?: (prompt: string) => Promise<string> }) {
+  return {
+    name: "workflow_optimize",
+    label: "Optimize Workflow",
+    description:
+      "分析 Workflow 并在独立工作区生成优化修改，重新分析/Benchmark 后等待授权。默认不修改生产脚本。",
+    parameters: Type.Object({
+      scriptPath: Type.String({ description: "workflow 脚本路径（相对项目根）" }),
+      approve: Type.Optional(Type.Boolean({ description: "显式授权应用修改；缺省 false（安全默认）" })),
+    }),
+    async execute(_id: string, params: any) {
+      const cwd = deps.cwd ?? process.cwd()
+      const result = await runOptimizationLoop({
+        scriptPath: params.scriptPath,
+        cwd,
+        analyze: async (scriptPath) => {
+          const r = await analyzeWorkflow({ scriptPath, cwd })
+          if (!r.report) throw new Error(r.error ?? "分析失败")
+          return r.report
+        },
+        propose: async ({ report, source }) => {
+          if (!deps.plannerAgent) return { recommendations: report.recommendations }
+          const prompt = buildPlannerPrompt(report, { codeSnippet: source.slice(0, 4000) })
+          const parsed = parsePlannerResponse(await deps.plannerAgent(prompt))
+          if (!parsed.ok || !parsed.output) return { recommendations: report.recommendations }
+          return { recommendations: mergeRecommendations(report.recommendations, parsed.output), patchedSource: undefined }
+        },
+        // M6 接线第一版不自动执行 benchmark；没有 after 证据则仍不应用（优化闭环安全默认）
+        dangerouslyAutoApprove: params.approve === true,
+      })
+      return { content: [{ type: "text" as const, text: renderLoopResult(result) }], ...(result.ok ? {} : { isError: false }) }
     },
   }
 }

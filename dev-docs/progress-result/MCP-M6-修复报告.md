@@ -64,3 +64,32 @@
 5. 审计提到的 `limiter` 与 `semaphore.ts` 重复、`evaluator duration 串行求和`、`baseline 无上限增长` 等 P2 未处理。
 
 **因此计划状态仍为「库级实现完成 + 核心生产接线已修（M2/M3 + schedule + CLI），M4/M5 生产化待办」。**
+
+## 六、后续生产接线（本轮继续完成）
+
+### M3 taskResume 真实入口
+
+- `workflow` 工具新增 `taskResume: true` 参数；真实 run 接入 `TaskRegistry`
+- agent call 使用稳定 taskKey + 完整指纹，第二次 run 复用已完成产物、零模型调用
+- 接线测试：`tests/contract/task-resume-wiring.test.ts` 2/2
+
+### M4 Adaptive 真实入口
+
+- `parallel()` 支持可选 `adaptiveProfiles`（历史 TaskCheckpoint 画像），有画像时长任务先发，返回顺序不变
+- workflow 工具 `taskResume` 模式自动从 TaskRegistry 构造画像并传入 runtime
+- 分片/上下文三层 API 已可由调用方接入；不强制改变旧 workflow
+
+### M5 Baseline 真实入口
+
+- `runWorkflow` 增加可选 `evaluationPlan` + `baselineStore` + `onEvaluation`
+- workflow 工具提供 Plan 时，run 完成自动聚合 AgentRecord → EvaluationReport → BaselineStore
+- 接线测试：`tests/contract/evaluation-wiring.test.ts` 2/2
+- 无 Plan 旧 workflow 不创建 baseline，兼容性保持
+
+### M5 Optimize 工具入口
+
+- 注册 `workflow_optimize` 工具：真实调用 Analyzer/Planner，优化默认走独立工作区和授权闸门
+- 缺少 `patchedSource` / Benchmark 证据时不应用生产脚本
+- 真实闭环的 Benchmark 执行器仍需业务侧注入（安全默认，不自动执行生产 workflow）
+
+本轮接线回归：engine 206/206，contract 97/97，新增 M6 接线测试 22/22，build 通过。
