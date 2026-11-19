@@ -5,6 +5,31 @@
 - 目标：用真实生产 workflow 验证 pi-code-mode 的 **Analyzer / Plan / 预算治理 / 任务级恢复 / 评估基线** 是否正确工作
 - 本手册三档递进：**第1档零成本（秒级）→ 第2档零成本（秒级）→ 第3档真实运行（分钟级，消耗 token）**
 
+## 命令使用约定（先读，避免走错入口）
+
+**优先用 pi 会话内的斜杠命令，不要退出 pi 去跑 `node bin/...`。**
+所有能力都有三个入口，优先顺序如下：
+
+| 优先 | 入口 | 何时用 |
+| --- | --- | --- |
+| 1 | `/workflows <子命令>` | 在 pi 里工作时（推荐） |
+| 2 | `workflow_analyze` / `plan_validate` 工具 | Agent 自动调用 / 需要结构化返回 |
+| 3 | `pi-code-mode <子命令>` CLI | 不在 pi 会话里（CI、终端脚本） |
+
+本手册凡涉及分析/校验的步骤，均已改用**会话内命令**；仅跨仓库批量扫描（1.4）仍需终端。
+
+### 命令速查表
+
+```
+/workflows analyze <路径|名> [--suggest]   静态分析（别名 anal；报告自动落盘）
+/workflows plan validate <plan.json>      校验 Plan（Profile 边界/指纹/过期）
+/workflows run <路径|名> [k=v...]         后台执行 workflow
+/workflows resume <路径|名> [--tasks]     任务级恢复（只重跑未完成）
+/workflows resume <路径|名> --status      查看任务清单与状态
+/workflows status <runId>                查看运行详情
+/workflows cancel [runId]                停止运行
+```
+
 ---
 
 ## 0. 前置准备
@@ -42,52 +67,61 @@ pi -e E:/WorkProjects/pi-code-mode
 
 ## 第 1 档：静态分析（零成本，秒级）
 
-### 1.1 单脚本分析
+### 1.1 单脚本分析（pi 会话内命令）
 
-```bash
-cd /e/WorkProjects/PrdGameSkill
-node E:/WorkProjects/pi-code-mode/bin/pi-code-mode.js analyze \
-  .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js --md
-```
-
-**实测期望输出**（2026-11-19）：
+**在 PrdGameSkill 里启动 pi 后**，直接输入斜杠命令（`anal` 是 `analyze` 的别名）：
 
 ```
-# Workflow Analysis: .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
-- analyzer 1.0.0 / ruleSet 1.0.0
-- **Risk Score: 2/100**
+/workflows analyze .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
+/workflows anal .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
+```
 
-## 调用结构
-- 调用点: 5（agent 2 / workflow 3）
-- 估算任务量: 4（含动态节点，为下限估算）
-- 动态节点: 5
+**实测期望输出**（会话内摘要，2026-11-19）：
 
-## 发现的问题
-- **LOW** RETRY-001 (L129-137, conf 0.80)
-  - retries 最高 2 次 / agent 调用点 2 个 / 最坏调用量 ≈ 6
+```
+Analyzer: .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
+风险分 2/100
+调用点 5（估算任务 4，含动态为下限） · 动态节点 5
+
+[LOW] RETRY-001 L129-137 (conf 0.80)
+  retries 最高 2 次
+
+完整报告：.pi/workflows/reports/game-requirement-audit.analysis.md
+```
+
+> 会话内只显示摘要（报告常达数百行，notify 会截断）；完整 Markdown/JSON 自动落盘到
+> `.pi/workflows/reports/`。看全文用 `read` 工具读取该文件。
+
+**检查点**：
+
+- [ ] `风险分` 是个位数（真实脚本无重大静态缺陷）
+- [ ] `动态节点 5` 有值（说明动态边界识别工作）
+- [ ] 标了「含动态为下限」（说明没有伪造精确数字）
+- [ ] 没有出现 `INPUT-001`（历史上这里曾有 17 条误报，见 `dev-docs/experience/analyzer-input-001-false-positives.md`）
+
+### 1.2 报告落盘（命令自动完成）
+
+`/workflows analyze` 每次都会同时写 Markdown 与 JSON，无需额外参数：
+
+```
+/workflows analyze .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
 ```
 
 **检查点**：
 
-- [ ] `Risk Score` 是个位数（真实脚本无重大静态缺陷）
-- [ ] `动态节点: 5` 有值（说明动态边界识别工作）
-- [ ] `估算任务量` 标了「下限估算」（说明没有伪造精确数字）
-- [ ] 没有出现 `INPUT-001`（历史上这里曾有 17 条误报，已修复见 `dev-docs/experience/analyzer-input-001-false-positives.md`）
-
-### 1.2 JSON 输出与报告落盘
-
-```bash
-node E:/WorkProjects/pi-code-mode/bin/pi-code-mode.js analyze \
-  .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js --json --write
-ls .pi/workflows/reports/
-```
-
-**检查点**：
-
+- [ ] `.pi/workflows/reports/game-requirement-audit.analysis.md` 存在
 - [ ] `.pi/workflows/reports/game-requirement-audit.analysis.json` 存在
-- [ ] 同名 `.md` 存在
+- [ ] 报告内含 `callGraph` / `dependencies` / `recommendations` 字段
 
-### 1.3 pi 会话内工具版（可加 AI 优化建议）
+### 1.3 AI 优化建议（`--suggest` 或工具版）
+
+命令加 `--suggest` 会真实调用模型生成优化建议（消耗 token）：
+
+```
+/workflows analyze .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js --suggest
+```
+
+等价的工具调用（脚本用 `scriptPath`）：
 
 ```
 workflow_analyze({
@@ -105,10 +139,14 @@ workflow_analyze({
 
 ### 1.4 全量扫描（13 个真实脚本 + 主编排）
 
+全量扫描是跨仓库脚本（不是 pi 命令），需在插件仓库跑：
+
 ```bash
 cd /e/WorkProjects/pi-code-mode
 npx tsx dev-examples/prdgame-skill-acceptance/scan-analyzer.mts
 ```
+
+> 日常单文件排查优用 `/workflows analyze`（会话内，自动落盘）。多文件横向对比才需要跑全量扫描。
 
 **实测期望**（2026-11-19，INPUT-001 误报修复后的基线）：
 
@@ -168,11 +206,10 @@ console.log('plan written');
 "
 ```
 
-### 2.2 校验 Plan
+### 2.2 校验 Plan（pi 会话内命令）
 
-```bash
-node E:/WorkProjects/pi-code-mode/bin/pi-code-mode.js plan validate \
-  .pi/workflows/plans/game-requirement-audit.plan.json
+```
+/workflows plan validate .pi/workflows/plans/game-requirement-audit.plan.json
 ```
 
 **实测期望**：
@@ -199,17 +236,17 @@ node E:/WorkProjects/pi-code-mode/bin/pi-code-mode.js plan validate \
 
 改动脚本（追加一行注释）后重跑 2.2：
 
-```bash
-echo "// touched" >> .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js
-node E:/WorkProjects/pi-code-mode/bin/pi-code-mode.js plan validate \
-  .pi/workflows/plans/game-requirement-audit.plan.json
 ```
+/workflows plan validate .pi/workflows/plans/game-requirement-audit.plan.json
+```
+
+（用 `edit` 工具或编辑器给脚本追加一行注释即可；无需 shell 重定向）
 
 **检查点**：
 
 - [ ] 输出 `脚本是否已过期：**是**（需重新 analyze）`
 
-**测试完请还原**：`cd /e/WorkProjects/PrdGameSkill && git checkout .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js`
+**测试完请还原**：在 PrdGameSkill 仓库执行 `git checkout -- .opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js`
 
 ### 2.4 验证 Profile 削弱拦截
 

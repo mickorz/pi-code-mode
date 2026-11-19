@@ -12,6 +12,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { runSubcommand } from "./run.js"
 import { resumeSubcommand } from "./resume.js"
+import { analyzeSubcommand, planSubcommand } from "./analyze.js"
 import { listSubcommand } from "./list.js"
 import { statusSubcommand } from "./status.js"
 import { cancelSubcommand } from "./cancel.js"
@@ -26,6 +27,9 @@ const subcommands: Record<string, Subcommand> = {
   list: listSubcommand,
   run: runSubcommand,
   resume: resumeSubcommand,
+  analyze: analyzeSubcommand,
+  anal: analyzeSubcommand,
+  plan: planSubcommand,
   status: statusSubcommand,
   cancel: cancelSubcommand,
   stop: cancelSubcommand,
@@ -52,7 +56,7 @@ function helpText(): string {
 export function registerWorkflowsCommand(pi: ExtensionAPI, deps: WorkflowsCommandDeps): void {
   pi.registerCommand("workflows", {
     description:
-      "workflow 命令入口（无参数显示帮助）；ui 打开 Navigator 全屏面板；watch <runId> 单 run 专注视图；list 列出注册表；register|reg 注册脚本；unregister|unreg 注销；run <路径|名> [k=v...] 后台执行；resume <路径|名> [--tasks|--status] 任务级恢复；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
+      "workflow 命令入口（无参数显示帮助）；ui 打开 Navigator 全屏面板；watch <runId> 单 run 专注视图；list 列出注册表；register|reg 注册脚本；unregister|unreg 注销；run <路径|名> [k=v...] 后台执行；resume <路径|名> [--tasks|--status] 任务级恢复；analyze|anal <路径|名> 静态分析；plan validate <plan.json> 校验 Plan；status <runId> / cancel|stop [runId]（带 id 停单个，无 id 停全部在途）",
     // Tab 参数补全：子命令名 / 注册表 workflowId / runId（宿主 getArgumentCompletions，无 ctx，cwd 取进程根）
     getArgumentCompletions: (prefix: string) =>
       completeWorkflowsArgs(prefix, { runManager, cwd: process.cwd() }),
