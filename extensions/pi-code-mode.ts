@@ -157,7 +157,15 @@ export default function extension(pi: ExtensionAPI): void {
   pi.registerTool(createPlanValidateTool({ cwd: process.cwd() }) as any)
 
   // ---- schedule_* 工具族 ×8 + 调度循环（M4）----
-  const scheduleRunner = new PiScheduleRunner({ runManager, deliver, cwd: process.cwd() })
+  const scheduleDeps = makeDeps()
+  const scheduleRunner = new PiScheduleRunner({
+    runManager,
+    deliver,
+    cwd: process.cwd(),
+    // M6-P0-3： schedule 复用 workflow 的 tier 解析与模型池（此前静默回退默认模型）
+    ...(scheduleDeps.resolveTier ? { resolveTier: scheduleDeps.resolveTier } : {}),
+    ...(scheduleDeps.resolveTierPool ? { resolveTierPool: scheduleDeps.resolveTierPool } : {}),
+  })
   const scheduler = new ScheduleRuntime({
     client: undefined, // pi 版实现不直调 client（root session 由 PiScheduleRunner 创建）
     directory: process.cwd(),
