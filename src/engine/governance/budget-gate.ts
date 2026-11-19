@@ -133,7 +133,8 @@ export class BudgetGate {
     const changed = this.policyState.degrade(to, reason, nextPolicy)
     if (!changed) return undefined
     this.degradeCount++
-    // 降级同时放宽并发上限（若目标 Profile 指定）
+    // M6-P1-2：降级必须真正改变预算上限（原实现只改 policyState，tracker.limits 恒定不变）
+    this.tracker.updateLimits(nextPolicy.budget ?? {})
     return { from, to, reason }
   }
 }

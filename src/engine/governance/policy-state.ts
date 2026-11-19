@@ -66,8 +66,9 @@ export class PolicyState {
     if (toProfile === this.currentProfile) return false
     this.transitions.push({ at: now, fromProfile: this.currentProfile, toProfile, reason })
     this.currentProfile = toProfile
-    // 合并：新 Profile 策略覆盖执行字段；强制验证保持 Definition 值
-    this.current = { ...this.current, ...nextPolicy }
+    // M6-P1-2：整体替换（不合并）——原实现 { ...current, ...nextPolicy } 会让 target profile 未声明的
+    // 旧字段（如 quality 的 modelPolicy/concurrency）在降级后继续生效，降级失去意义
+    this.current = { ...nextPolicy }
     return true
   }
 
@@ -90,6 +91,8 @@ export const DEGRADE_ORDER = ["quality", "balanced", "fast"] as const
 
 export function nextDegradeTarget(currentProfile: string): string | undefined {
   const idx = DEGRADE_ORDER.indexOf(currentProfile as (typeof DEGRADE_ORDER)[number])
-  if (idx === -1) return "fast"
+  // M6-P1-2：未知 profile 不再直接跳 fast（跳过 balanced 违背链式语义）；
+  // 未知 profile 以 balanced 为下一档，便于逐级降（而非一步到底）
+  if (idx === -1) return "balanced"
   return DEGRADE_ORDER[idx + 1]
 }

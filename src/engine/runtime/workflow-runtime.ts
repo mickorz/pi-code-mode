@@ -665,6 +665,16 @@ async function executeWorkflow(
           }
           // M2：预算闸（硬预算前拦截 + 软预算原子预留）；未注入时零影响
           const gate = shared.budgetGate
+          // M6-P1-2：消费降级后的 effectivePolicy（此前 budgetDecision.policy 生成后即被丢弃）
+          if (gate) {
+            const eff = gate.policyState.policy
+            const effConcurrency = eff.concurrency?.max
+            if (effConcurrency !== undefined) shared.scheduler.setConcurrency(effConcurrency)
+            if (!scriptOptions.model && eff.modelPolicy?.writing) {
+              const routed = shared.resolveTier?.(eff.modelPolicy.writing)
+              if (routed) modelSpec = routed
+            }
+          }
           let budgetDecision: ReturnType<BudgetGate["beforeDispatch"]> | undefined
           if (gate) {
             budgetDecision = gate.beforeDispatch(effectivePrompt, executionId)
@@ -714,10 +724,13 @@ async function executeWorkflow(
             )
             const value = execution.value
             // M2：结算软预算（真实 usage 优先；缺失时按估算并标记）
+            // M6-P1-2：取消/超时路径的迟到 usage 也走同一次结算入口（见 catch 分支的 settleLateUsage）
             if (gate) {
+              const used = attemptUsage()
+              const hasRealUsage = used.inputTokens > 0 || used.outputTokens > 0
               gate.afterDispatch(
                 budgetDecision?.reservationId,
-                { ...(record.inputTokens !== undefined ? { input: attemptUsage().inputTokens } : {}), ...(record.outputTokens !== undefined ? { output: attemptUsage().outputTokens } : {}) },
+                hasRealUsage ? { input: used.inputTokens, output: used.outputTokens } : undefined,
                 "ok",
               )
               const deg = gate.maybeDegradeOnSoftLimit()
@@ -758,14 +771,31 @@ async function executeWorkflow(
             return value
           } catch (error) {
             if (isAborted()) {
-              if (gate) gate.afterDispatch(budgetDecision?.reservationId, undefined, "cancelled")
+              if (gate) {
+                // M6-P1-2：超时/中止前已产生的 usage 必须计入（原实现直接释放，造成漏计）
+                const used = attemptUsage()
+                const hasUsage = used.inputTokens > 0 || used.outputTokens > 0
+                gate.afterDispatch(
+                  budgetDecision?.reservationId,
+                  hasUsage ? { input: used.inputTokens, output: used.outputTokens } : undefined,
+                  hasUsage ? "ok" : "cancelled",
+                )
+              }
               record.status = "aborted"
               record.durationMs = Date.now() - agentStarted
               emitExecution("aborted")
               shared.onAgentUpdate?.(record)
               throw wrapError(error)
             }
-            if (gate) gate.afterDispatch(budgetDecision?.reservationId, undefined, "failed")
+            if (gate) {
+              const used = attemptUsage()
+              const hasUsage = used.inputTokens > 0 || used.outputTokens > 0
+              gate.afterDispatch(
+                budgetDecision?.reservationId,
+                hasUsage ? { input: used.inputTokens, output: used.outputTokens } : undefined,
+                hasUsage ? "ok" : "failed",
+              )
+            }
             const workflowError = wrapError(error)
             if (!workflowError.recoverable) {
               record.status = "failed"

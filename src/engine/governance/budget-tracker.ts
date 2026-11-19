@@ -62,16 +62,41 @@ export interface BudgetSnapshot {
   remainingOutput?: number
 }
 
-/** 估算 token 数（无精确计量时的保守估算：约 4 字符/token） */
+/**
+ * 估算 token 数（无 tokenizer 时的保守估算）
+ *
+ * M6-P1-2 修复：原实现统一 length/4，对中文（约 1-1.5 字符/token）低估 2-3 倍，
+ * 导致软预算预留形同虚设。改为按 CJK 字符占比加权：
+ *  - CJK 字符：1.5 字符/token（保守取 1.5 而非实测 1.2，宁可高估）
+ *  - 其他字符：4 字符/token
+ */
 export function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4))
+  if (!text) return 1
+  let cjk = 0
+  let other = 0
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    // CJK 统一表意文字、扩展 A、日文假名、韩文、全角标点
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3400 && code <= 0x4dbf) ||
+      (code >= 0x3040 && code <= 0x30ff) ||
+      (code >= 0xac00 && code <= 0xd7af) ||
+      (code >= 0xff00 && code <= 0xffef)
+    ) {
+      cjk++
+    } else {
+      other++
+    }
+  }
+  return Math.max(1, Math.ceil(cjk / 1.5 + other / 4))
 }
 
 let reservationSeq = 0
 
 export class BudgetTracker {
   readonly runId: string
-  readonly limits: BudgetLimits
+  limits: BudgetLimits
   private agentsUsed = 0
   private retriesUsed = 0
   private inputUsed = 0
@@ -85,6 +110,24 @@ export class BudgetTracker {
     this.runId = input.runId
     this.limits = input.limits ?? {}
     this.startedAt = input.startedAt ?? Date.now()
+  }
+
+  /**
+   * 更新预算上限（M6-P1-2）：降级只能**收紧**，不能放松。
+   *
+   * 规则：对目标 Profile 声明的每个上限，取 min(当前, 目标)；未声明的上限保持当前
+   * （目标 Profile 未声明 ≠ 取消该限制，否则降级反而不限额了）。
+   * 已用量不重置。
+   */
+  updateLimits(next: BudgetLimits): void {
+    const merged: BudgetLimits = { ...this.limits }
+    for (const key of ["maxAgents", "maxDurationMs", "maxInputTokens", "maxOutputTokens", "maxRetries"] as const) {
+      const target = next[key]
+      if (target === undefined) continue
+      const current = merged[key]
+      merged[key] = current === undefined ? target : Math.min(current, target)
+    }
+    this.limits = merged
   }
 
   /** 硬预算：agent dispatch 前检查（maxAgents = 总 dispatch 次数） */
