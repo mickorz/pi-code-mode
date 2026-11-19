@@ -57,3 +57,7 @@
 	path = thirdparties/pi-web
 	url = https://github.com/jmfederico/pi-web.git
 	branch = main
+[submodule "thirdparties/pi-context-view"]
+	path = thirdparties/pi-context-view
+	url = https://github.com/dimk90/pi-context-view.git
+	branch = develop
