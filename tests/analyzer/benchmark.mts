@@ -30,7 +30,12 @@ const LABELS: Label[] = [
   { file: "atomic/serial-dependent.js", expect: ["SERIAL-001"], forbid: ["SERIAL-002"], note: "真串行不得给并行建议（关键误报项）" },
   { file: "atomic/serial-candidate.js", expect: ["SERIAL-002"], forbid: [], note: "相邻无引用 → 并行候选" },
   { file: "atomic/repeated-context.js", expect: ["INPUT-001"], forbid: [], note: "重复注入大对象" },
-  { file: "atomic/parallel-waves.js", expect: [], forbid: [], note: "并行波次（任务数动态，允许无 CONC-001）" },
+  // new Array(48).fill().map 的循环上界静态可定 → 必须报 CONC-001（审计发现此前标空、规则回归无人抓）
+  { file: "atomic/parallel-waves.js", expect: ["CONC-001"], forbid: [], note: "48 任务 vs 并发 16 → 多波次" },
+  { file: "atomic/no-timeout.js", expect: ["TIMEOUT-001"], forbid: [], note: "agent 无超时兜底" },
+  { file: "atomic/retry-heavy.js", expect: ["RETRY-001"], forbid: [], note: "retries 3 → 成本放大" },
+  { file: "atomic/deterministic-task.js", expect: ["DET-001"], forbid: [], note: "统计类任务可代码化" },
+  { file: "atomic/many-agents-nophase.js", expect: ["REC-001"], forbid: [], note: "≥20 调用且无 phase" },
   { file: "atomic/dynamic-loop.js", expect: [], forbid: ["SERIAL-002"], note: "动态循环不得给并行建议" },
   { file: "atomic/dynamic-dispatch.js", expect: [], forbid: ["SERIAL-002"], note: "动态分发不得给并行建议" },
   // SERIAL-001 语义为「≥3 调用链」，2 调用子流程样本不应触发（避免与规则定义冲突）

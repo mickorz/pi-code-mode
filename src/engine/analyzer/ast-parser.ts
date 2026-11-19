@@ -130,8 +130,11 @@ function staticArrayLength(node: AnyNode): number | undefined {
   if (node.type === "CallExpression" && node.callee?.property?.name === "fill") {
     return staticArrayLength(node.callee.object)
   }
-  if (node.type === "CallExpression" && ["map", "slice", "filter"].includes(String(node.callee?.property?.name))) {
-    // 非精确：保守返回 undefined
+  // .map 保长度 → 传播；filter/slice 不保证长度，保守 undefined
+  if (node.type === "CallExpression" && node.callee?.property?.name === "map") {
+    return staticArrayLength(node.callee.object)
+  }
+  if (node.type === "CallExpression" && ["slice", "filter"].includes(String(node.callee?.property?.name))) {
     return undefined
   }
   return undefined
@@ -334,14 +337,21 @@ export function analyzeAst(source: string): AstAnalysis {
         dynamicStack.pop()
         return
       }
-      case "ForStatement":
+      case "ForStatement": {
+        // 尝试解析 `for (...; i < N; ...)` 的字面量上界
+        const test = stmt.test
+        const bound =
+          test?.type === "BinaryExpression" && ["<", "<="].includes(String(test.operator)) && typeof test.right?.value === "number"
+            ? Number(test.right.value) + (test.operator === "<" ? 0 : 1)
+            : undefined
         dynamicStack.push({
           reason: "for 循环次数静态不可知",
-          bounds: { min: 0, reason: "循环边界依赖运行时值" },
+          bounds: bound !== undefined ? { min: 0, max: bound, reason: `循环上界字面量 ${bound}` } : { min: 0, reason: "循环边界依赖运行时值" },
         })
         visitStmt(stmt.body)
         dynamicStack.pop()
         return
+      }
       case "WhileStatement":
       case "DoWhileStatement":
         dynamicStack.push({ reason: "while 循环次数静态不可知", bounds: { min: 0, reason: "条件依赖运行时值" } })

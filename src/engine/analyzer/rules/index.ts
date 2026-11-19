@@ -9,6 +9,27 @@
  */
 import type { AnalyzerContext, AnalyzerFinding, AnalyzerRule } from "../types.js"
 
+/**
+ * 估算任务量：静态可定循环上界按上界计，否则按 1（下限）
+ * M6：REC-001/CONC-001 必须用「估算任务数」而不是「调用点数」，
+ * 否则 `for (i<25) agent()` 这种单调用点 25 次执行会被当成 1 个任务
+ */
+function estimateTaskCount(ctx: AnalyzerContext): { total: number; determined: boolean } {
+  let total = 0
+  let determined = true
+  for (const n of ctx.ast.nodes) {
+    if (n.kind !== "agent" && n.kind !== "workflow") continue
+    const max = n.loopBounds?.max
+    if (max !== undefined) total += max
+    else if (!n.dynamic) total += 1
+    else {
+      determined = false
+      total += 1
+    }
+  }
+  return { total, determined }
+}
+
 /** 从源码静态提取 setConcurrency(n) 与 agent 数 */
 function staticsOf(ctx: AnalyzerContext) {
   const m = /setConcurrency\s*\(\s*(\d+)\s*\)/.exec(ctx.source)
@@ -224,7 +245,7 @@ export const recoveryRisk: AnalyzerRule = {
   version: "1.0",
   severity: "high",
   analyze(ctx) {
-    const { total } = staticsOf(ctx)
+    const { total, determined } = estimateTaskCount(ctx)
     const phases = (ctx.source.match(/\bphase\s*\(/g) ?? []).length
     if (total >= 20 && phases === 0) {
       const first = ctx.ast.nodes[0]
@@ -232,9 +253,12 @@ export const recoveryRisk: AnalyzerRule = {
         {
           ruleId: "REC-001",
           severity: "high" as const,
-          confidence: 0.7,
+          confidence: determined ? 0.8 : 0.5,
           location: { startLine: first?.startLine ?? 1, endLine: first?.endLine ?? 1 },
-          evidence: [`调用点 ${total} 个（≥20）且无 phase 阶段边界`, "无阶段边界时失败后只能整 run 重跑或依赖 journal 前缀回放"],
+          evidence: [
+            `估算任务量 ${total}${determined ? "" : "（下限，含动态节点）"}（≥20）且无 phase 阶段边界`,
+            "无阶段边界时失败后只能整 run 重跑或依赖 journal 前缀回放",
+          ],
           suggestion: "用 phase() 划分阶段边界，配合 M3 TaskCheckpoint 实现任务级恢复（只重跑失败任务）",
         },
       ]

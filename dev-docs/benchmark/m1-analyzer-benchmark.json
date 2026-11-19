@@ -1,11 +1,11 @@
 {
   "analyzerVersion": "1.0.0",
   "ruleSetVersion": "1.0.0",
-  "generatedAt": "2026-11-18T10:36:03.179Z",
+  "generatedAt": "2026-11-19T01:56:47.931Z",
   "detection": {
-    "labeledSamples": 8,
-    "expectTotal": 4,
-    "expectHit": 4,
+    "labeledSamples": 12,
+    "expectTotal": 9,
+    "expectHit": 9,
     "recall": 1,
     "forbidTotal": 4,
     "forbidHit": 0,
@@ -37,11 +37,43 @@
       },
       {
         "file": "atomic/parallel-waves.js",
-        "expectHit": 0,
-        "expectTotal": 0,
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 3,
+        "note": "48 任务 vs 并发 16 → 多波次"
+      },
+      {
+        "file": "atomic/no-timeout.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 2,
+        "note": "agent 无超时兜底"
+      },
+      {
+        "file": "atomic/retry-heavy.js",
+        "expectHit": 1,
+        "expectTotal": 1,
         "forbiddenHit": [],
         "findings": 1,
-        "note": "并行波次（任务数动态，允许无 CONC-001）"
+        "note": "retries 3 → 成本放大"
+      },
+      {
+        "file": "atomic/deterministic-task.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 1,
+        "note": "统计类任务可代码化"
+      },
+      {
+        "file": "atomic/many-agents-nophase.js",
+        "expectHit": 1,
+        "expectTotal": 1,
+        "forbiddenHit": [],
+        "findings": 1,
+        "note": "≥20 调用且无 phase"
       },
       {
         "file": "atomic/dynamic-loop.js",

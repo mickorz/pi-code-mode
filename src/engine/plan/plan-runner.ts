@@ -53,8 +53,10 @@ export interface ResolvePlanOptions {
 /** 读取并解析 Plan → PlanRunContext；无 Plan 返回 null（旧 Workflow 兼容） */
 export function resolvePlanContext(opts: ResolvePlanOptions): PlanRunContext | null {
   const cwd = opts.cwd ?? process.cwd()
+  // M6-P1-3：只用 planPath（无 scriptPath）时，绝不能把 Plan JSON 当成脚本哈希 —— 那会恒报 stale
+  const effectiveScriptPath = opts.scriptPath
   const loaded = loadPlan({
-    scriptPath: opts.scriptPath ?? opts.planPath ?? "",
+    ...(effectiveScriptPath ? { scriptPath: effectiveScriptPath } : { scriptPath: opts.planPath ?? "" }),
     cwd,
     ...(opts.planPath ? { explicitPath: opts.planPath } : {}),
   })
@@ -62,7 +64,10 @@ export function resolvePlanContext(opts: ResolvePlanOptions): PlanRunContext | n
 
   const plan = loaded.plan
   const notes = [...loaded.notes]
-  if (loaded.stale) notes.push("Plan 已过期：source.scriptHash 与当前脚本不一致（建议重新 analyze）")
+  // 仅当确实拿到了脚本内容（有 scriptPath 或可推导）时才报告过期
+  const hasScript = Boolean(effectiveScriptPath)
+  if (loaded.stale && hasScript) notes.push("Plan 已过期：source.scriptHash 与当前脚本不一致（建议重新 analyze）")
+  else if (loaded.stale && !hasScript) notes.push("未能定位关联脚本，跳过 Plan 过期判定")
 
   const requested = opts.profile ?? loaded.defaultProfile
   const activeProfile = plan.profiles?.[requested] ? requested : loaded.defaultProfile

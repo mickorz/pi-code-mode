@@ -81,6 +81,9 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
   // AI 建议（可选）
   let planner: PlannerOutput | undefined
   let recommendations = report.recommendations
+  if (input.includeSuggestions && !input.plannerAgent) {
+    report.diagnostics.push("已请求 AI 建议但当前入口未配置 Planner（静态分析结果仍有效）")
+  }
   if (input.includeSuggestions && input.plannerAgent) {
     const snippet = file ? extractSnippet(source, report) : undefined
     const prompt = buildPlannerPrompt(report, { ...(snippet ? { codeSnippet: snippet } : {}) })
@@ -133,6 +136,32 @@ function extractSnippet(source: string, report: AnalysisReport, contextLines = 1
     .sort((x, y) => x - y)
     .map((n) => `${String(n).padStart(4)}| ${lines[n - 1] ?? ""}`)
     .join("\n")
+}
+
+/**
+ * 构造真实 Planner agent（M6-P1-3 接线）：用 PiAgentAdapter 跑一次性分析调用。
+ * 审计发现此前 includeSuggestions:true 静默无效（未注入 plannerAgent）。
+ */
+export function createPlannerAgent(options: { cwd?: string; agentDir?: string; model?: string } = {}) {
+  return async (prompt: string): Promise<string> => {
+    const { PiAgentAdapter } = await import("../adapter/pi-agent-adapter.js")
+    const adapter = new PiAgentAdapter({
+      ...(options.agentDir ? { agentDir: options.agentDir } : {}),
+      ...(options.cwd ? { defaultCwd: options.cwd } : {}),
+    })
+    const result = await adapter.execute(
+      {
+        prompt,
+        ...(options.model ? { model: options.model } : {}),
+        timeoutMs: 180_000,
+      } as any,
+      { executionId: `analyze-planner-${Date.now()}`, runId: "", phase: "analyzer" },
+    )
+    if (result.status !== "ok") {
+      throw new Error(`Planner 调用失败（${result.status}）：${result.error?.message ?? "unknown"}`)
+    }
+    return String(result.output.value ?? "")
+  }
 }
 
 /** Pi 工具工厂 */

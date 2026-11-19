@@ -47,13 +47,16 @@ export function planCandidates(scriptPath: string, cwd = process.cwd()): string[
 export function loadPlan(input: { scriptPath: string; cwd?: string; explicitPath?: string }): LoadPlanResult {
   const cwd = input.cwd ?? process.cwd()
   const notes: string[] = []
-  const scriptAbs = path.resolve(cwd, input.scriptPath)
-  const scriptExists = fs.existsSync(scriptAbs)
+  // M6-P1-3：空路径 / 目录不得被当作脚本读取（否则 EISDIR 或把 Plan JSON 当脚本哈希）
+  const scriptAbs = input.scriptPath ? path.resolve(cwd, input.scriptPath) : ""
+  const scriptExists = Boolean(scriptAbs) && fs.existsSync(scriptAbs) && fs.statSync(scriptAbs).isFile()
   const scriptSource = scriptExists ? fs.readFileSync(scriptAbs, "utf8") : undefined
 
   const candidates = input.explicitPath
     ? [path.resolve(cwd, input.explicitPath)]
-    : planCandidates(input.scriptPath, cwd)
+    : input.scriptPath
+      ? planCandidates(input.scriptPath, cwd)
+      : []
   const found = candidates.find((p) => fs.existsSync(p))
 
   if (!found) {

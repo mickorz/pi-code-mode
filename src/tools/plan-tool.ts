@@ -32,7 +32,8 @@ export function validatePlanFile(input: { planPath: string; cwd?: string; script
   const cwd = input.cwd ?? process.cwd()
   const scriptPath = input.scriptPath ?? scriptFromPlanPath(input.planPath, cwd)
   const loaded = loadPlan({
-    scriptPath: scriptPath ?? input.planPath,
+    // 推导不到脚本时用空 scriptPath（loadPlan 会跳过 stale 判定），绝不能退回 planPath
+    scriptPath: scriptPath ?? "",
     cwd,
     explicitPath: input.planPath,
   })
