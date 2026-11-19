@@ -102,8 +102,23 @@ function collectIdentifiers(node: AnyNode, out: Set<string>): void {
     for (const child of node) collectIdentifiers(child, out)
     return
   }
+  // 被调用的函数名不是「注入的数据」（join(...) / withModel(...) 之类不是重复上下文）
+  if (node.type === "CallExpression" && node.callee) {
+    if (node.callee.type === "MemberExpression") {
+      // obj.method(...) → 只关心 obj（可能是被注入数据），不收集 method
+      collectIdentifiers(node.callee.object, out)
+    } else if (node.callee.type !== "Identifier") {
+      collectIdentifiers(node.callee, out)
+    }
+    for (const arg of node.arguments ?? []) collectIdentifiers(arg, out)
+    return
+  }
+  // 对象属性键名（label: x 的 label）不是被注入的数据
+  if (node.type === "Property") {
+    if (node.value) collectIdentifiers(node.value, out)
+    return
+  }
   if (node.type === "Identifier" && typeof node.name === "string") out.add(node.name)
-  if (node.type === "Property" && node.value) return collectIdentifiers(node.value, out)
   for (const key of Object.keys(node)) {
     if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range") continue
     const value = node[key]

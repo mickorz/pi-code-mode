@@ -97,8 +97,21 @@ export const inputRepeat: AnalyzerRule = {
     }
     for (const [ident, lines] of usage) {
       if (lines.length < 2) continue
-      // JSON.stringify(x) 或 x 直接出现都计入；只看出现≥2 次的公共标识符
+      // 体积判定（PrdGameSkill 真实场景验收发现：仅按「出现≥2 次」会把 join/label/filePath/def 等普通标识符误报）
+      // 仅当满足之一才视为「重复注入大对象」：
+      //   1) 以 JSON.stringify 整体注入
+      //   2) 声明处为大数组/大对象字面量（≥200 字符）
+      //   3) 变量名为整体性语义名（requirements/rules/context/evidence 等，按整词匹配）
       const serialized = new RegExp(`JSON\\.stringify\\s*\\(\\s*${ident}\\b`).test(ctx.source)
+      const bulkyDecl = new RegExp(
+        `(?:const|let|var)\\s+${ident}\\s*=\\s*\\[[^\\]]{200,}|(?:const|let|var)\\s+${ident}\\s*=\\s*\\{[^}]{200,}`,
+        "s",
+      ).test(ctx.source)
+      const semanticHint =
+        /^(all|full)?(requirements?|rules|prd|context|documents?|contents?|specs?|evidences?|items)$/i.test(ident) ||
+        /^(all|full|)(Requirements|Rules|Prd|Context|Document|Contents|Specs|Evidence|Items)(Text|All|Full|List)?$/.test(ident) ||
+        /(Requirements|Rules|Prd|Context|Documents|Contents|Specs|Evidence|Items)(Text|All|Full|List)$/.test(ident)
+      if (!serialized && !bulkyDecl && !semanticHint) continue
       findings.push({
         ruleId: "INPUT-001",
         severity: serialized && lines.length >= 3 ? "high" : "medium",
