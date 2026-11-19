@@ -159,14 +159,17 @@ export function createFixedPanel(deps: FixedPanelDeps): FixedPanelHandle {
             margin: { top: 1, right: 0, bottom: 1 },
             // 不捕获键盘焦点：主对话输入不受影响（右侧常驻的关键）
             nonCapturing: true,
-            // 窄终端不显示（面板遮主区比例过高）
-            visible: (termWidth: number) => termWidth >= 100,
+            // 窄终端不显示（面板遮主区比例过高）；阈值 80 列（Windows Terminal 半窗常见宽度）
+            visible: (termWidth: number) => termWidth >= 80,
           }),
           onHandle: (h: OverlayHandleLike) => {
             handle = h
           },
         },
-      )
+      ).catch((err: unknown) => {
+        // reject 不能静默（旧版曾丢 Promise 导致挂载失败无迹可查）
+        console.error("[pi-code-mode] 固定面板 overlay 挂载失败:", String((err as Error)?.message ?? err))
+      })
     },
     uninstall(_ctx: any) {
       handle?.hide()
