@@ -104,6 +104,10 @@ export const analyzeSubcommand: Subcommand = {
 
     // AI 优化建议默认开启（--no-suggest 可关；会真实调用模型，耗 token）
     const withSuggestions = !flags.has("--no-suggest")
+    // 先给即时反馈：AI 建议要等模型返回，静默等待会让人以为命令没生效
+    ctx.ui.notify(withSuggestions ? `分析中（含 AI 建议，最长 60s）…
+${ref}` : `分析中…
+${ref}`, "info")
     const result = await analyzeWorkflow({
       source: resolved.source,
       ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),

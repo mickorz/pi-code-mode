@@ -144,25 +144,40 @@ function extractSnippet(source: string, report: AnalysisReport, contextLines = 1
  * 构造真实 Planner agent（M6-P1-3 接线）：用 PiAgentAdapter 跑一次性分析调用。
  * 审计发现此前 includeSuggestions:true 静默无效（未注入 plannerAgent）。
  */
-export function createPlannerAgent(options: { cwd?: string; agentDir?: string; model?: string } = {}) {
+export function createPlannerAgent(options: { cwd?: string; agentDir?: string; model?: string; timeoutMs?: number } = {}) {
   return async (prompt: string): Promise<string> => {
     const { PiAgentAdapter } = await import("../adapter/pi-agent-adapter.js")
     const adapter = new PiAgentAdapter({
       ...(options.agentDir ? { agentDir: options.agentDir } : {}),
       ...(options.cwd ? { defaultCwd: options.cwd } : {}),
     })
-    const result = await adapter.execute(
-      {
-        prompt,
-        ...(options.model ? { model: options.model } : {}),
-        timeoutMs: 180_000,
-      } as any,
-      { executionId: `analyze-planner-${Date.now()}`, runId: "", phase: "analyzer" },
-    )
-    if (result.status !== "ok") {
-      throw new Error(`Planner 调用失败（${result.status}）：${result.error?.message ?? "unknown"}`)
+    // 注意：AgentRequest.timeoutMs 当前未被 PiAgentAdapter 消费（只认 signal），
+    // 因此必须用 AbortController 施加真实超时——否则模型调用挂住会让调用方永久静默等待。
+    const timeoutMs = options.timeoutMs ?? 60_000
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const executionId = `analyze-planner-${Date.now()}`
+    try {
+      const result = await adapter.execute(
+        {
+          prompt,
+          ...(options.model ? { model: options.model } : {}),
+          signal: controller.signal,
+        },
+        { executionId, runId: "", phase: "analyzer" },
+      )
+      if (controller.signal.aborted) {
+        throw new Error(`Planner 调用超时（${timeoutMs}ms）`)
+      }
+      if (result.status !== "ok") {
+        throw new Error(`Planner 调用失败（${result.status}）：${result.error?.message ?? "unknown"}`)
+      }
+      return String(result.output.value ?? "")
+    } finally {
+      clearTimeout(timer)
+      // 超时路径确保底层会话被取消（避免遗留 in-flight 会话）
+      if (controller.signal.aborted) await adapter.cancel(executionId).catch(() => {})
     }
-    return String(result.output.value ?? "")
   }
 }
 
