@@ -39,6 +39,57 @@ function staticsOf(ctx: AnalyzerContext) {
   return { concurrency, agentCalls, workflows, total: agentCalls + workflows }
 }
 
+/**
+ * CONC-002：并行任务数在运行时才确定（动态分片）
+ *
+ * 真实场景（PrdGameSkill S4/S5）：`parallel(partFiles.map(...))` —— partFiles 运行时从 manifest 读，
+ * 静态无法知道分片数。这类结构恰恰是最主要的墙钟来源（40 分片 × 单次 10-30 分钟 / 并发上限 = 多波次 + 长尾），
+ * 但 CONC-001 因「任务数不可知」不报，用户就会以为"没风险"。
+ *
+ * 这里不是断言缺陷（confidence 低），而是提示必须人工确认的三个量：
+ * 分片数 / 并发上限 / 单次超时。
+ */
+export const dynamicParallel: AnalyzerRule = {
+  id: "CONC-002",
+  version: "1.0",
+  severity: "medium",
+  analyze(ctx) {
+    const findings: AnalyzerFinding[] = []
+    // 并行调用的第一个参数是 X.map(...) / X.filter(...).map(...) 这类运行时集合表达式
+    const re = /(parallel|pipeline)\s*\(\s*([A-Za-z_$][\w$.]*)\s*\.\s*(map|flatMap)\s*\(/g
+    const seen = new Set<number>()
+    let m: RegExpExecArray | null
+    while ((m = re.exec(ctx.source)) !== null) {
+      const collection = m[2]!
+      if (seen.has(m.index)) continue
+      seen.add(m.index)
+      const line = ctx.source.slice(0, m.index).split("\n").length
+      const { concurrency } = staticsOf(ctx)
+      const timeoutMatch = /timeoutMs\s*:\s*(\d+)/g
+      const timeouts: number[] = []
+      let t: RegExpExecArray | null
+      while ((t = timeoutMatch.exec(ctx.source)) !== null) timeouts.push(Number(t[1]))
+      const maxTimeout = timeouts.length > 0 ? Math.max(...timeouts) : undefined
+
+      findings.push({
+        ruleId: "CONC-002",
+        severity: "medium",
+        // 静态无法知道分片数 → 这是「需要人工确认」的提示，不是缺陷判定
+        confidence: 0.4,
+        location: { startLine: line, endLine: line },
+        evidence: [
+          `并行任务数来自运行时集合 \`${collection}\`（${m[3]}），静态不可知`,
+          `并发上限：${concurrency ?? "未声明（运行时默认 CPU-2，上限 16）"}`,
+          maxTimeout !== undefined ? `单次超时：${Math.round(maxTimeout / 1000)}s` : "未发现 timeoutMs",
+        ],
+        suggestion:
+          "确认三件事：①分片数（决定波次数）②并发上限是否匹配（setConcurrency 或 run 参数）③单次超时是否够。分片多 + 单次长会造成多波次长尾，是墙钟主要来源",
+      })
+    }
+    return findings
+  },
+}
+
 /** CONC-001：并行波次估算（任务数 > 并发上限） */
 export const concWaves: AnalyzerRule = {
   id: "CONC-001",
@@ -284,6 +335,7 @@ export const recoveryRisk: AnalyzerRule = {
 export const BUILTIN_RULES: AnalyzerRule[] = [
   inputRepeat,
   concWaves,
+  dynamicParallel,
   serialChain,
   parallelCandidate,
   timeoutMissing,

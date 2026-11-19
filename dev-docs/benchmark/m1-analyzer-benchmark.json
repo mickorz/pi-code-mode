@@ -1,7 +1,7 @@
 {
   "analyzerVersion": "1.0.0",
   "ruleSetVersion": "1.0.0",
-  "generatedAt": "2026-11-19T01:56:47.931Z",
+  "generatedAt": "2026-11-19T07:36:20.841Z",
   "detection": {
     "labeledSamples": 12,
     "expectTotal": 9,
@@ -32,7 +32,7 @@
         "expectHit": 1,
         "expectTotal": 1,
         "forbiddenHit": [],
-        "findings": 5,
+        "findings": 3,
         "note": "重复注入大对象"
       },
       {
@@ -40,7 +40,7 @@
         "expectHit": 1,
         "expectTotal": 1,
         "forbiddenHit": [],
-        "findings": 3,
+        "findings": 4,
         "note": "48 任务 vs 并发 16 → 多波次"
       },
       {
@@ -115,66 +115,66 @@
     "results": [
       {
         "file": "10-unified-spec.js",
-        "findings": 5,
+        "findings": 3,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 22
+        "riskScore": 7
       },
       {
         "file": "3-produce-outputs.js",
-        "findings": 8,
+        "findings": 2,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 37
+        "riskScore": 8
       },
       {
         "file": "4-client-verify.js",
-        "findings": 6,
-        "deterministic": true,
-        "diagnostics": 0,
-        "riskScore": 16
-      },
-      {
-        "file": "5-server-verify.js",
-        "findings": 6,
-        "deterministic": true,
-        "diagnostics": 0,
-        "riskScore": 16
-      },
-      {
-        "file": "8-difference-review.js",
         "findings": 4,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 17
+        "riskScore": 2
+      },
+      {
+        "file": "5-server-verify.js",
+        "findings": 4,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 2
+      },
+      {
+        "file": "8-difference-review.js",
+        "findings": 3,
+        "deterministic": true,
+        "diagnostics": 0,
+        "riskScore": 7
       },
       {
         "file": "bug-coverage-check.js",
-        "findings": 18,
+        "findings": 5,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 87
+        "riskScore": 20
       },
       {
         "file": "full-check-suite.js",
         "findings": 2,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 10
+        "riskScore": 6
       },
       {
         "file": "game-prd-check.js",
-        "findings": 30,
+        "findings": 8,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 100
+        "riskScore": 52
       },
       {
         "file": "game-requirement-audit.js",
-        "findings": 18,
+        "findings": 2,
         "deterministic": true,
         "diagnostics": 0,
-        "riskScore": 83
+        "riskScore": 2
       }
     ]
   },

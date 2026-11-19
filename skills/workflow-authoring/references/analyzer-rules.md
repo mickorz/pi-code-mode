@@ -7,7 +7,8 @@
 | Rule ID | 严重度 | 检测内容 | 典型置信度 |
 | --- | --- | --- | --- |
 | `INPUT-001` | high/medium | 同一标识符被多个 agent/workflow 注入（含 `JSON.stringify` 整体序列化） | 0.6-0.85 |
-| `CONC-001` | medium | 并行任务数 > 并发上限 → 多波次 | 0.5-0.9（含动态节点时降级） |
+| `CONC-001` | medium | 并行任务数 > 并发上限 → 多波次（**要求任务数静态可确定**） | 0.5-0.9 |
+| `CONC-002` | medium | `parallel(X.map(...))` 动态分片：任务是运行时才知道的（不虚增风险分，提示人工确认分片数/并发/超时） | 0.4 |
 | `SERIAL-001` | low | ≥3 个调用构成 Explicit 数据依赖链 | 0.95 |
 | `SERIAL-002` | medium | 源码相邻但无引用的并行候选 | 0.4-0.7（**需语义确认**） |
 | `TIMEOUT-001` | medium | agent 调用无 timeoutMs 且无 run 级超时 | 0.75 |

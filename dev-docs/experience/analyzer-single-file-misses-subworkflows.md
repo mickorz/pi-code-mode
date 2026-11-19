@@ -95,3 +95,49 @@ PrdGameSkill `game-requirement-audit/` 目录聚合结果：
 - 测试：`tests/analyzer/tree-analyzer.test.ts`（7 条，含"入口干净子流程脏"用例）
 - 同类问题：`dev-docs/experience/analyzer-input-001-false-positives.md`（误报）、
   `dev-docs/experience/analyze-timeout-not-consumed.md`（死配置）
+
+## 追加发现：聚合后仍是「信息密度低 + 关键盲区」（同日第二轮）
+
+聚合修好后，报告显示 12 文件 / 40 调用点 / 21 finding，但**21 条全是 RETRY-001×12 + SERIAL-002×9**——
+每个文件都因 `retries: 2` 报一次，几乎没有新增信息量。而真实 60 分钟墙钟的主因一条都没提。
+
+人工核对 `4-client-verify.js`（S4，最耗时阶段）发现真实结构：
+
+```js
+const results = await parallel(
+  partFiles.map((p) => () => agent(clientVerifyPrompt(p), withModel({
+    timeoutMs: 7200000,  // 单次 2 小时
+    retries: 2,
+  })))
+)
+```
+
+写法是**正确的并行**，但 `partFiles` 运行时从 manifest 读：
+- 分片数静态不可知 → `CONC-001` 不报（它的前提就是"任务数可确定"）
+- 于是"40 分片 × 单次最长 2 小时 × 并发默认 16"这个**真正的墙钟公式**完全没被提示
+
+### 补的规则：CONC-002（动态分片并行）
+
+`parallel(X.map(...))` / `pipeline(X.map(...))` 命中时给出**提示性** finding：
+
+```
+[medium/0.4] CONC-002
+  并行任务数来自运行时集合 `partFiles`（map），静态不可知
+  并发上限：未声明（运行时默认 CPU-2，上限 16）
+  单次超时：7200s
+  建议：确认三件事：①分片数（决定波次数）②并发上限是否匹配 ③单次超时是否够
+```
+
+设计要点：
+- `confidence: 0.4` —— **低于 riskScore 计分阈值 0.5，不虚增风险分**；它是"必须人工确认"的提示，不是缺陷判定
+- 三条证据全部来自源码事实（集合名 / 是否 setConcurrency / timeoutMs），不猜测分片数
+- 补上了 `CONC-001` 的语义空白：能定数才估算波次，不能定数就给检查清单
+
+### 这一轮的教训
+
+1. **聚合 ≠ 有效**。把 12 个文件拼在一起可能只是把同一条低价值 finding 重复 12 次；
+   要问"聚合后新增了什么洞察"，而不是"文件数变多了"。
+2. **规则的适用前提要在缺口处兜底**。`CONC-001` 需要"任务数可确定"，那"不可确定"时必须有另一条规则接手，
+   否则最需要提醒的场景恰好静默。
+3. **静态分析的边界要写清楚**：它能指出"这里有动态分片、并发未声明、超时 2 小时"，
+   但**不能回答"这次运行为什么慢"**——那需要 Execution Trace（M5 评估数据 + journal 实测）。

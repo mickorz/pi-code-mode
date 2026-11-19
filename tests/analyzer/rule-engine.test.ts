@@ -136,3 +136,36 @@ test("真实脚本 S10（10-unified-spec）：可分析", () => {
   assert.ok(context.ast.nodes.length > 0)
   assert.ok(findings.length >= 0)
 })
+
+// ---- CONC-002：动态分片并行（真实场景盲区） ----
+test("CONC-002：parallel(X.map(...)) 动态分片 → 提示需人工确认三个量", () => {
+  const src = `
+const results = await parallel(
+  partFiles.map((p) => () => agent('查证', { timeoutMs: 7200000 }))
+)
+return results`
+  const { findings } = runRules(src)
+  const f = findings.find((x) => x.ruleId === "CONC-002")
+  assert.ok(f, "动态分片并行必须给出提示（CONC-001 因任务数不可知不会报）")
+  assert.equal(f!.severity, "medium")
+  assert.ok(f!.confidence <= 0.4, "这是提示不是缺陷判定，confidence 必须低")
+  assert.ok(f!.evidence.some((e) => /partFiles/.test(e)), "证据应指出运行时集合")
+  assert.ok(f!.evidence.some((e) => /并发上限/.test(e)))
+  assert.ok(f!.evidence.some((e) => /7200s/.test(e)), "应带出单次超时")
+})
+
+test("CONC-002：没有动态分片时不误报", () => {
+  const src = `await parallel([() => agent('a'), () => agent('b')])`
+  const { findings } = runRules(src)
+  assert.equal(findings.filter((f) => f.ruleId === "CONC-002").length, 0)
+})
+
+test("CONC-002：低置信不虚增 riskScore（提示不等于缺陷）", () => {
+  const src = `
+const rs = await parallel(items.map((i) => () => agent('x')))
+return rs`
+  const { findings } = runRules(src)
+  const score = riskScore(findings)
+  // CONC-002 confidence=0.4 < 0.5，不参与计分
+  assert.ok(score < 20, `动态分片提示不应把风险分推高，实际 ${score}`)
+})
