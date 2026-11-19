@@ -117,6 +117,8 @@ export class PiAgentAdapter implements AgentAdapter {
       },
     })
 
+    // 订阅句柄在 try 外声明：异常路径也要退订（否则 session 上的监听残留到会话回收）
+    let unsubSession: (() => void) | undefined
     try {
       // schema 路径（R3 M2）：JSON 输出要求 + typebox 校验 + 修复循环（校验失败把错误清单附回 prompt，最多 2 轮）
       const MAX_FIX_ROUNDS = 2
@@ -146,6 +148,7 @@ export class PiAgentAdapter implements AgentAdapter {
       })
 
       const t0 = Date.now()
+      unsubSession = unsub
       await session.prompt(finalPrompt)
 
       // 修复循环：校验失败时把错误清单附回 prompt 重试（订阅保持开启以收集修复轮文本）
@@ -155,6 +158,8 @@ export class PiAgentAdapter implements AgentAdapter {
         while (!validation.ok && round < MAX_FIX_ROUNDS && !cancelled && !request.signal?.aborted) {
           round += 1
           text = ""
+          // 新一轮输出：清掉上一轮的流式尾部，避免详情把错误 JSON 与修复 JSON 拼在一起
+          partialBuffer.reset()
           const fixPrompt =
             `你上次的输出不符合 schema 要求，错误清单:\n${(validation.errors ?? []).map((m: string, i: number) => `${i + 1}. ${m}`).join("\n")}\n\n请只输出修正后的 JSON 对象，不要任何解释文字。`
           await session.prompt(fixPrompt)
@@ -205,6 +210,8 @@ export class PiAgentAdapter implements AgentAdapter {
       }
       return fail("unknown", String((e as Error)?.message ?? e), session.sessionId)
     } finally {
+      // 无条件退订（成功/异常/取消都释放 session 监听）
+      unsubSession?.()
       // 终态前把最后一段增量冲出去（节流窗口内的残余），随后停表
       partialBuffer.flush()
       partialBuffer.dispose()

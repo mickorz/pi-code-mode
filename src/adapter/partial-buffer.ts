@@ -26,6 +26,8 @@ export interface PartialBuffer {
   push(delta: string): void
   /** 立即冲刷（终态/中止时调用，保证最后一段不丢） */
   flush(): void
+  /** 清空累积文本但保持可用（schema 修复轮之间重置，避免多轮拼接） */
+  reset(): void
   /** 当前累积的尾部文本 */
   tail(): string
   /** 清空缓冲并停掉定时器（attempt 结束/取消） */
@@ -81,6 +83,13 @@ export function createPartialBuffer(options: PartialBufferOptions): PartialBuffe
         timer = undefined
       }
       emit()
+    },
+    reset(): void {
+      if (timer) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+      text = ""
     },
     tail(): string {
       return text

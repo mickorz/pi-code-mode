@@ -733,6 +733,8 @@ async function executeWorkflow(
           record.maxAttempts = maxAttempts
           // 计时基准按本次尝试重置（#33 修正：重试后显示 1s/8s 而非累计 9s/8s 越界）
           record.attemptStartedAt = Date.now()
+          // 流式尾部清零：否则重试时详情会先显示上一次 attempt 的旧文本（评审修复）
+          record.partialOutput = undefined
           if (attempt > 1) shared.onAgentUpdate?.(record)
           throwIfAborted()
           // 每次 attempt 一个独立 controller：超时只取消本次，run 级 abort 取消所有
@@ -813,6 +815,8 @@ async function executeWorkflow(
             record.sessionId = execution.sessionId
             record.outputType = execution.type
             record.outputPreview = buildOutputPreview(execution.value)
+            // 终态清空流式尾部：详情改由 journal 结果呈现，同时释放那 8KB 内存
+            record.partialOutput = undefined
             shared.onAgentUpdate?.(record)
             // 成功且非空结果写入 journal 回放缓存；失败/null/空文本不进（与 Pi 一致）。
             // 载荷为整条 JournalEntry（展示元数据随扩展字段直通落盘）；prompt 用原始脚本入参（非 worktree 拼接版）

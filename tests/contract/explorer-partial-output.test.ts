@@ -234,3 +234,44 @@ test("tick: 有运行中节点时周期重绘；全部终态后不再重绘（�
   closeExplorer()
   explorer.dispose()
 })
+
+// ---- 评审修复回归（2026-11-19）----
+
+test("评审修复: 重试时清空上一次 attempt 的流式尾部（不显示旧文本）", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "partial-retry-"))
+  let calls = 0
+  const seen: Array<{ attempt?: number; partial?: string }> = []
+  const runner: AgentSessionRunner = {
+    async run(_p, options) {
+      calls++
+      options?.onPartial?.(`attempt-${calls}-输出`)
+      if (calls === 1) throw new Error("attempt 1 failed")
+      return textResult("ok")
+    },
+  }
+  await runWorkflow(`export const meta={name:"retry_partial"}\nawait agent("x",{label:"R",retries:1})\nreturn "done"`, {
+    agent: runner,
+    runId: "rp1",
+    cwd: dir,
+    agentRetries: 1,
+    onAgentUpdate: (r) => seen.push({ attempt: r.attempt, partial: r.partialOutput }),
+  })
+  // attempt 2 的第一次推送必须已清空（partial 为新的 attempt 文本，不能是 attempt-1）
+  const firstPushOfAttempt2 = seen.filter((s) => s.attempt === 2 && s.partial !== undefined)[0]
+  assert.ok(firstPushOfAttempt2, "attempt 2 有流式推送")
+  assert.ok(!firstPushOfAttempt2!.partial!.includes("attempt-1"), "不含上一次 attempt 的文本")
+  // 终态清空
+  const last = seen.at(-1)!
+  assert.equal(last.partial, undefined, "终态清空 partialOutput（改由 journal 呈现）")
+})
+
+test("评审修复: schema 修复轮之间重置尾部（多轮不拼接）", async () => {
+  const flashes: string[] = []
+  const buf = createPartialBuffer({ throttleMs: 100_000, onFlush: (t) => flashes.push(t) })
+  buf.push('{"round":1,"bad":true}')
+  buf.reset()
+  buf.push('{"round":2,"ok":true}')
+  assert.equal(buf.tail(), '{"round":2,"ok":true}', "reset 后只保留新一轮")
+  assert.ok(!buf.tail().includes("round\":1"), "上一轮内容已清空")
+  buf.dispose()
+})
