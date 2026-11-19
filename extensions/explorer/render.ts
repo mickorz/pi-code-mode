@@ -29,6 +29,16 @@ const KIND_ICON: Record<string, string> = {
   tool: "=",
 }
 
+/** 节点类型 -> 文字颜色（主题角色名，dark/light 均保证存在）：类型不同色相不同，便于扫读区分 */
+const KIND_COLOR: Record<string, string> = {
+  run: "accent",
+  workflow: "border",
+  composite: "border",
+  phase: "warning",
+  agent: "text",
+  tool: "success",
+}
+
 function statusIcon(status: string): string {
   switch (status) {
     case "running":
@@ -83,7 +93,7 @@ export function wrapByWidth(text: string, width: number): string[] {
   return out
 }
 
-/** 树行：缩进 + 展开标记 + 状态 + 标签 */
+/** 树行：缩进 + 展开标记 + 状态 + 标签（非选中行按节点类型着色，选中行保持 accent 加粗） */
 function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, selected: boolean, expanded: boolean, theme: ThemeLike): string {
   const marker = node.children.length ? (expanded ? "v" : ">") : " "
   const icon = KIND_ICON[node.kind] ?? "?"
@@ -92,7 +102,7 @@ function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, sel
   const tail = dur ? `  ${dur}` : ""
   const text = truncateToWidth(head + tail, width - 2)
   const line = `${selected ? "> " : "  "}${text}`
-  return selected ? theme.fg("accent", theme.bold(line)) : line
+  return selected ? theme.fg("accent", theme.bold(line)) : theme.fg(KIND_COLOR[node.kind] ?? "text", line)
 }
 
 /** 详情全量内容行（滚动与切片由调用方负责，以便钳制越界滚动） */

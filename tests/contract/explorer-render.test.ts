@@ -14,6 +14,47 @@ import type { WorkflowTreeNode } from "../../src/explorer/model/workflow-tree-mo
 
 const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s }
 
+test("渲染: 树行按节点类型着色（非选中行），选中行保持 accent", () => {
+  // 各类型节点 label 用唯一双字母，避免与状态图标 [RUN] 等文本撞匹配
+  const rows = [
+    node({ nodeKey: "run", kind: "run", label: "Rl", scopePath: [] }),
+    node({ nodeKey: "wf", parentKey: "run", kind: "workflow", label: "Wf", scopePath: ["root"] }),
+    node({ nodeKey: "cmp", parentKey: "wf", kind: "composite", label: "Cp", scopePath: ["root"] }),
+    node({ nodeKey: "ph", parentKey: "cmp", kind: "phase", label: "Ph", scopePath: ["root"] }),
+    node({ nodeKey: "agent", parentKey: "ph", kind: "agent", label: "Ag", scopePath: ["root"], status: "ok" }),
+    node({ nodeKey: "tool", parentKey: "ph", kind: "tool", label: "Tl", scopePath: ["root"], status: "ok" }),
+  ]
+  const byLabel = new Map<string, string[]>()
+  const recordingTheme = {
+    fg: (c: string, s: string) => {
+      for (const l of ["Rl", "Wf", "Cp", "Ph", "Ag", "Tl"]) if (s.includes(l)) byLabel.set(l, [...(byLabel.get(l) ?? []), c])
+      return s
+    },
+    bg: (_c: string, s: string) => s,
+    bold: (s: string) => s,
+  }
+  renderExplorerFrame(state({ rows, selectedIndex: -1 }), 80, 12, recordingTheme)
+  const expect: Array<[string, string]> = [
+    ["Rl", "accent"],
+    ["Wf", "border"],
+    ["Cp", "border"],
+    ["Ph", "warning"],
+    ["Ag", "text"],
+    ["Tl", "success"],
+  ]
+  for (const [label, color] of expect) {
+    assert.ok(byLabel.get(label)?.includes(color), `${label} 行应为色 ${color}，实得 ${JSON.stringify(byLabel.get(label))}`)
+  }
+  // 选中行：accent 优先于类型色（frame 无其他 accent 来源）
+  const selectedSeen: string[] = []
+  renderExplorerFrame(state({ rows, selectedIndex: 4 }), 80, 12, {
+    fg: (c, s) => (selectedSeen.push(c), s),
+    bg: (_c, s) => s,
+    bold: (s) => s,
+  })
+  assert.ok(selectedSeen.includes("accent"), "选中行仍用 accent")
+})
+
 function node(partial: Partial<WorkflowTreeNode> & { nodeKey: string }): WorkflowTreeNode {
   return {
     runId: "r1",
