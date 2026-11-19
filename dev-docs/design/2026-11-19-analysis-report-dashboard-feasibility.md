@@ -119,6 +119,114 @@ export function openInBrowser(filePath: string): { ok: boolean; error?: string }
 - 非交互环境（无 TTY 或 `CI=1`）自动跳过并提示路径
 - 打开失败只 warn，不阻断命令成功（报告文件已生成，路径已打印）
 
+### 3.5 规则文件化（新增，最高优先）
+
+参考实现的 `references/rules/` 用 `NN-主题.md` 组织 42 个规则文件，好处是"人能直接翻规则"。
+但两者规则**性质不同**，不能照抄结构：
+
+| | 参考实现（game-prd-check） | pi-code-mode |
+| --- | --- | --- |
+| 规则是什么 | **业务语义基准**（"财神翻出来要染色"） | **静态检查规则**（"parallel 任务数不可确定时提示"） |
+| 用途 | 作为"正确答案"去对照 PRD 文档 | 作为检查项去扫描代码 |
+| 文件结构 | 什么时候出现 / 数据记录 / 界面变化 / 连带影响 / 重连回放 | 需改为：检查什么 / 为什么是问题 / 命中判定 / 证据 / 局限 / 验收 |
+
+因此借鉴**组织方式**（编号 + 一规则一文件），不借鉴**内容骨架**。
+
+#### 目录与命名
+
+```
+src/engine/analyzer/rules/
+  index.ts                    # 规则实现（现有）
+  definitions/                # 新增：一规则一份可读文档
+    01-INPUT-001-rule.md
+    02-CONC-001-rule.md
+    03-CONC-002-rule.md
+    04-SERIAL-001-rule.md
+    05-SERIAL-002-rule.md
+    06-TIMEOUT-001-rule.md
+    07-RETRY-001-rule.md
+    08-DET-001-rule.md
+    09-REC-001-rule.md
+```
+
+编号顺序 = 报告「检查清单」表顺序，便于对照。
+
+#### 规则文件模板
+
+```md
+# CONC-002：并行任务数在运行时才确定
+
+| 元信息 | 值 |
+| --- | --- |
+| 规则 ID | CONC-002 |
+| 严重度 | medium |
+| 置信度 | 0.4（提示性，**不计入风险分**） |
+| 检查方式 | AST 静态分析 |
+| 规则集版本 | 1.0 |
+
+## 检查什么
+一句话定义（与代码里 `AnalyzerRule.description` **必须一致**）。
+
+## 为什么是问题
+不改会导致什么（这是 Markdown 报告「影响」列的来源）。
+
+## 命中判定（实现口径）
+精确说明什么代码形态会命中，含正例/反例代码片段。
+必须写明**不命中**的情况（防误报）。
+
+## 报出的证据
+列出的 evidence 字段各是什么含义。
+
+## 建议怎么改
+可执行改法；收益无基准时一律写「待 Benchmark」。
+
+## 已知误报与局限
+诚实列边界（如"静态不可知分片数，只能提示不能判定"）。
+
+## 验收口径
+改完怎么算通过（Analyzer 不再报 + 可选 Benchmark）。
+
+## 关联
+相关规则 / 经验文档 / 测试文件。
+```
+
+#### 三条强制约束（防文档与实现漂移）
+
+1. **双向一致性守卫测试**（`tests/analyzer/rules-docs.test.ts`）：
+   - 每个 `BUILTIN_RULES` 里的规则 → 必须存在 `definitions/NN-<ID>-rule.md`
+   - 每个 `definitions/*-rule.md` → 必须能对应到代码里存在的规则
+   - 文件名前缀编号必须连续从 01 起、无重复
+2. **`description` 单一真相源**：代码里的 `AnalyzerRule.description` 与 md 的「检查什么」首句逐字一致（测试断言）。
+3. **新规则三步**：写 `definitions/NN-xxx-rule.md` → 加实现到 `index.ts` → 跑守卫测试。
+
+#### 当前规则清单（9 条，代码已实现 + 均有测试）
+
+| # | 规则 ID | 严重度 | 检查什么 | 文件 |
+| --- | --- | --- | --- | --- |
+| 01 | `INPUT-001` | high | 同一个输入对象被多次注入不同 agent → 重复序列化与 token 浪费 | `01-INPUT-001-rule.md` |
+| 02 | `CONC-001` | medium | 并行任务数超过并发上限 → 多波次（**要求任务数静态可确定**） | `02-CONC-001-rule.md` |
+| 03 | `CONC-002` | medium | 并行任务数运行时才确定（`parallel(X.map)`）→ 提示人工确认分片数/并发/超时 | `03-CONC-002-rule.md` |
+| 04 | `SERIAL-001` | low | ≥3 个 agent 构成明确数据依赖链（合理串行，但可能是墙钟瓶颈） | `04-SERIAL-001-rule.md` |
+| 05 | `SERIAL-002` | medium | 源码相邻但无数据引用的调用 → 并行候选（需语义确认，不自动采纳） | `05-SERIAL-002-rule.md` |
+| 06 | `TIMEOUT-001` | medium | agent 缺 `timeoutMs` 且无 run 级超时 → 单点挂起拖垮整阶段 | `06-TIMEOUT-001-rule.md` |
+| 07 | `RETRY-001` | low | `retries` 放大失败场景的调用量与 token 消耗 | `07-RETRY-001-rule.md` |
+| 08 | `DET-001` | low | prompt 语义看起来可用确定性 JS 完成（统计/校验） | `08-DET-001-rule.md` |
+| 09 | `REC-001` | high | 大规模任务且无 `phase` 边界 → 失败后只能整 run 重跑 | `09-REC-001-rule.md` |
+
+> 说明：这 9 条是**代码静态检查**规则。另外还有两类"检查"不在本清单内，因为它们不是代码规则：
+> ① `plan_validate` 的 Plan Schema/Profile 边界校验（`src/engine/plan/plan-validator.ts`）；
+> ② 运行时治理（预算拦截、任务级恢复）——属于 M2/M3 行为，不是静态分析。
+
+#### 消费方（三处，同一份 md）
+
+| 消费方 | 用法 |
+| --- | --- |
+| 报告 Markdown 检查清单表 | 末列加「规则文档」相对路径，可点击跳转 |
+| Dashboard「规则检查清单」Tab | 点击规则行展开该 md 渲染的详细说明（构建时内嵌，运行时零请求） |
+| 人工排查 | 直接翻 `definitions/` 就知道"到底检查了哪些项" |
+
+**这直接回答用户的核心诉求**：报告里"没报的规则"不再是黑盒——每条规则的适用范围、判定口径、已知局限都有一份可读文档。
+
 ### 3.4 Markdown 报告补强（在现有基础上）
 
 | 补充 | 理由 |
@@ -136,13 +244,14 @@ export function openInBrowser(filePath: string): { ok: boolean; error?: string }
 
 | 期 | 内容 | 预估 |
 | --- | --- | --- |
+| **P0-0** | **规则文件化**：`definitions/` 9 份 `NN-<ID>-rule.md` + 双向一致性守卫测试 | **3h** |
 | P0-1 | Markdown 报告补强（概览/影响/验收/目录）+ `impactHint` | 2h |
 | P0-2 | `template.html`（5 Tab + 3 图表 + 筛选交互） | 5h |
 | P0-3 | `build-dashboard.ts`（视图模型 + 校验 + 注入 + 命名） | 2h |
 | P0-4 | `open-browser.ts` + `/workflows analyze` 接线（`--no-html`/`--no-open`） | 1h |
 | P0-5 | 契约测试（视图模型/命名递增/校验失败/浏览器跳过）+ 真实脚本 smoke | 3h |
 
-合计 **≈1.5 人日**。
+合计 **≈2 人日**（新增规则文件化 3h）。
 
 ---
 
@@ -168,6 +277,8 @@ export function openInBrowser(filePath: string): { ok: boolean; error?: string }
 5. 内嵌数据不含完整子 report（产物 < 500 KB）
 6. 契约测试覆盖：视图模型映射、命名递增、校验失败退出、浏览器命令构造（mock）
 7. 对 `thirdparties/PrdGameSkill/.opencode-workflows/workflows/game-requirement-audit/game-requirement-audit.js` 真实产出可打开、可筛选
+8. `definitions/` 下 9 份规则文档齐全，编号 01~09 连续；守卫测试通过（代码规则 ↔ md 双向对应、description 逐字一致）
+9. Dashboard 规则 Tab 点击任一条规则可看到其 md 全文说明
 
 ---
 
@@ -177,6 +288,7 @@ export function openInBrowser(filePath: string): { ok: boolean; error?: string }
 - **不做**从 Markdown 反解析：我们是结构化直出，反解析只会引入不一致
 - **不做**远程服务/静态服务器：单文件 `file://` 已满足需求
 - **不做** Dashboard 内联的模型调用或二次分析：只读展示
+- **不照搬**参考实现的规则文件内容骨架（"什么时候出现 / 数据记录 / 界面变化 / 重连回放"）——那是业务语义规则的结构，与静态检查规则不匹配
 
 ---
 
