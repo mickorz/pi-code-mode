@@ -21,6 +21,14 @@
 - `npm run test:contract` explorer-result-view 9/9 通过（含 50 项数组封顶、preview 兜底、outputType 缺省推断）。
 - 保留点：验收点 3 的实机触发依赖模型输出长度，headless 无法强控；如需实机目视截断提示，用交互 TUI 跑 `node-detail-large-result-test.js`。
 
+### 2026-11-22 schema-result-view 复跑（run `run-1795073286240-spy5ng`）：✅ 通过（保留点同上）
+
+同日第二次后台 run：2 agent + 1 tool 节点，51.4s。结果与上次一致：`bigBytes=5411`（120 行模板行格式固定，完全合规时字节数确定，模型完全照做）、`failedOk=false`（`onFailure: 'return'` 预期）。增量核验：
+
+- journal `entries` 原值保留（`demo-key-001`/`demo-token-001`/`demo-pwd-001`），`[REDACTED]` 仅在 `observability.agents[0].outputPreview`，与验收点 5 结论复验一致。
+- contract `explorer-result-view.test.ts` 升至 **11/11**（上次 9/9，其间补 2 个真实数据回归：失败节点 error 状态、工具节点显示错误而非「无结果返回」），本 run 数据下全部通过。
+- 保留点 3 不变：模型输出仍 5.4KB 未触发实机截断，contract 用例兜底。
+
 ## 遗留
 
 - 验收点 1/2 的「目视」部分（面板缩进、[REDACTED] 显示效果）headless 无法核对，依赖 contract E2E 渲染断言兜底；如需人工目视，交互会话 Ctrl+B 打开 Explorer 选中 SchemaAgent 节点。
