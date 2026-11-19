@@ -61,6 +61,10 @@
 
 ## 4. C —— 真常驻侧栏（远期，可能不做）
 
+> 2026-11-19 更新：用户提出「固定模式（设置可开关，Ctrl+B overlay 不动）」需求，可行性分析完成：
+> **widget 常驻面板路线可行**（官方 setWidget API + workflow-tasks 先例，半天~一天工作量），
+> 不走 C 的 compositor 路线。详见 `dev-docs/design/2026-11-19-explorer-fixed-panel-可行性分析.md`。
+
 **目标**：右侧固定面板，主对话区自动缩窄，不遮挡聊天。
 
 - [ ] C1 技术选型：REF-007 `pi-sidebar-tui` 的 terminal compositor 路线（缩窄主终端渲染宽度后右侧独立绘制）vs 维护 Pi TUI 定制分支
