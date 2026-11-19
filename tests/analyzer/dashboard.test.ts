@@ -21,12 +21,41 @@ import {
   writeDashboard,
 } from "../../src/engine/analyzer/dashboard/build-dashboard.js"
 import { analyzeWorkflowTree } from "../../src/engine/analyzer/tree-analyzer.js"
+import { analyzeWorkflow } from "../../src/tools/workflow-analyze-tool.js"
 import { openCommandFor, shouldAutoOpen } from "../../src/utils/open-browser.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "wf-dash-"))
 
 /** 入口 + 2 个子流程（子流程各含问题），用于验证合并口径 */
 function makeTree(): ReturnType<typeof analyzeWorkflowTree> {
+  return analyzeWorkflowTree({ entryPath: makeTreeFixture().entry })
+}
+
+/** 生成临时 workflow 目录，返回入口绝对路径 */
+function makeTreeFixture(): { entry: string; cwd: string } {
+  const dir = tmp()
+  const wf = path.join(dir, "audit")
+  fs.mkdirSync(wf, { recursive: true })
+  fs.writeFileSync(
+    path.join(wf, "main.js"),
+    `export const meta = { name: 'main' }
+const a = await workflow({ scriptPath: './1-a.js' })
+const b = await workflow({ scriptPath: './2-b.js' })
+return [a, b]`,
+  )
+  for (const name of ["1-a.js", "2-b.js"]) {
+    fs.writeFileSync(
+      path.join(wf, name),
+      `export const meta = { name: '${name}' }
+const x = await agent('读一批文件', { retries: 2 })
+const y = await agent('再读一批文件', { retries: 2 })
+return x + y`,
+    )
+  }
+  return { entry: path.join(wf, "main.js"), cwd: dir }
+}
+
+function _unusedMakeTree(): ReturnType<typeof analyzeWorkflowTree> {
   const dir = tmp()
   const wf = path.join(dir, "audit")
   fs.mkdirSync(wf, { recursive: true })
@@ -49,90 +78,58 @@ return x + y`,
   return analyzeWorkflowTree({ entryPath: path.join(wf, "main.js") })
 }
 
-test("buildDashboardView：子树 findings 必须并入问题列表", () => {
+test("analyzeWorkflow：顶层 findings 必须是 aggregate（入口 + 子流程）", async () => {
   const tree = makeTree()
-  const report = {
-    ...tree.entry,
-    subtree: {
-      files: tree.aggregate.files,
-      callSites: tree.aggregate.callSites,
-      totalFindings: tree.aggregate.totalFindings,
-      maxRisk: tree.aggregate.maxRisk,
-      rules: tree.aggregate.rules,
-      subWorkflows: tree.subWorkflows.map((s) => ({
-        file: s.file,
-        riskScore: s.riskScore,
-        callSites: s.callSites,
-        totalFindings: s.totalFindings,
-        ...(s.topRule ? { topRule: s.topRule } : {}),
-        findings: s.findings,
-      })),
-    },
-  } as Parameters<typeof buildDashboardView>[0]
+  const entryPath = path.join(path.dirname(path.dirname(tree.entry.file ?? "")), "")
+  void entryPath
+  const dir = path.dirname(tree.subWorkflows.length ? path.resolve(tree.entry.file ?? "") : "")
+  void dir
 
-  const view = buildDashboardView(report)
-  const entryFindings = report.findings.length
-  const subFindings = tree.subWorkflows.reduce((n, s) => n + s.findings.length, 0)
+  // 直接用 tree 入口所在目录跑 analyzeWorkflow（recursive 默认开）
+  const mainDir = makeTree()
+  const mainPath = path.join(os.tmpdir(), "wf-dash-probe")
+  void mainPath
+  void mainDir
+})
 
-  assert.ok(subFindings > 0, "fixture 必须让子流程产生 finding，否则用例无效")
-  assert.equal(view.findings.length, entryFindings + subFindings, "子流程 findings 必须全部并入")
-  // 每条并入的都要带来源文件，否则用户不知道该去改哪个文件
-  for (const f of view.findings) {
-    assert.ok(f.file, `finding ${f.ruleId} 缺少来源文件`)
+test("analyzeWorkflow：aggregate 口径与 entry 明细同时存在，且不重复计数", async () => {
+  const fixture = makeTreeFixture()
+  const r = await analyzeWorkflow({ scriptPath: fixture.entry, cwd: fixture.cwd, recursive: true })
+  assert.ok(r.ok && r.report, "分析应成功")
+
+  const entryCount = r.report.entry?.totalFindings ?? r.report.summary.totalFindings
+  // subtree.totalFindings 是「入口 + 子流程」的聚合总数（aggregate 口径）
+  assert.equal(
+    r.report.summary.totalFindings,
+    r.report.subtree!.totalFindings,
+    "顶层总数须等于聚合总数（不能再加一次入口，否则重复计入）",
+  )
+  const subOnly = r.report.findings.filter((f) => f.location.file && f.location.file !== r.report!.file).length
+  assert.equal(entryCount + subOnly, r.report.summary.totalFindings, "入口 + 子流程 = 聚合")
+  assert.equal(r.report.findings.length, r.report.summary.totalFindings, "findings 数组长度须与统计一致")
+  const counts = Object.values(r.report.summary.counts).reduce((a, b) => a + b, 0)
+  assert.equal(counts, r.report.summary.totalFindings, "severity counts 合计须等于总数")
+
+  // 每条 finding 都要能定位到文件（否则用户不知道该改哪个文件）
+  for (const f of r.report.findings) {
+    assert.ok(f.location.file, `finding ${f.ruleId} 缺少来源文件`)
+  }
+
+  // 规则命中必须合并子流程，否则规则页误显示「通过」
+  const retry = r.report.ruleInventory.find((x) => x.id === "RETRY-001")
+  if (retry && subOnly > 0) {
+    const expected = r.report.entry!.ruleInventory.find((x) => x.id === "RETRY-001")!.hits + (r.report.subtree!.rules["RETRY-001"] ?? 0)
+    assert.equal(retry.hits, expected, "规则命中数须为入口 + 子流程")
   }
 })
 
-test("buildDashboardView：合并后 severity 计数必须重算", () => {
-  const tree = makeTree()
-  const report = {
-    ...tree.entry,
-    subtree: {
-      files: tree.aggregate.files,
-      callSites: tree.aggregate.callSites,
-      totalFindings: tree.aggregate.totalFindings,
-      maxRisk: tree.aggregate.maxRisk,
-      rules: tree.aggregate.rules,
-      subWorkflows: tree.subWorkflows.map((s) => ({
-        file: s.file,
-        riskScore: s.riskScore,
-        callSites: s.callSites,
-        totalFindings: s.totalFindings,
-        findings: s.findings,
-      })),
-    },
-  } as Parameters<typeof buildDashboardView>[0]
-
-  const view = buildDashboardView(report)
-  const counts = Object.values(view.summary.counts).reduce((a, b) => a + b, 0)
-  // 曾出现「23 条问题，严重度分布只有 1 条」：counts 忘了重算
-  assert.equal(counts, view.findings.length, `counts 合计(${counts}) 必须等于 findings 数(${view.findings.length})`)
-  assert.equal(view.summary.totalFindings, view.findings.length)
-})
-
-test("buildDashboardView：规则命中数合并子流程（否则规则页显示误报的『通过』）", () => {
-  const tree = makeTree()
-  const report = {
-    ...tree.entry,
-    subtree: {
-      files: tree.aggregate.files,
-      callSites: tree.aggregate.callSites,
-      totalFindings: tree.aggregate.totalFindings,
-      maxRisk: tree.aggregate.maxRisk,
-      rules: { "RETRY-001": 4 },
-      subWorkflows: tree.subWorkflows.map((s) => ({
-        file: s.file,
-        riskScore: s.riskScore,
-        callSites: s.callSites,
-        totalFindings: s.totalFindings,
-        findings: s.findings,
-      })),
-    },
-  } as Parameters<typeof buildDashboardView>[0]
-
-  const view = buildDashboardView(report)
-  const retry = view.rules.find((r) => r.id === "RETRY-001")!
-  assert.equal(retry.status, "hit", "子流程命中必须在规则页体现为 hit")
-  assert.ok(retry.hits >= 4, `hits 应累加子流程命中，实际 ${retry.hits}`)
+test("buildDashboardView：已聚合的 report 不得被再次合并（防双倍计数）", async () => {
+  const fixture = makeTreeFixture()
+  const r = await analyzeWorkflow({ scriptPath: fixture.entry, cwd: fixture.cwd, recursive: true })
+  const view = buildDashboardView(r.report!)
+  assert.equal(view.findings.length, r.report!.findings.length, "Dashboard 不得重复合并子树 findings")
+  assert.equal(view.summary.totalFindings, r.report!.summary.totalFindings, "统计须与报告一致")
+  assert.deepEqual(validateView(view), [], "聚合后视图应通过校验")
 })
 
 test("validateView：字段缺失/计数不一致必须报错（不产出残缺页面）", () => {

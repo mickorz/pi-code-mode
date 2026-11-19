@@ -55,11 +55,26 @@ export interface AnalysisReport {
   sourceHash: string
   generatedAt: string
   file?: string
+  /**
+   * 统计口径（P0 统一，2026-11-19）：
+   *  - `findings` / `summary.counts` / `summary.totalFindings` / `ruleInventory` 是 **aggregate** 口径
+   *    （入口 + 全部子 workflow），Markdown/JSON/Dashboard 全取这一份，避免同一分析出现两套数字。
+   *  - `entry` 保留入口自身明细，供报告区分「入口 vs 子流程」。
+   *  - `summary.riskScore` 仍是**入口自身**风险分；聚合风险用 `aggregateRiskScore`（取最危险单文件）。
+   */
   summary: {
     riskScore: number
     counts: Record<Severity, number>
     totalFindings: number
   }
+  /** 入口自身明细（跨文件分析时存在，与顶层 aggregate 区分） */
+  entry?: {
+    findings: AnalysisFindingWithSnippet[]
+    ruleInventory: AnalysisReport["ruleInventory"]
+    totalFindings: number
+  }
+  /** 聚合风险分：取最危险单文件（不求和，避免饱和到 100 丢失区分度） */
+  aggregateRiskScore?: number
   executionEstimate: ExecutionEstimate
   callGraph: {
     nodes: Array<{ id: string; kind: string; line: number; label: string; dynamic: boolean }>
@@ -244,10 +259,20 @@ export function renderMarkdown(report: AnalysisReport): string {
   lines.push("")
   lines.push(`- analyzer ${report.analyzerVersion} / ruleSet ${report.ruleSetVersion}`)
   lines.push(`- sourceHash: \`${report.sourceHash.slice(0, 23)}…\``)
-  lines.push(`- **Risk Score: ${report.summary.riskScore}/100**`)
+  lines.push(`- **入口风险分: ${report.summary.riskScore}/100**`)
+  if (report.aggregateRiskScore !== undefined) {
+    lines.push(`- **聚合风险分: ${report.aggregateRiskScore}/100**（取最危险单文件，不求和）`)
+  }
   if (report.subtree && report.subtree.files > 1) {
+    const entryCount = report.entry?.totalFindings ?? report.summary.totalFindings
+    // subtree.totalFindings 是「入口 + 子流程」总数（aggregate 口径），子流程数需相减
+    const subOnly = Math.max(0, report.subtree.totalFindings - entryCount)
     lines.push(
-      `- 跨文件聚合: ${report.subtree.files} 个文件 / ${report.subtree.callSites} 调用点 / ${report.subtree.totalFindings} finding / 最高 ${report.subtree.maxRisk}（${report.subtree.riskiest ?? "-"}）`,
+      `- 分析范围: ${report.subtree.files} 个文件 / ${report.subtree.callSites} 调用点` +
+        (report.subtree.riskiest ? ` / 最危险 ${report.subtree.riskiest}` : ""),
+    )
+    lines.push(
+      `- **问题口径: 入口 ${entryCount} 条 + 子 workflow ${subOnly} 条 = 聚合 ${report.summary.totalFindings} 条**`,
     )
   }
   lines.push("")

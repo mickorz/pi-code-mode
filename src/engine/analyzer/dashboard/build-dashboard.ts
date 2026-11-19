@@ -30,6 +30,10 @@ export interface DashboardView {
     aiEnabled: boolean
     /** AI 的一句话总结（AI 未跑时缺省） */
     aiSummary?: string
+    /** 入口自身问题数（跨文件分析时与 aggregate 区分） */
+    entryFindings?: number
+    /** 聚合风险分（取最危险单文件） */
+    aggregateRiskScore?: number
   }
   estimate: {
     callSites: number
@@ -94,6 +98,8 @@ export function buildDashboardView(
       sourceHash: report.sourceHash,
       aiEnabled: opts.aiEnabled === true,
       ...(opts.aiSummary ? { aiSummary: opts.aiSummary } : {}),
+      ...(report.entry ? { entryFindings: report.entry.totalFindings } : {}),
+      ...(report.aggregateRiskScore !== undefined ? { aggregateRiskScore: report.aggregateRiskScore } : {}),
     },
     estimate: {
       callSites: report.executionEstimate.callSites,
@@ -156,37 +162,8 @@ export function buildDashboardView(
         ...(s.topRule ? { topRule: s.topRule } : {}),
       })),
     }
-    // 子流程 finding 并入问题列表：入口报告自身 findings 往往很少（脏活在子文件），
-    // 不并入会让「问题列表」只剩 1 条、规则清单看着「全部通过」——与聚合事实矛盾。
-    for (const sw of report.subtree.subWorkflows) {
-      for (const f of sw.findings) {
-        view.findings.push({
-          severity: f.severity,
-          ruleId: f.ruleId,
-          confidence: f.confidence,
-          file: sw.file,
-          startLine: f.startLine,
-          endLine: f.endLine,
-          evidence: f.evidence,
-          ...(f.snippet ? { snippet: f.snippet } : {}),
-          ...(f.suggestion ? { suggestion: f.suggestion } : {}),
-        })
-      }
-    }
-    // 规则命中数合并子流程：否则规则页显示 CONC-002「通过」，而子文件实际命中
-    for (const r of view.rules) {
-      const subHits = report.subtree.rules[r.id] ?? 0
-      if (subHits > 0) {
-        r.hits += subHits
-        r.status = "hit"
-      }
-    }
-    // 必须重算：summary.counts 原本只统计入口自己的 findings，
-    // 合并子流程后不重算会得到「23 条问题但严重度分布只有 1 条」的矛盾
-    const counts: Record<string, number> = {}
-    for (const f of view.findings) counts[f.severity] = (counts[f.severity] ?? 0) + 1
-    view.summary.counts = counts
-    view.summary.totalFindings = view.findings.length
+    // 顶层 findings / ruleInventory / summary 已是 aggregate 口径（P0 统一，2026-11-19），
+    // Dashboard 直接消费即可。此处**不能再合并子树**，否则会双倍计数。
   }
   return view
 }

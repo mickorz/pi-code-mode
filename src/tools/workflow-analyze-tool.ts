@@ -10,7 +10,12 @@ import path from "node:path"
 
 import { Type } from "typebox"
 
-import { buildReport, renderMarkdown, type AnalysisReport } from "../engine/analyzer/report-builder.js"
+import {
+  buildReport,
+  renderMarkdown,
+  type AnalysisFindingWithSnippet,
+  type AnalysisReport,
+} from "../engine/analyzer/report-builder.js"
 import {
   buildPlannerPrompt,
   mergeRecommendations,
@@ -19,6 +24,7 @@ import {
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
 import { analyzeWorkflowTree } from "../engine/analyzer/tree-analyzer.js"
+import type { Severity } from "../engine/analyzer/types.js"
 import { PiAgentAdapter } from "../adapter/pi-agent-adapter.js"
 import { runOptimizationLoop, renderLoopResult } from "../engine/evaluator/optimization-loop.js"
 import { runBenchmark, renderBenchmark, toEvaluation } from "../engine/evaluator/benchmark-runner.js"
@@ -81,8 +87,39 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
     try {
       const tree = analyzeWorkflowTree({ entryPath: path.resolve(cwd, file) })
       if (tree.subWorkflows.length > 0) {
+        // P0 统一口径（2026-11-19）：顶层 findings/ruleInventory/summary 改为 aggregate，
+        // entry 明细单独保留。此前 Dashboard 自己合并、Markdown 用入口口径，
+        // 导致同一次分析出现「23 条 vs 1 条」两套数字。
+        const entryFindings = report.findings
+        const entryRuleInventory = report.ruleInventory
+        const entrySummary = report.summary
+
+        const subFindings: AnalysisFindingWithSnippet[] = tree.subWorkflows.flatMap((sw) =>
+          sw.findings.map((f) => ({
+            ruleId: f.ruleId,
+            severity: f.severity as Severity,
+            confidence: f.confidence,
+            location: { file: sw.file, startLine: f.startLine, endLine: f.endLine },
+            evidence: f.evidence,
+            ...(f.suggestion ? { suggestion: f.suggestion } : {}),
+            ...(f.snippet ? { snippet: f.snippet } : {}),
+          })),
+        )
+        const aggregated = [...entryFindings, ...subFindings]
+        const counts = { critical: 0, high: 0, medium: 0, low: 0 } as Record<Severity, number>
+        for (const f of aggregated) counts[f.severity] += 1
+
         report = {
           ...report,
+          findings: aggregated,
+          summary: { riskScore: entrySummary.riskScore, counts, totalFindings: aggregated.length },
+          entry: { findings: entryFindings, ruleInventory: entryRuleInventory, totalFindings: entryFindings.length },
+          aggregateRiskScore: tree.aggregate.maxRisk,
+          // 规则清单合并子流程命中，否则规则页显示「通过」而子文件实际命中
+          ruleInventory: entryRuleInventory.map((r) => {
+            const subHits = tree.aggregate.rules[r.id] ?? 0
+            return subHits > 0 ? { ...r, hits: r.hits + subHits, status: "hit" as const } : r
+          }),
           subtree: {
             files: tree.aggregate.files,
             callSites: tree.aggregate.callSites,
