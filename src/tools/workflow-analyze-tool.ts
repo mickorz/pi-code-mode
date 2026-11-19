@@ -18,6 +18,7 @@ import {
   type PlannerOutput,
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
+import { analyzeWorkflowTree } from "../engine/analyzer/tree-analyzer.js"
 import { PiAgentAdapter } from "../adapter/pi-agent-adapter.js"
 import { runOptimizationLoop, renderLoopResult } from "../engine/evaluator/optimization-loop.js"
 import { runBenchmark, renderBenchmark, toEvaluation } from "../engine/evaluator/benchmark-runner.js"
@@ -38,6 +39,8 @@ export interface AnalyzeInput {
   generatedAt?: string
   /** 是否写入报告文件（缺省 false） */
   writeReport?: boolean
+  /** 跨文件聚合：连同子 workflow 一起分析（缺省 true，仅 scriptPath 模式可用） */
+  recursive?: boolean
 }
 
 export interface AnalyzeResult {
@@ -66,11 +69,41 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
     source = fs.readFileSync(abs, "utf8")
   }
 
-  const report = buildReport({
+  let report = buildReport({
     source,
     ...(file ? { file } : {}),
     ...(input.generatedAt ? { generatedAt: input.generatedAt } : {}),
   })
+
+  // 跨文件聚合（默认开）：真实 workflow 常是「壳 + 子流程」，
+  // 只分析入口会得出「风险很低」的假象（PrdGameSkill 壳 714 行 / 子流程合计 3513 行）。
+  if (file && input.recursive !== false) {
+    try {
+      const tree = analyzeWorkflowTree({ entryPath: path.resolve(cwd, file) })
+      if (tree.subWorkflows.length > 0) {
+        report = {
+          ...report,
+          subtree: {
+            files: tree.aggregate.files,
+            callSites: tree.aggregate.callSites,
+            totalFindings: tree.aggregate.totalFindings,
+            maxRisk: tree.aggregate.maxRisk,
+            ...(tree.aggregate.riskiest ? { riskiest: tree.aggregate.riskiest } : {}),
+            rules: tree.aggregate.rules,
+            subWorkflows: tree.subWorkflows.map((sw) => ({
+              file: sw.file,
+              riskScore: sw.riskScore,
+              callSites: sw.callSites,
+              totalFindings: sw.totalFindings,
+              ...(sw.topRule ? { topRule: sw.topRule } : {}),
+            })),
+          },
+        }
+      }
+    } catch (e) {
+      report.diagnostics.push(`子 workflow 聚合失败（入口结果仍有效）：${String((e as Error)?.message ?? e).slice(0, 200)}`)
+    }
+  }
 
   // Plan 状态（旧 Workflow 无 Plan 也照常分析，不阻止）
   let planInfo: AnalyzeResult["plan"]

@@ -66,6 +66,16 @@ export interface AnalysisReport {
   findings: AnalyzerFinding[]
   recommendations: Recommendation[]
   diagnostics: string[]
+  /** 跨文件聚合（分析入口 + 子 workflow 时填充） */
+  subtree?: {
+    files: number
+    callSites: number
+    totalFindings: number
+    maxRisk: number
+    riskiest?: string
+    rules: Record<string, number>
+    subWorkflows: Array<{ file: string; riskScore: number; callSites: number; totalFindings: number; topRule?: string }>
+  }
 }
 
 function estimateOf(context: ReturnType<typeof runRules>["context"]): ExecutionEstimate {
@@ -200,6 +210,19 @@ export function renderMarkdown(report: AnalysisReport): string {
     )
     for (const ev of f.evidence) lines.push(`  - ${ev}`)
     if (f.suggestion) lines.push(`  - 建议：${f.suggestion}`)
+  }
+  if (report.subtree && report.subtree.files > 1) {
+    lines.push("")
+    lines.push(`## 子 Workflow（聚合 ${report.subtree.files} 个文件，共 ${report.subtree.callSites} 个调用点）`)
+    lines.push("")
+    lines.push(`- 聚合风险（取最危险单文件）：**${report.subtree.maxRisk}/100**${report.subtree.riskiest ? `（${report.subtree.riskiest}）` : ""}`)
+    lines.push(`- 全部 finding：${report.subtree.totalFindings} 条`)
+    lines.push("")
+    lines.push("| 文件 | 风险分 | 调用点 | finding | 主要规则 |")
+    lines.push("| --- | --- | --- | --- | --- |")
+    for (const sw of report.subtree.subWorkflows) {
+      lines.push(`| ${sw.file} | ${sw.riskScore} | ${sw.callSites} | ${sw.totalFindings} | ${sw.topRule ?? "-"} |`)
+    }
   }
   lines.push("")
   lines.push("## 优化建议")

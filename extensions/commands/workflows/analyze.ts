@@ -57,6 +57,7 @@ function renderSummary(input: {
   aiRecommends?: number
   reportPath?: string
   diagnostics: string[]
+  subtree?: { files: number; callSites: number; maxRisk: number; riskiest?: string; totalFindings: number }
 }): string {
   const lines: string[] = []
   lines.push(`Analyzer: ${input.scriptPath}`)
@@ -66,6 +67,12 @@ function renderSummary(input: {
       (input.dynamicNodes > 0 ? ` · 动态节点 ${input.dynamicNodes}` : "") +
       (input.waves !== undefined ? ` · 预计 ${input.waves} 波次` : ""),
   )
+
+  if (input.subtree && input.subtree.files > 1) {
+    lines.push(
+      `跨文件聚合：${input.subtree.files} 个文件 · ${input.subtree.callSites} 个调用点 · ${input.subtree.totalFindings} 条 finding · 最高风险 ${input.subtree.maxRisk}/100${input.subtree.riskiest ? `（${input.subtree.riskiest}）` : ""}`,
+    )
+  }
 
   if (input.findings.length === 0) {
     lines.push("未发现静态风险。")
@@ -159,6 +166,17 @@ ${ref}`, "info")
       ...(result.planner ? { aiRecommends: result.planner.proposals.length } : {}),
       ...(reportPath ? { reportPath } : {}),
       diagnostics: r.diagnostics,
+      ...(r.subtree
+        ? {
+            subtree: {
+              files: r.subtree.files,
+              callSites: r.subtree.callSites,
+              maxRisk: r.subtree.maxRisk,
+              ...(r.subtree.riskiest ? { riskiest: r.subtree.riskiest } : {}),
+              totalFindings: r.subtree.totalFindings,
+            },
+          }
+        : {}),
     })
     ctx.ui.notify(summary, "info")
 
