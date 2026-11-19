@@ -22,6 +22,7 @@
 | REF-014 | pi-web-ui | https://github.com/Watercol/pi-web-ui.git | thirdparties/pi-web-ui | b7af6603b15bd80296a366ded805bcbf60385e35 | MIT | 技术实现参考：Web 页面控制 pi --mode rpc 的最小实现（RPC 通道研究样本） | 2026-11-18 引入。研究「Web 控制 Pi RPC」的最小实现样本 |
 | REF-015 | awesome-agent-clients | https://github.com/arach/awesome-agent-clients.git | thirdparties/awesome-agent-clients | 117c8b8ecf2ff0bd4684372a96971abfbf2966d6 | CC0-1.0 | 资料索引：Agent Client/Orchestration Dashboard 清单（Mission Control/Vibe Kanban/T3 Code 等），为 Workflow Dashboard 的编排形态对照提供目录 | 2026-11-18 引入。Mission Control/Vibe Kanban 等编排类项目的入口索引 |
 | REF-016 | pi-context-view | https://github.com/dimk90/pi-context-view.git | thirdparties/pi-context-view | 3cded3f7a202239c66e29111db1de013b2bd79e8 | MIT | 方法论参考：pi 上下文占用可视化扩展（base prompt/tools defs/extension injections 的隐藏上下文检视）；只读研究，集成前再评估 | 2026-11-19 引入。上下文用量可视化与隐藏注入检视，与本包 workflow 观测/上下文展示方向对照 |
+| REF-017 | ak-pi-workflow-roles | https://github.com/Akagilnc/ak-pi-workflow-roles.git | thirdparties/ak-pi-workflow-roles | fbe6c7c15b4e5acb34d09796af7af9bbf9080c3f | Apache-2.0 | 方法论参考：AI 编码治理层（七个带门禁角色、类型化提交、独立审计席位、无 runner 的组合式设计）；只读研究，集成前再评估 | 2026-11-19 引入。多角色门禁治理形态与本包 workflow 编排/审计方向对照 |
 
 ## Submodule 引入与登记流程
 

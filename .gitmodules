@@ -61,3 +61,7 @@
 	path = thirdparties/pi-context-view
 	url = https://github.com/dimk90/pi-context-view.git
 	branch = develop
+[submodule "thirdparties/ak-pi-workflow-roles"]
+	path = thirdparties/ak-pi-workflow-roles
+	url = https://github.com/Akagilnc/ak-pi-workflow-roles.git
+	branch = main
