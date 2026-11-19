@@ -69,6 +69,21 @@
 
 结论倾向：除非 B 做完仍不满足，否则不做 C。优先把体验差异压到"入口/布局"层面即可。
 
+## 4.5 D —— 结构化（JSON schema）结果展示（已完成 2026-11-18）
+
+REF-001 的 `result-view.ts` 语义已对齐（`src/explorer/repository/result-view.ts`）：
+
+- [x] structured 结果 pretty-print（`JSON.stringify(_, null, 2)`）；text 原样
+- [x] **渲染期脱敏**：api_key/secret/token/password/authorization/credential → `[REDACTED]`
+      （只作用于渲染副本，journal 原值不动 → resume 语义不变）
+- [x] 20KB 上限 + `（结果已截断，原始 X KB）` 提示
+- [x] 空态三分：failed→error / running→`（运行中，暂无结果）` / 终态无结果→`（无结果返回）`
+- [x] preview 兜底：journal 未写入时用节点快照 `outputPreview`（树节点 metadata 新增该字段）
+- [x] outputType 缺省按值类型推断（老 journal 兼容）；详情头部显示 `输出 structured|text`
+- [x] 复用仓库既有 `truncateUtf8ByBytes` / `redactValue`（数组 50 项封顶与 REF 同语义）
+
+测试：`tests/contract/explorer-result-view.test.ts`（9 用例，含 schema→journal→渲染的端到端断言）
+
 ## 5. 执行顺序
 
 1. **A**（当前）→ 验证手感

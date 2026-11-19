@@ -46,6 +46,8 @@ export interface WorkflowTreeNode {
     attempt?: number
     replayed?: boolean
     outputType?: string
+    /** 节点快照的 2KB 结果预览（journal 未写入时的详情兜底） */
+    outputPreview?: string
     error?: string
   }
 }
@@ -356,6 +358,7 @@ export class WorkflowTreeModel {
           attempt: record.attempt,
           replayed: record.replayed,
           outputType: record.outputType,
+          outputPreview: record.outputPreview,
           error: record.error,
         },
       },

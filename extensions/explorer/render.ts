@@ -12,6 +12,7 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import type { ExplorerViewState, NodeDetailView } from "../../src/explorer/controller/explorer-controller.js"
 import type { WorkflowTreeNode } from "../../src/explorer/model/workflow-tree-model.js"
+import { resolveResultState } from "../../src/explorer/repository/result-view.js"
 
 export interface ThemeLike {
   fg(color: string, s: string): string
@@ -97,6 +98,7 @@ function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: Them
   if (node.metadata?.tokens != null) meta.push(`tokens ${node.metadata.tokens}`)
   if (node.metadata?.attempt != null) meta.push(`attempt ${node.metadata.attempt}`)
   if (node.metadata?.replayed) meta.push("[回放]")
+  if (node.metadata?.outputType) meta.push(`输出 ${node.metadata.outputType}`)
   if (meta.length) lines.push(truncateToWidth(meta.join("  "), width))
   if (node.metadata?.error) {
     lines.push(...wrapByWidth(theme.fg("accent", `错误: ${node.metadata.error}`), width).map((l) => truncateToWidth(l, width)))
@@ -110,10 +112,29 @@ function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: Them
       lines.push(theme.fg("muted", "-- prompt --"))
       lines.push(...wrapByWidth(a.prompt, width).slice(0, 8).map((l) => truncateToWidth(l, width)))
     }
-    if (a.result !== undefined) {
-      lines.push(theme.fg("muted", "-- result --"))
-      const text = typeof a.result === "string" ? a.result : JSON.stringify(a.result, null, 2)
-      lines.push(...wrapByWidth(text ?? "", width).slice(0, 10).map((l) => truncateToWidth(l, width)))
+    // 结果区（对齐 REF-001：structured JSON pretty-print + 渲染期脱敏 + 20KB 截断提示 + 空态三分）
+    const resultState = resolveResultState({
+      status: node.status,
+      error: node.metadata?.error,
+      result: a.result,
+      outputType: a.outputType,
+      outputPreview: node.metadata?.outputPreview,
+    })
+    lines.push(theme.fg("muted", "-- result --"))
+    if (resultState.state === "error") {
+      lines.push(...wrapByWidth(theme.fg("accent", `错误: ${resultState.message}`), width).map((l) => truncateToWidth(l, width)))
+    } else if (resultState.state === "pending") {
+      lines.push(theme.fg("muted", "  （运行中，暂无结果）"))
+    } else if (resultState.state === "empty") {
+      lines.push(theme.fg("muted", "  （无结果返回）"))
+    } else {
+      if (resultState.source === "preview") {
+        lines.push(theme.fg("muted", "  （快照预览，journal 未写入完整结果）"))
+      }
+      lines.push(...wrapByWidth(resultState.view.body, width).map((l) => truncateToWidth(l, width)))
+      if (resultState.view.truncated) {
+        lines.push(theme.fg("muted", `  （结果已截断，原始 ${(resultState.view.originalBytes / 1024).toFixed(1)} KB）`))
+      }
     }
     if (a.executions.length) {
       lines.push(theme.fg("muted", `-- attempts (${a.executions.length}) --`))
