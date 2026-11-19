@@ -159,6 +159,11 @@ export class ExplorerController {
     this.navigation.setPageSize(rows)
   }
 
+  /** 当前 run 是否有运行中节点（TUI 秒表 tick 用它决定是否真的重绘） */
+  hasRunningNodes(): boolean {
+    return this.tree?.hasRunning() ?? false
+  }
+
   /** 当前 run 的树模型（TUI 渲染与测试用） */
   get tree(): WorkflowTreeModel | undefined {
     return this.activeRunId ? this.trees.get(this.activeRunId) : undefined
@@ -180,6 +185,13 @@ export class ExplorerController {
 
   /** 当前视图快照（TUI 渲染的唯一入口） */
   view(): ExplorerViewState {
+    // 无头渲染入口（固定面板不经过 open）也要有当前 run：自动选默认 run（在途优先）并建树，
+    // 否则 onRuntimeEvent 会因 activeRunId 未定而丢弃全部事件，面板永远空（2026-11-19 实测 bug）。
+    // 幂等：activeRunId 有效时跳过；ensureTree 对已存在树早退。
+    if (!this.activeRunId || !this.runManager.getSnapshot(this.activeRunId)) {
+      this.activeRunId = this.pickDefaultRun()
+    }
+    if (this.activeRunId) this.ensureTree(this.activeRunId)
     const nav = this.navigation
     nav.pruneSelection()
     const rows = nav.visibleRows()
