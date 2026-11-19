@@ -2,6 +2,7 @@
 
 - 日期：2026-11-18
 - 架构基线：`dev-docs/design/workflow-engineering-framework.md`（五层框架、三条原则、六条陷阱约束——本文档全部任务受其约束）
+- 生产就绪审计：`dev-docs/troubleshooting/2026-11-18-m1-m5-production-readiness-audit.md`（2026-11-18 独立审计：M1-M5 库级实现完成，但 M2-M5 生产入口接线未完成；新增 M6 接线阶段）
 - 执行顺序：**M1 → M2 → M3 → M4 → M5 串行**，每阶段依赖前置交付物；PrdGameSkill 为贯穿全部阶段的真实测试项目
 - 依赖修正（2026-11-18 评审 P0-1）
 - 修订记录：2026-11-18 评审修订（M4/M5 依赖、M3 分层指纹与副作用四状态、M2 预算三分类、M1 置信度分级与规则接口、Plan 身份与 Profile、T7 授权边界、M5 指标替换）已全部落实并经二轮评审确认
@@ -19,11 +20,12 @@
 
 | 阶段 | 名称 | 核心交付 | 解决的问题 | 状态 |
 | --- | --- | --- | --- | --- |
-| M1 | Workflow Intelligence | Plan Schema + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 | **已完成**（2026-11-18，67 断言全 PASS，recall 100%/FPR 0%） |
-| M2 | Execution Governance | Budget 体系 + Plan 执行消费 + 运行指标 | 运行失控、成本不可控 | **已完成**（2026-11-18，58 断言全 PASS） |
-| M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | **已完成**（2026-11-18，27 断言+13 Benchmark 全 PASS） |
-| M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | **已完成**（2026-11-18，39 断言+11 Benchmark 全 PASS） |
-| M5 | Continuous Optimization | Evaluator + 性能基线 + 优化闭环 | 无法持续衡量与优化 | **已完成**（2026-11-18，23 断言+8 Benchmark 全 PASS） |
+| M1 | Workflow Intelligence | Plan Schema + Analyzer + Optimization Planner + Benchmark | 不知道 Workflow 为什么慢、如何改 | **库级实现完成，生产接线待 M6**（2026-11-18，67 断言全 PASS，recall 100%/FPR 0%） |
+| M2 | Execution Governance | Budget 体系 + Plan 执行消费 + 运行指标 | 运行失控、成本不可控 | **库级实现完成，生产接线待 M6**（2026-11-18，58 断言全 PASS） |
+| M3 | Reliable Execution | TaskRegistry + BatchExecutor + TaskCheckpoint | 大规模任务失败后重复执行 | **库级实现完成，生产接线待 M6**（2026-11-18，27 断言+13 Benchmark 全 PASS） |
+| M4 | Adaptive Execution | 输入分片/公共上下文执行 + AdaptiveScheduler + ModelPool 自适应 | 资源利用率与 token 浪费 | **库级实现完成，生产接线待 M6**（2026-11-18，39 断言+11 Benchmark 全 PASS） |
+| M5 | Continuous Optimization | Evaluator + 性能基线 + 优化闭环 | 无法持续衡量与优化 | **库级实现完成，生产接线待 M6**
+| M6 | Production Integration | Plan/Budget/Task/Adaptive/Evaluator 真实入口接线 + PrdGameSkill 实测 | 解决库级能力与生产执行断层 | **审计发现，待修复** |
 
 **全局约束**（适用于所有阶段，源自架构基线第五节）：
 
