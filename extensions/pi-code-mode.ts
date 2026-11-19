@@ -30,7 +30,12 @@ import {
   makeWorkflowControlTool,
   type WorkflowToolDeps,
 } from "../src/tools/workflow-tools.js"
-import { createPlannerAgent, createWorkflowAnalyzeTool, createWorkflowOptimizeTool } from "../src/tools/workflow-analyze-tool.js"
+import {
+  createPlannerAgent,
+  createWorkflowAnalyzeTool,
+  createWorkflowBenchmarkTool,
+  createWorkflowOptimizeTool,
+} from "../src/tools/workflow-analyze-tool.js"
 import { createPlanValidateTool } from "../src/tools/plan-tool.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 import { createRenderScheduler } from "../src/manager/render-scheduler.js"
@@ -163,6 +168,31 @@ export default function extension(pi: ExtensionAPI): void {
   pi.registerTool(createPlanValidateTool({ cwd: process.cwd() }) as any)
   // workflow_optimize：M5 优化闭环（默认独立工作区 + 授权闸门，不直接改生产）
   pi.registerTool(createWorkflowOptimizeTool({ cwd: process.cwd(), plannerAgent: createPlannerAgent({ cwd: process.cwd() }) }) as any)
+  // workflow_benchmark：M5 真实 before/after 对照——runOnce 复用 workflow 工具真实执行
+  const benchmarkWorkflowTool = makeWorkflowTool({ ...makeDeps(), deliver })
+  pi.registerTool(
+    createWorkflowBenchmarkTool({
+      cwd: process.cwd(),
+      runOnce: async ({ scriptPath, label, cwd }) => {
+        const started = Date.now()
+        const out: any = await benchmarkWorkflowTool.execute(
+          "bench",
+          { scriptPath, background: false },
+          undefined,
+          undefined,
+          {},
+        )
+        const durationMs = Date.now() - started
+        const text: string = out?.content?.[0]?.text ?? ""
+        const failed = /失败|failed/i.test(text) && !/\[workflow 完成\]/.test(text)
+        return {
+          durationMs,
+          ok: !failed && !out?.isError,
+          ...(failed ? { error: text.slice(0, 200) } : {}),
+        }
+      },
+    }) as any,
+  )
 
   // ---- schedule_* 工具族 ×8 + 调度循环（M4）----
   const scheduleDeps = makeDeps()

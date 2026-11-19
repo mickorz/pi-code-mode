@@ -19,6 +19,7 @@ import {
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
 import { runOptimizationLoop, renderLoopResult } from "../engine/evaluator/optimization-loop.js"
+import { runBenchmark, renderBenchmark, toEvaluation } from "../engine/evaluator/benchmark-runner.js"
 
 export interface AnalyzeInput {
   /** 脚本路径（与 source 二选一） */
@@ -204,6 +205,62 @@ export function createWorkflowAnalyzeTool(deps: {
       return {
         content: [{ type: "text" as const, text: `${summary}\n\n${result.rendered ?? ""}${result.reportPath ? `\n\n报告已写入：${result.reportPath}` : ""}` }],
       }
+    },
+  }
+}
+
+/**
+ * Pi 工具：workflow_benchmark（M6/4）
+ *
+ * 真实跑 before/after 两轮（由调用方注入 runOnce，通常复用 workflow 工具），
+ * 从 Plan 提取 Required Validation 并判定质量是否降级。不虚构收益。
+ */
+export function createWorkflowBenchmarkTool(deps: {
+  cwd?: string
+  /** 执行一轮（真实实现：调 workflow 工具；测试可注入 fake） */
+  runOnce?: (input: { scriptPath: string; label: "before" | "after"; cwd: string }) => Promise<{
+    durationMs: number
+    agents?: number
+    inputTokens?: number
+    outputTokens?: number
+    failedAgents?: number
+    validation?: { passed: string[]; failed: string[] }
+    ok: boolean
+    error?: string
+  }>
+}) {
+  return {
+    name: "workflow_benchmark",
+    label: "Benchmark Workflow",
+    description:
+      "对 workflow 跑 before/after 真实对照：从 Plan 提取强制验证项，判定是否有改善且质量未降级。未提供 runOnce 时返回明确错误（不伪造数据）。",
+    parameters: Type.Object({
+      scriptPath: Type.String({ description: "脚本路径（相对项目根）" }),
+      planPath: Type.Optional(Type.String({ description: "Plan 路径（提供则做 Required Validation 校验）" })),
+      profile: Type.Optional(Type.String({ description: "Profile 名（fast/balanced/quality）" })),
+    }),
+    async execute(_id: string, params: any) {
+      const cwd = deps.cwd ?? process.cwd()
+      if (!deps.runOnce) {
+        return {
+          content: [
+            { type: "text" as const, text: "未配置 benchmark 执行器：需要注入 runOnce（复用 workflow 工具执行真实 run），否则不会伪造数据。" },
+          ],
+          isError: true,
+        }
+      }
+      const loaded = params.planPath ? loadPlan({ scriptPath: params.scriptPath, cwd, explicitPath: params.planPath }) : { plan: null }
+      const result = await runBenchmark({
+        ...(loaded.plan ? { plan: loaded.plan } : {}),
+        ...(params.profile ? { mode: params.profile } : {}),
+        runOnce: (label) => deps.runOnce!({ scriptPath: params.scriptPath, label, cwd }),
+      })
+      const body = `${renderBenchmark(result)}
+
+\`\`\`json
+${JSON.stringify(toEvaluation(result, { runId: `bench-${Date.now()}` }), null, 2).slice(0, 1200)}
+\`\`\``
+      return { content: [{ type: "text" as const, text: body }], ...(result.accepted ? {} : { isError: false }) }
     },
   }
 }
