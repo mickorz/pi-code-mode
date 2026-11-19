@@ -117,3 +117,14 @@ test("analyze：--no-suggest 关闭 AI 建议（默认开启）", async () => {
   assert.match(out, /风险分/)
   assert.doesNotMatch(out, /AI 优化建议/, "关闭后不应出现 AI 建议行（静态建议仍保留）")
 })
+
+// ---- 挂起保护（2026-11-19 事故回归） ----
+import { createPlannerAgent } from "../../src/tools/workflow-analyze-tool.js"
+
+test("createPlannerAgent：1ms 超时必然抛错（证明超时通道生效，不依赖模型速度）", async () => {
+  const agent = createPlannerAgent({ cwd: tmp(), timeoutMs: 1 })
+  const started = Date.now()
+  // 1ms 内不可能完成一次模型往返 → 必走超时/失败分支；关键是「必须抛错而不是无限挂起」
+  await assert.rejects(async () => await agent("只回复 ok"))
+  assert.ok(Date.now() - started < 20_000, "必须在超时窗口内返回，不能长时间挂起")
+})
