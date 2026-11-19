@@ -47,7 +47,33 @@ export interface DashboardView {
   }
   summary: { totalFindings: number; counts: Record<string, number> }
   /** 全量规则检查清单（含未命中的）——用户核心诉求：能看出"检查了什么" */
-  rules: Array<{ id: string; severity: string; description: string; hits: number; status: "hit" | "pass" | "error"; error?: string }>
+  rules: Array<{
+    id: string
+    severity: string
+    description: string
+    hits: number
+    status: "hit" | "pass" | "error"
+    error?: string
+    /** AI 复核结论（未启用时缺省） */
+    aiStatus?: string
+    aiConfidence?: number
+    finalStatus?: string
+    note?: string
+  }>
+  /** AI Rule Check 摘要（状态、耗时、诊断） */
+  aiRuleCheck?: {
+    status: "completed" | "partial" | "failed" | "skipped"
+    durationMs?: number
+    checks: Array<{
+      ruleId: string
+      status: string
+      confidence: number
+      reason: string
+      error?: string
+      evidence: Array<{ file: string; startLine: number; endLine: number; quote: string }>
+    }>
+    diagnostics: string[]
+  }
   findings: Array<{
     severity: string
     ruleId: string
@@ -114,14 +140,21 @@ export function buildDashboardView(
         : {}),
     },
     summary: { totalFindings: report.summary.totalFindings, counts: report.summary.counts as Record<string, number> },
-    rules: report.ruleInventory.map((r) => ({
-      id: r.id,
-      severity: r.severity,
-      description: r.description,
-      hits: r.hits,
-      status: r.status,
-      ...(r.error ? { error: r.error } : {}),
-    })),
+    rules: report.ruleInventory.map((r) => {
+      const merged = report.ruleMerge?.find((m) => m.ruleId === r.id)
+      return {
+        id: r.id,
+        severity: r.severity,
+        description: r.description,
+        hits: r.hits,
+        status: r.status,
+        ...(r.error ? { error: r.error } : {}),
+        ...(merged?.aiStatus ? { aiStatus: merged.aiStatus } : {}),
+        ...(merged?.aiConfidence !== undefined ? { aiConfidence: merged.aiConfidence } : {}),
+        ...(merged?.finalStatus ? { finalStatus: merged.finalStatus } : {}),
+        ...(merged?.note ? { note: merged.note } : {}),
+      }
+    }),
     findings: report.findings.map((f) => ({
       severity: f.severity,
       ruleId: f.ruleId,
@@ -145,6 +178,21 @@ export function buildDashboardView(
     })),
     unknowns: report.dependencies.unknowns.map((u) => ({ line: u.line, id: u.id, reason: u.reason })),
     diagnostics: report.diagnostics,
+  }
+  if (report.aiRuleCheck) {
+    view.aiRuleCheck = {
+      status: report.aiRuleCheck.status,
+      ...(report.aiRuleCheck.durationMs !== undefined ? { durationMs: report.aiRuleCheck.durationMs } : {}),
+      checks: report.aiRuleCheck.checks.map((c) => ({
+        ruleId: c.ruleId,
+        status: c.status,
+        confidence: c.confidence,
+        reason: c.reason,
+        ...(c.error ? { error: c.error } : {}),
+        evidence: c.evidence,
+      })),
+      diagnostics: report.aiRuleCheck.diagnostics,
+    }
   }
   if (report.subtree && report.subtree.files > 1) {
     view.subtree = {

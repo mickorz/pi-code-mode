@@ -48,6 +48,11 @@ export interface TreeAnalysis {
   entry: AnalysisReport
   /** 全部子 workflow（不含入口） */
   subWorkflows: SubWorkflowSummary[]
+  /**
+   * 参与分析的源码（入口 + 子流程）。
+   * AI Rule Checker 需要完整源码做证据校验，但不希望把这些内容塞进 report（会撑大产物）。
+   */
+  sources: Array<{ file: string; content: string }>
   aggregate: {
     /** 参与分析的文件数（含入口） */
     files: number
@@ -127,6 +132,9 @@ export function analyzeWorkflowTree(opts: TreeAnalysisOptions): TreeAnalysis {
 
   const visited = new Set<string>([canonical(entryAbs)])
   const subWorkflows: SubWorkflowSummary[] = []
+  const sources: Array<{ file: string; content: string }> = [
+    { file: path.basename(entryAbs).split(path.sep).join("/"), content: entrySource },
+  ]
 
   /** 目录内兄弟 workflow（含 meta 的 .js），按文件名排序保证确定性 */
   const collectSiblings = (source: string, dir: string, depth: number): void => {
@@ -155,6 +163,7 @@ export function analyzeWorkflowTree(opts: TreeAnalysisOptions): TreeAnalysis {
       const rel = path.relative(path.dirname(entryDir), abs).split(path.sep).join("/")
       const report = buildReport({ source: src, file: rel, generatedAt: "T" })
       subWorkflows.push(summarize(report, rel))
+      sources.push({ file: rel, content: src })
       // 该子流程若引用子目录脚本，继续下探
       for (const ref of extractScriptRefs(src)) {
         const refAbs = path.resolve(dir, ref)
@@ -182,6 +191,7 @@ export function analyzeWorkflowTree(opts: TreeAnalysisOptions): TreeAnalysis {
   return {
     entry,
     subWorkflows,
+    sources,
     aggregate: {
       files: 1 + subWorkflows.length,
       callSites: entry.executionEstimate.callSites + subWorkflows.reduce((a, s) => a + s.callSites, 0),

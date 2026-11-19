@@ -24,6 +24,10 @@ import {
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
 import { analyzeWorkflowTree } from "../engine/analyzer/tree-analyzer.js"
+import { loadRuleDocs } from "../engine/analyzer/ai-rule-checker/rule-doc-loader.js"
+import { runAIRuleCheck } from "../engine/analyzer/ai-rule-checker/ai-rule-checker.js"
+import { mergeRuleResults } from "../engine/analyzer/ai-rule-checker/result-merger.js"
+import { toSourceFiles } from "../engine/analyzer/ai-rule-checker/prompt-builder.js"
 import type { Severity } from "../engine/analyzer/types.js"
 import { PiAgentAdapter } from "../adapter/pi-agent-adapter.js"
 import { runOptimizationLoop, renderLoopResult } from "../engine/evaluator/optimization-loop.js"
@@ -47,6 +51,13 @@ export interface AnalyzeInput {
   writeReport?: boolean
   /** 跨文件聚合：连同子 workflow 一起分析（缺省 true，仅 scriptPath 模式可用） */
   recursive?: boolean
+  /**
+   * AI Rule Check（默认开启，需注入 agent）：读 rule.md + 源码逐条独立判定。
+   * 与 plannerAgent 的区别：plannerAgent 只基于静态结论给建议，ruleCheckAgent 才做规则检查。
+   */
+  ruleCheckAgent?: (prompt: string) => Promise<string>
+  /** 显式关闭 AI Rule Check（缺省按 ruleCheckAgent 是否存在决定） */
+  includeRuleCheck?: boolean
 }
 
 export interface AnalyzeResult {
@@ -83,9 +94,12 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
 
   // 跨文件聚合（默认开）：真实 workflow 常是「壳 + 子流程」，
   // 只分析入口会得出「风险很低」的假象（PrdGameSkill 壳 714 行 / 子流程合计 3513 行）。
+  /** AI Rule Check 用的源码集合（入口 + 子流程） */
+  let checkSources: Array<{ file: string; content: string }> = [{ file: file ?? "(inline)", content: source }]
   if (file && input.recursive !== false) {
     try {
       const tree = analyzeWorkflowTree({ entryPath: path.resolve(cwd, file) })
+      checkSources = tree.sources
       if (tree.subWorkflows.length > 0) {
         // P0 统一口径（2026-11-19）：顶层 findings/ruleInventory/summary 改为 aggregate，
         // entry 明细单独保留。此前 Dashboard 自己合并、Markdown 用入口口径，
@@ -149,6 +163,55 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
     const loaded = loadPlan({ scriptPath: file, cwd })
     if (loaded.path) {
       planInfo = { path: loaded.path, stale: loaded.stale, defaultProfile: loaded.defaultProfile, notes: loaded.notes }
+    }
+  }
+
+  // ---- AI Rule Check（默认开启）----
+  // 与下方 Planner 的区别：这里让模型**按 rule.md 独立判定**每条规则，
+  // 因此能发现静态正则/AST 看不见的问题（如跨函数数据流、确定性 IO 代理）。
+  const wantRuleCheck = input.includeRuleCheck !== false && Boolean(input.ruleCheckAgent)
+  if (wantRuleCheck && input.ruleCheckAgent) {
+    try {
+      const loaded = loadRuleDocs()
+      for (const p of loaded.problems) report.diagnostics.push(`规则文档：${p}`)
+      if (loaded.rules.length > 0) {
+        const staticSummary = [
+          `风险分 ${report.summary.riskScore}/100，聚合 ${report.summary.totalFindings} 条 finding，${report.subtree?.files ?? 1} 个文件。`,
+          "静态规则结果：" +
+            report.ruleInventory
+              .map((r) => `${r.id}=${r.status === "error" ? "error" : r.hits > 0 ? `hit(${r.hits})` : "pass"}`)
+              .join(", "),
+          ...report.findings.slice(0, 12).map(
+            (f) => `- ${f.ruleId} ${f.severity} ${f.location.file ?? "(entry)"}:${f.location.startLine}-${f.location.endLine} ${f.evidence[0] ?? ""}`,
+          ),
+        ].join("\n")
+        const aiResult = await runAIRuleCheck({
+          rules: loaded.rules,
+          sources: toSourceFiles(checkSources),
+          staticSummary,
+          plannerAgent: input.ruleCheckAgent,
+        })
+        report = {
+          ...report,
+          aiRuleCheck: {
+            status: aiResult.status,
+            ...(aiResult.durationMs !== undefined ? { durationMs: aiResult.durationMs } : {}),
+            checks: aiResult.checks.map((c) => ({
+              ruleId: c.ruleId,
+              status: c.status,
+              confidence: c.confidence,
+              reason: c.reason,
+              ...(c.error ? { error: c.error } : {}),
+              evidence: c.evidence,
+            })),
+            diagnostics: aiResult.diagnostics,
+          },
+          ruleMerge: mergeRuleResults(report.ruleInventory, aiResult.checks),
+        }
+        for (const d of aiResult.diagnostics) report.diagnostics.push(`AI 规则检查：${d}`)
+      }
+    } catch (e) {
+      report.diagnostics.push(`AI 规则检查失败（静态结果仍有效）：${String((e as Error)?.message ?? e).slice(0, 200)}`)
     }
   }
 

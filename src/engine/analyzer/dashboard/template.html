@@ -189,15 +189,52 @@
     var h = '<div class="card"><h2>规则检查清单</h2>' +
       '<div class="note">共 ' + D.rules.length + ' 条规则全部执行：命中 ' + byStatus.hit.length +
       ' 条、通过 ' + byStatus.pass.length + ' 条、执行失败 ' + byStatus.error.length + ' 条。' +
-      '「通过」表示该规则检查过且未发现问题，不是没检查。</div>' +
-      '<table><thead><tr><th>规则</th><th>严重度</th><th>结果</th><th>检查项</th></tr></thead><tbody>';
+      '「通过」表示该规则检查过且未发现问题，不是没检查。静态列为程序规则结果，AI 复核列为模型按规则文档独立判定。</div>' +
+      '<table><thead><tr><th>规则</th><th>严重度</th><th>静态</th><th>AI 复核</th><th>最终</th><th>检查项</th></tr></thead><tbody>';
+    var AI_LABEL = { hit: 'hit', pass: 'pass', 'uncertain': '待确认', 'not-applicable': '不适用', error: '失败' };
+    var FINAL_CLASS = { pass: 'pass', 'static-hit': 'hit', 'ai-hit': 'ai', both: 'ai', conflict: 'err', uncertain: 'hit', error: 'err' };
     D.rules.forEach(function (r) {
       var res = r.status === 'error' ? tag('err', '执行失败')
         : r.hits > 0 ? tag('hit', '命中 ' + r.hits) : tag('pass', '通过');
+      var ai = r.aiStatus
+        ? tag(r.aiStatus === 'hit' ? 'ai' : (r.aiStatus === 'pass' ? 'pass' : (r.aiStatus === 'error' ? 'err' : 'hit')),
+              AI_LABEL[r.aiStatus] || r.aiStatus) + (r.aiConfidence !== undefined ? ' <span class="muted">' + r.aiConfidence.toFixed(2) + '</span>' : '')
+        : '<span class="muted">未启用</span>';
+      var fin = r.finalStatus ? tag(FINAL_CLASS[r.finalStatus] || 'pass', r.finalStatus) : '<span class="muted">-</span>';
       h += '<tr><td><code>' + esc(r.id) + '</code></td><td>' + sevTag(r.severity) + '</td><td>' + res +
-        '</td><td>' + esc(r.description) + (r.error ? '<div class="muted">错误：' + esc(r.error) + '</div>' : '') + '</td></tr>';
+        '</td><td>' + ai + '</td><td>' + fin + '</td><td>' + esc(r.description) +
+        (r.note ? '<div class="muted">' + esc(r.note) + '</div>' : '') +
+        (r.error ? '<div class="muted">错误：' + esc(r.error) + '</div>' : '') + '</td></tr>';
     });
     h += '</tbody></table></div>';
+
+    if (D.aiRuleCheck) {
+      var a = D.aiRuleCheck;
+      var STAT = { completed: '已完成', partial: '部分完成', failed: '失败', skipped: '跳过' };
+      h += '<div class="card"><h2>' + tag('ai', 'AI Rule Check') + ' ' + esc(STAT[a.status] || a.status) +
+        (a.durationMs ? ' <span class="muted">耗时 ' + (a.durationMs / 1000).toFixed(1) + 's</span>' : '') +
+        '</h2>';
+      if (a.diagnostics.length) {
+        h += '<div class="note">诊断：<ul>' + a.diagnostics.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+      }
+      var aiHit = a.checks.filter(function (c) { return c.status === 'hit'; });
+      var aiUnc = a.checks.filter(function (c) { return c.status === 'uncertain'; });
+      h += '<div class="filters"><span class="muted">命中 ' + aiHit.length + ' / 待确认 ' + aiUnc.length + ' / 共 ' + a.checks.length + ' 条</span></div>';
+      a.checks.forEach(function (c) {
+        if (c.status === 'pass') return;
+        h += '<details' + (c.status === 'hit' ? ' open' : '') + '><summary>' +
+          tag(c.status === 'hit' ? 'ai' : (c.status === 'error' ? 'err' : 'hit'), c.status) +
+          ' <code>' + esc(c.ruleId) + '</code> <span class="muted">置信度 ' + c.confidence.toFixed(2) +
+          ' · 证据 ' + c.evidence.length + ' 条</span></summary>' +
+          (c.reason ? '<div>' + esc(c.reason) + '</div>' : '') +
+          (c.error ? '<div class="muted">' + esc(c.error) + '</div>' : '') +
+          c.evidence.map(function (e) {
+            return '<div class="muted">' + esc(e.file) + ' L' + e.startLine + '-' + e.endLine + '</div><pre>' + esc(e.quote) + '</pre>';
+          }).join('') +
+          '</details>';
+      });
+      h += '</div>';
+    }
     el('v-rules').innerHTML = h;
   })();
 

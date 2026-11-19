@@ -98,6 +98,34 @@ export interface AnalysisReport {
   findings: AnalysisFindingWithSnippet[]
   recommendations: Recommendation[]
   diagnostics: string[]
+  /** AI Rule Check 结果（默认开启；未启用或为空时缺省） */
+  aiRuleCheck?: {
+    status: "completed" | "partial" | "failed" | "skipped"
+    durationMs?: number
+    checks: Array<{
+      ruleId: string
+      status: "hit" | "pass" | "uncertain" | "not-applicable" | "error"
+      confidence: number
+      reason: string
+      error?: string
+      evidence: Array<{ file: string; startLine: number; endLine: number; quote: string }>
+    }>
+    diagnostics: string[]
+  }
+  /** 静态 × AI 合并后的规则结论（报告与 Dashboard 的规则表来源） */
+  ruleMerge?: Array<{
+    ruleId: string
+    severity: string
+    description: string
+    staticStatus: "hit" | "pass" | "error"
+    staticHits: number
+    staticError?: string
+    aiStatus?: string
+    aiConfidence?: number
+    aiEvidenceCount: number
+    finalStatus: string
+    note?: string
+  }>
   /** 跨文件聚合（分析入口 + 子 workflow 时填充） */
   subtree?: {
     files: number

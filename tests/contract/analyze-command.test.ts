@@ -30,7 +30,7 @@ await agent('复核' + JSON.stringify(all))
 return 'ok'`,
   )
   const { notes, ctx } = ctxWith(dir)
-  await analyzeSubcommand.run(["wf.js", "--no-suggest", "--no-open"], ctx, deps)
+  await analyzeSubcommand.run(["wf.js", "--no-suggest", "--no-open", "--no-rule-check"], ctx, deps)
   const out = notes.at(-1)!.text
   assert.match(out, /风险分 \d+\/100/)
   assert.match(out, /调用点 2/)
@@ -40,7 +40,7 @@ test("analyze：完整报告落盘到 .pi/workflows/reports/", async () => {
   const dir = tmp()
   fs.writeFileSync(path.join(dir, "wf2.js"), "export const meta = { name: 'demo2' }\nawait agent('x')\nreturn 'ok'")
   const { notes, ctx } = ctxWith(dir)
-  await analyzeSubcommand.run(["wf2.js", "--no-suggest", "--no-open"], ctx, deps)
+  await analyzeSubcommand.run(["wf2.js", "--no-suggest", "--no-open", "--no-rule-check"], ctx, deps)
   assert.ok(fs.existsSync(path.join(dir, ".pi", "workflows", "reports", "wf2.analysis.md")), "md 报告应落盘")
   assert.ok(fs.existsSync(path.join(dir, ".pi", "workflows", "reports", "wf2.analysis.json")), "json 报告应落盘")
   const dashDir = path.join(dir, ".pi", "workflows", "reports", "dashboard")
@@ -69,6 +69,8 @@ test("analyze：usage 声明别名与关键开关", () => {
   assert.match(analyzeSubcommand.usage, /别名 anal/)
   assert.match(analyzeSubcommand.usage, /--no-suggest/)
   assert.match(analyzeSubcommand.usage, /--no-open/)
+  assert.match(analyzeSubcommand.usage, /--no-rule-check/)
+  assert.match(analyzeSubcommand.usage, /AI规则检查/)
   assert.match(analyzeSubcommand.usage, /Dashboard/)
 })
 
@@ -120,7 +122,7 @@ test("analyze：--no-suggest 关闭 AI 建议（默认开启）", async () => {
   const dir = tmp()
   fs.writeFileSync(path.join(dir, "wf3.js"), "export const meta = { name: 'demo3' }\nawait agent('x')\nreturn 'ok'")
   const { notes, ctx } = ctxWith(dir)
-  await analyzeSubcommand.run(["wf3.js", "--no-suggest", "--no-open"], ctx, deps)
+  await analyzeSubcommand.run(["wf3.js", "--no-suggest", "--no-open", "--no-rule-check"], ctx, deps)
   const out = notes.at(-1)!.text
   assert.match(out, /风险分/)
   assert.doesNotMatch(out, /AI 优化建议/, "关闭后不应出现 AI 建议行（静态建议仍保留）")

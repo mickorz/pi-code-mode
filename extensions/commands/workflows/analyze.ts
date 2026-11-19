@@ -98,7 +98,7 @@ function renderSummary(input: {
 }
 
 export const analyzeSubcommand: Subcommand = {
-  usage: "analyze <路径|名> [--no-suggest] [--no-open]  静态分析+AI建议+Dashboard（别名 anal）",
+  usage: "analyze <路径|名> [--no-suggest] [--no-rule-check] [--no-open]  静态+AI规则检查+AI建议+Dashboard（别名 anal）",
   async run(argv, ctx, deps) {
     try {
       await runAnalyze(argv, ctx, deps)
@@ -132,11 +132,15 @@ ${ref}`, "info")
 
     // 两段式：静态结果先出（毫秒级），AI 建议随后单独推送。
     // 这样模型慢/超时也不影响用户看到核心结论（历史问题：默认含 AI 时整体要等满超时）。
+    // AI Rule Check / AI 建议都在第二阶段执行：静态结果先出（百毫秒级），
+    // 否则用户要等 4~6 分钟才看到任何东西（实测 9 条规则 AI 复核约 5 分钟）。
+    const withRuleCheck = !flags.has("--no-rule-check")
     let result = await analyzeWorkflow({
       source: resolved.source,
       ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
       cwd,
       includeSuggestions: false,
+      includeRuleCheck: false,
       format: flags.has("--json") ? "json" : "md",
     })
 
@@ -187,17 +191,28 @@ ${ref}`, "info")
     })
     ctx.ui.notify(summary, "info")
 
-    if (withSuggestions) {
+    if (withSuggestions || withRuleCheck) {
       // AI 阶段：失败/超时只提示，不影响已给出的静态结论
       try {
         const ai = await analyzeWorkflow({
           source: resolved.source,
           ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
           cwd,
-          includeSuggestions: true,
-          plannerAgent: createPlannerAgent({ cwd }),
+          includeSuggestions: withSuggestions,
+          ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd }) } : {}),
+          includeRuleCheck: withRuleCheck,
+          ...(withRuleCheck ? { ruleCheckAgent: createPlannerAgent({ cwd }) } : {}),
           format: "md",
         })
+        const rc = ai.report?.aiRuleCheck
+        const ruleCheckSummary = rc
+          ? `AI 规则检查 ${rc.status === "completed" ? "全部完成" : rc.status === "partial" ? "部分完成" : "失败"}` +
+            `（${rc.checks.filter((c) => c.status === "hit").length} 命中 / ` +
+            `${rc.checks.filter((c) => c.status === "uncertain").length} 待确认 / ` +
+            `${rc.checks.filter((c) => c.status === "error").length} 失败` +
+            `${rc.durationMs !== undefined ? `，${(rc.durationMs / 1000).toFixed(0)}s` : ""}）`
+          : ""
+
         if (ai.planner && ai.planner.proposals.length > 0) {
           // 覆盖报告与 dashboard（同一份 HTML 更新为「含 AI」版本，不新建 -02）
           const aiWritten = writeReports(cwd, ref, ai, {
@@ -207,7 +222,7 @@ ${ref}`, "info")
           })
           reportPath = aiWritten.mdPath ?? reportPath
           dashboardPath = aiWritten.dashboardPath ?? dashboardPath
-          const lines = [`AI 优化建议 ${ai.planner.proposals.length} 条：`]
+          const lines = [...(ruleCheckSummary ? [ruleCheckSummary, ""] : []), `AI 优化建议 ${ai.planner.proposals.length} 条：`]
           for (const p of ai.planner.proposals.slice(0, 5)) {
             lines.push(`- [${p.severity}] ${p.title}`)
             lines.push(`  ${p.proposal.action.slice(0, 120)}`)
@@ -218,9 +233,22 @@ ${ref}`, "info")
           if (dashboardPath) lines.push(`Dashboard：${dashboardPath}`)
           ctx.ui.notify(lines.join("\n"), "info")
         } else {
+          // 没有 Planner 建议但可能有 AI 规则检查结果：仍需落盘（否则 Dashboard 看不到 rule check）
+          if (rc) {
+            const written2 = writeReports(cwd, ref, ai, {
+              aiEnabled: true,
+              ...(dashboardPath ? { overwriteDashboard: dashboardPath } : {}),
+            })
+            reportPath = written2.mdPath ?? reportPath
+            dashboardPath = written2.dashboardPath ?? dashboardPath
+          }
           const diag = ai.report?.diagnostics.find((d) => /AI 建议/.test(d))
           ctx.ui.notify(
-            `AI 建议未生成${diag ? `：${diag}` : "（模型未给出可校验的结构化建议）"}；静态分析结果已在上方。`,
+            [
+              ...(ruleCheckSummary ? [ruleCheckSummary] : []),
+              `AI 建议未生成${diag ? `：${diag}` : "（模型未给出可校验的结构化建议）"}；静态分析结果已在上方。`,
+              ...(dashboardPath ? [`Dashboard：${dashboardPath}`] : []),
+            ].join("\n"),
             "warning",
           )
         }
