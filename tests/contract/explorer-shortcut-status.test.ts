@@ -170,3 +170,38 @@ test("A1: 快捷键与状态行在 extension 装配期真实注册（ctrl+b + se
   assert.ok((handlers.get("session_start") ?? []).length > 0, "session_start 钩子已接（状态行安装点）")
   assert.ok((handlers.get("session_shutdown") ?? []).length > 0, "session_shutdown 钩子已接（状态行卸载点）")
 })
+
+test("A1: overlay 打开时 Ctrl+B 字节在组件内部直接关闭（全局快捷键此时不派发）", async () => {
+  const { explorer } = seededExplorer()
+  const { ui, state } = fakeUi()
+  assert.equal(await toggleExplorer(explorer, ui), "opened")
+  await new Promise((r) => setTimeout(r, 5))
+  assert.equal(isExplorerOpen(), true)
+
+  // 宿主 showOverlay 抢焦点后，editor 的 onExtensionShortcut 不再收到输入，
+  // 所以关闭必须由组件自己拦 Ctrl+B（0x02）
+  state.component.handleInput("")
+  await new Promise((r) => setTimeout(r, 5))
+
+  assert.equal(isExplorerOpen(), false, "面板已关闭")
+  assert.equal(explorer.isVisible, false, "视图已隐藏")
+  // 关闭后仍可再用同一按键重新打开
+  assert.equal(await toggleExplorer(explorer, ui), "opened")
+  await new Promise((r) => setTimeout(r, 5))
+  assert.equal(state.customCalls, 2, "重新打开生成新 overlay")
+  explorer.dispose()
+  closeExplorer()
+})
+
+test("A1: 普通字符不会误关面板（只有 0x02 是 ctrl+b）", async () => {
+  const { explorer } = seededExplorer()
+  const { ui, state } = fakeUi()
+  await toggleExplorer(explorer, ui)
+  await new Promise((r) => setTimeout(r, 5))
+  state.component.handleInput("b")
+  assert.equal(isExplorerOpen(), true, "单独字符 b 不关闭面板")
+  state.component.handleInput("") // ctrl+c，未绑定 -> 也不关
+  assert.equal(isExplorerOpen(), true)
+  explorer.dispose()
+  closeExplorer()
+})

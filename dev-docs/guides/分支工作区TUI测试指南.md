@@ -86,7 +86,8 @@ npm run test:engine    # 引擎语义（含 runTool / composite / resume）
    - 或 `/workflows run <脚本路径|注册表名>`。
 3. 打开面板（两种入口都可用）：
 
-   - **快捷键 `Ctrl+B`**：一键开关（对齐 IDE 手感，不用记命令）
+   - **快捷键 `Ctrl+B`**：一键开关（对齐 IDE 手感，不用记命令）；**面板打开时再按 `Ctrl+B` 即关闭**
+     （注意：若你的终端把 `Ctrl+B` 当 tmux 前缀，需先按两次前缀或在别处改键）
    - 或斜杠命令：
 
    ```text
@@ -109,7 +110,7 @@ npm run test:engine    # 引擎语义（含 runTool / composite / resume）
    | ---- | ---- |
    | 启动后可见标题 | 面板标题为 `Workflow Explorer`（证明加载的是本分支代码） |
    | 不打开面板时 | 底部状态区出现在途 run 单行进度（如 `workflow 需求分析 1/2 · 1 running`），跑完自动消失 |
-   | `Ctrl+B` | 打开面板；再按一次尝试关闭（若 overlay 抢占焦点导致无效，用 `q`/`Esc`） |
+   | `Ctrl+B` | 打开面板；**面板打开时再按一次关闭**（同一键双向） |
    | `Tab` / `Shift+Tab` | 在 Workflow / Agents / Tools / Journal 之间切换 |
    | `↑` `↓`（或 `j` `k`） | 树内移动；非 Workflow Tab 在列表内移动且有高亮 |
    | `→` | 展开子节点；已展开则进入第一个子节点；无子节点则进详情 |

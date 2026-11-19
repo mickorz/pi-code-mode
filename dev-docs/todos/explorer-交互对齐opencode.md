@@ -30,8 +30,10 @@
 `extensions/pi-code-mode.ts`（ctrl+b + session_start/shutdown 接线）、
 `tests/contract/explorer-shortcut-status.test.ts`（6 用例，contract 134 → 140）。
 
-已知限制（实测前需确认）：overlay 获得键盘焦点时，宿主是否仍派发全局快捷键；
-若不派发，面板打开时仍需用 `q`/`Esc` 关闭，`ctrl+b` 只负责"打开"。
+**Ctrl+B 双向生效（已解决）**：pi 的全局快捷键只挂在 default editor 的 `onExtensionShortcut` 上，
+`showOverlay` 会 `setFocus(component)` 抢走焦点，因此面板打开时全局 ctrl+b 不会派发。
+处理方式：overlay 组件在 `handleInput` 里自己拦 Ctrl+B 字节（``）并关闭——
+"同一个键打开、再按关闭"成立，同时保留 `q`/`Esc`。
 
 非目标：不改布局、不改 Tab、不动导航键位。
 

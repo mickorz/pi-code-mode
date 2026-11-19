@@ -64,6 +64,13 @@ export async function openExplorer(explorer: ExplorerController, ui: any, option
 
     /** 原始字节 → 逻辑键 → Controller 导航状态机 */
     const handleKeyData = (data: string): void => {
+      // Ctrl+B（0x02）：宿主全局快捷键只挂在 default editor 的 onExtensionShortcut 上，
+      // overlay 抢焦点后 editor 拿不到输入 -> 全局 ctrl+b 不会触发。
+      // 这里自己拦一次，"面板已打开时再按 ctrl+b 关闭"才能成立（与打开用同一个键）。
+      if (data === "") {
+        close()
+        return
+      }
       const key = mapKey(data)
       if (key === "unknown") return
       // j/k 为 up/down 别名（与 Navigator/watch 一致的手感）
