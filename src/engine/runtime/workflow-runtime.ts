@@ -50,6 +50,7 @@ import { evaluate, type EvaluationReport } from "../evaluator/evaluator.js"
 import { BaselineStore } from "../evaluator/baseline-store.js"
 import type { WorkflowPlan } from "../plan/schema.js"
 import { TaskRegistry } from "../governance/task-registry.js"
+import { BatchExecutor } from "../governance/batch-executor.js"
 import { computeTaskFingerprint, contentHash } from "../governance/task-fingerprint.js"
 import type { BudgetGate } from "../governance/budget-gate.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
@@ -144,6 +145,8 @@ export interface WorkflowRunOptions {
   taskRegistry?: TaskRegistry
   /** M6/M4：可选历史耗时画像；parallel 有画像时长任务先发（不改变结果顺序） */
   adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/M4：parallel 自动任务化接入 BatchExecutor 的阈值（启用 taskRegistry 时生效；缺省 8） */
+  autoShardThreshold?: number
   /** M6/M5：完成后评估并写 BaselineStore（可选生产接线） */
   evaluationPlan?: WorkflowPlan
   baselineStore?: BaselineStore
@@ -248,6 +251,8 @@ interface SharedRunContext {
   taskRegistry?: TaskRegistry
   /** M6/M4：自适应耗时画像 */
   adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/M4：parallel 自动分片阈值 */
+  autoShardThreshold?: number
   /** M6/M5：评估/基线接线 */
   evaluationPlan?: WorkflowPlan
   baselineStore?: BaselineStore
@@ -328,6 +333,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     taskRegistry: options.taskRegistry,
     taskResume: options.taskResume ?? false,
     adaptiveProfiles: options.adaptiveProfiles,
+    autoShardThreshold: options.autoShardThreshold ?? 8,
     evaluationPlan: options.evaluationPlan,
     baselineStore: options.baselineStore,
     evaluationInputScale: options.evaluationInputScale,
@@ -1064,6 +1070,37 @@ async function executeWorkflow(
     if (thunks.some((thunk) => typeof thunk !== "function")) {
       throw new TypeError("parallel() 期望函数数组而非 Promise 数组，请用 () => agent(...) 包裹")
     }
+    // M6/2：taskRegistry 启用且任务数达阈值 → 走 BatchExecutor（跨 run 复用 + 租约 + 超时）
+    if (shared.taskRegistry && thunks.length >= (shared.autoShardThreshold ?? 8)) {
+      const executor = new BatchExecutor({
+        workflowId: `${shared.runId}:parallel:${scope.pathKeys?.join(".") ?? "root"}`,
+        runId: shared.runId,
+        cwd: shared.cwd,
+        storageDir: path.join(shared.cwd, ".pi", "workflows", "tasks"),
+        concurrency: shared.scheduler.getConcurrency(),
+        resume: shared.taskResume === true,
+      })
+      const batch = await executor.run(
+        thunks.map((thunk, index) => ({
+          taskKey: `p:${scope.pathKeys?.join(".") ?? "root"}:${index}`,
+          fingerprint: { promptHash: contentHash(`parallel:${index}:${thunks.length}`) },
+          run: async () => {
+            try {
+              return await thunk()
+            } catch (error) {
+              if (isAborted()) throw error
+              const workflowError = wrapError(error)
+              if (!workflowError.recoverable) throw workflowError
+              log(`parallel[${index}] 失败: ${workflowError.message}`)
+              return null
+            }
+          },
+        })),
+      )
+      log(`parallel 自动任务化：${batch.stats.total} 任务，复用 ${batch.stats.reused}，失败 ${batch.stats.failed}`)
+      return batch.outcomes.map((o) => (o.status === "done" ? o.value : null))
+    }
+
     // M6/M4：有历史画像时长任务先发；返回值仍按原索引顺序，业务语义不变。
     const order = thunks.map((_, index) => index)
     if (shared.adaptiveProfiles && shared.adaptiveProfiles.size > 0) {
