@@ -18,6 +18,8 @@ export interface OpenExplorerOptions {
   runId?: string
   /** overlay 宽度（缺省 60%；窄终端调 92%） */
   width?: string
+  /** 秒表/流式重绘间隔毫秒（缺省 1000；测试可调小） */
+  tickMs?: number
 }
 
 /** 当前打开中的 overlay 关闭句柄（模块级单例；同一时刻最多一个面板） */
@@ -61,6 +63,14 @@ export async function openExplorer(explorer: ExplorerController, ui: any, option
     }
     const requestRender = () => tui.requestRender()
     const bodyRows = (): number => Math.max(8, Math.floor((tui?.terminal?.rows ?? 24) * 0.9) - 3)
+
+    // 秒表 tick：只在「有运行中节点」时才真的重绘（空闲时是空转检查，无渲染开销）。
+    // 运行中节点的耗时按 startedAt 现算，因此需要周期性重绘才能"走字"。
+    const tickMs = Math.max(50, options.tickMs ?? 1000)
+    const tick = setInterval(() => {
+      if (explorer.hasRunningNodes()) requestRender()
+    }, tickMs)
+    ;(tick as { unref?: () => void }).unref?.()
 
     /** 原始字节 → 逻辑键 → Controller 导航状态机 */
     const handleKeyData = (data: string): void => {
@@ -126,6 +136,7 @@ export async function openExplorer(explorer: ExplorerController, ui: any, option
       },
       dispose(): void {
         // 只释放视图，不销毁状态（再次打开要恢复选中节点）
+        clearInterval(tick)
         if (activeClose === close) activeClose = undefined
         explorer.hide()
       },

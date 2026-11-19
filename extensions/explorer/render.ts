@@ -53,6 +53,16 @@ function fmtDuration(ms?: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`
 }
 
+/** 树行时长：运行中按 startedAt 现算（配合 tick 每秒增长），终态用 durationMs */
+function rowDuration(node: WorkflowTreeNode, now: number): string {
+  if (node.status === "running") {
+    const from = node.startedAt
+    if (from == null) return ""
+    return `${((now - from) / 1000).toFixed(1)}s`
+  }
+  return fmtDuration(node.durationMs)
+}
+
 /** 按显示宽度硬换行（中文按 2 列计，交给 visibleWidth） */
 export function wrapByWidth(text: string, width: number): string[] {
   const out: string[] = []
@@ -77,7 +87,7 @@ export function wrapByWidth(text: string, width: number): string[] {
 function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, selected: boolean, expanded: boolean, theme: ThemeLike): string {
   const marker = node.children.length ? (expanded ? "v" : ">") : " "
   const icon = KIND_ICON[node.kind] ?? "?"
-  const dur = fmtDuration(node.durationMs)
+  const dur = rowDuration(node, Date.now())
   const head = `${"  ".repeat(Math.min(depth, 8))}${marker}${icon} ${statusIcon(node.status)} ${node.label}`
   const tail = dur ? `  ${dur}` : ""
   const text = truncateToWidth(head + tail, width - 2)
@@ -121,7 +131,14 @@ function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: Them
       outputPreview: node.metadata?.outputPreview,
     })
     lines.push(theme.fg("muted", "-- result --"))
-    if (resultState.state === "error") {
+    const live = node.status === "running" ? node.metadata?.partialOutput : undefined
+    if (live) {
+      // 流式尾部（B）：只显示最后若干行，避免长输出把详情撑爆
+      const liveLines = wrapByWidth(live, width)
+      const shown = liveLines.slice(-12)
+      lines.push(theme.fg("muted", `  （实时输出，未完成 · 尾部 ${(Buffer.byteLength(live, "utf8") / 1024).toFixed(1)}KB）`))
+      lines.push(...shown.map((l) => truncateToWidth(l, width)))
+    } else if (resultState.state === "error") {
       lines.push(...wrapByWidth(theme.fg("accent", `错误: ${resultState.message}`), width).map((l) => truncateToWidth(l, width)))
     } else if (resultState.state === "pending") {
       lines.push(theme.fg("muted", "  （运行中，暂无结果）"))

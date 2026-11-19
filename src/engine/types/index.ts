@@ -137,6 +137,11 @@ export interface AgentRecord {
   timeoutMs?: number | null
   /** 本次尝试的起始时间戳（每次 attempt 重置；运行计时按此显示 1s/8s 而非累计 9s/8s，#33 修正） */
   attemptStartedAt?: number
+  /**
+   * 运行中的流式输出尾部（方案 B；仅展示，**绝不进 journal、绝不参与 hash**）。
+   * 有界（8KB 尾部），终态后由 journal 的完整 result 取代。
+   */
+  partialOutput?: string
 }
 
 /** Composite 组合节点执行记录（P2-3 观测；与 AgentRecord 同源的展示元数据，不进 journal key） */

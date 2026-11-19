@@ -96,6 +96,16 @@ REF-001 的 `result-view.ts` 语义已对齐（`src/explorer/repository/result-v
 模型也不遵守"每行接近 200 字符"——截断路径只能由单测确定性覆盖，验收脚本已注明不要依赖它触发；
 `model` 字段为空是「用会话默认模型」的正常表现（未显式指定 model/tier 时不写该字段）。
 
+## 4.6 E —— 运行期流式输出与秒表（已完成 2026-11-19）
+
+- [x] E1 树行 running 节点按 `startedAt` 现算秒表（配合 1s tick）
+- [x] E2 真流式：adapter 订阅 `message_update.text_delta` → 8KB 有界尾部 + 500ms 节流 → `AgentEvent.partial`
+      → `AgentRecord.partialOutput` → 详情 `（实时输出，未完成）`
+- [x] E3 语义安全：partial 不进 journal / 不进 hash（测试锁死）
+- [x] E4 空闲零渲染：`hasRunning()` 为假时 tick 不重绘（测试锁死）
+
+分析与实测见 `dev-docs/research/2026-11-19-explorer渐进刷新差异分析.md`（含 11 次采样证据）。
+
 ## 5. 执行顺序
 
 1. **A**（当前）→ 验证手感

@@ -793,6 +793,12 @@ async function executeWorkflow(
                 record.sessionId = sessionId
                 shared.onAgentUpdate?.(record)
               },
+              // 方案 B：流式尾部只挂到 record（展示用），经 onAgentUpdate 走既有 agent.updated 通道
+              // （RunManager 侧 progress 500ms 节流；绝不写 journal/hash）
+              onPartial: (tail: string) => {
+                record.partialOutput = tail
+                shared.onAgentUpdate?.(record)
+              },
             }
             const execution = await withTimeout(shared.agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
               attemptController.abort(),

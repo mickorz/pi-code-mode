@@ -32,6 +32,11 @@ export interface AgentRunOptions {
   /** Adapter 建完子会话后立即回调（F-20：running 态就能拿到 sessionId 供 TUI 导航） */
   onSessionCreated?: (sessionId: string) => void
   /**
+   * 运行中的流式输出（节流后的尾部文本；方案 B）。
+   * 仅用于 TUI 展示：Runtime 只把它挂到 AgentRecord.partialOutput，不进 journal/hash。
+   */
+  onPartial?: (tail: string) => void
+  /**
    * Runtime 注入的本 attempt 执行标识（v5：与 Runtime 的 executionId 体系贯通，
    * 格式 runId:callIndex:attempt）；缺省时 Adapter 自造 UUID 兼容旧调用方。脚本不可见。
    */

@@ -55,6 +55,8 @@ export interface AgentResult {
 
 export type AgentEvent =
   | { type: "session-created"; executionId: string; sessionId: string }
+  /** 流式输出尾部快照（节流后推送；仅展示用，绝不落盘/不参与 hash） */
+  | { type: "partial"; executionId: string; text: string }
   | { type: "attempt"; executionId: string; attempt: number }
   | { type: "record"; executionId: string; record: Record<string, unknown> }
 
