@@ -13,6 +13,7 @@
  */
 
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { truncateToWidth } from "@earendil-works/pi-tui"
 import type { ExplorerViewState } from "../../src/explorer/controller/explorer-controller.js"
@@ -129,9 +130,24 @@ export function createFixedPanel(deps: FixedPanelDeps): FixedPanelHandle {
           const tl = themeLikeOf(theme)
           const render = (width: number): string[] => {
             try {
-              return fixedPanelLines(deps.getView(), width, config.maxRows, Date.now(), tl)
-            } catch {
+              const view = deps.getView()
+              const lines = fixedPanelLines(view, width, config.maxRows, Date.now(), tl)
+              // 临时诊断（定位「右侧面板不显示」问题，定位后移除）：记录 view 数据状态与输出行数
+              try {
+                fs.appendFileSync(
+                  path.join(os.tmpdir(), "pi-fixed-panel-debug.log"),
+                  `${new Date().toISOString()} render: width=${width} rows=${view.rows.length} runs=${view.runs.map((r) => r.status).join(",")} out=${lines.length}行\n`,
+                )
+              } catch { /* 诊断失败不影响渲染 */ }
+              return lines
+            } catch (e) {
               // 自防御：render 异常击穿宿主（同 workflow-tasks 教训），空行集兜底
+              try {
+                fs.appendFileSync(
+                  path.join(os.tmpdir(), "pi-fixed-panel-debug.log"),
+                  `${new Date().toISOString()} render 异常: ${String((e as Error)?.message ?? e)}\n`,
+                )
+              } catch { /* ignore */ }
               return []
             }
           }
@@ -168,7 +184,11 @@ export function createFixedPanel(deps: FixedPanelDeps): FixedPanelHandle {
         },
       ).catch((err: unknown) => {
         // reject 不能静默（旧版曾丢 Promise 导致挂载失败无迹可查）
-        console.error("[pi-code-mode] 固定面板 overlay 挂载失败:", String((err as Error)?.message ?? err))
+        const msg = `[pi-code-mode] 固定面板 overlay 挂载失败: ${String((err as Error)?.message ?? err)}`
+        console.error(msg)
+        try {
+          fs.appendFileSync(path.join(os.tmpdir(), "pi-fixed-panel-debug.log"), `${new Date().toISOString()} ${msg}\n`)
+        } catch { /* ignore */ }
       })
     },
     uninstall(_ctx: any) {
