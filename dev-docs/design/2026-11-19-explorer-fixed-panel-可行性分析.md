@@ -100,7 +100,7 @@ flowchart TD
 | 部件 | 关系 |
 | --- | --- |
 | Ctrl+B overlay | 零改动；固定模式只是多一个常驻渲染源 |
-| workflow-tasks widget | **功能重叠**：固定模式开启后其信息被完全覆盖。建议固定模式开启时注销 workflow-tasks（同 key 空间不同 key，各自管理），关闭时恢复 |
+| workflow-tasks widget | **互斥管理（会重复）**：其 run 级摘要（label done/total）是固定模式树信息的子集。固定模式 on → 注销 workflow-tasks；off → 重新注册恢复原样。空态策略继承：无 running run 时返回空行集（widget 自动隐藏不占空间） |
 | status-line（setStatus 1 行） | footer 状态区，与 widget 不冲突；固定模式开启时可保留（信息粒度不同：单行 vs 树） |
 
 ## 5. 风险与对策
