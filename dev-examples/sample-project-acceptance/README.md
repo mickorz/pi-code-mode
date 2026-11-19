@@ -50,10 +50,14 @@ npx tsx dev-examples/sample-project-acceptance/run-acceptance.ts schema-result-v
 | --- | --- |
 | structured pretty-print + `输出 structured` 标注 | `SchemaAgent`（`schema` 参数） |
 | 渲染期脱敏（`apiKey`/`authToken`/`dbPassword` → `[REDACTED]`） | 同上 |
-| 大文本截断提示（>20KB 才触发，模型输出长度不可控） | `BigTextAgent` |
+| 大文本正文换行/滚动（**截断提示不靠它触发**，见下） | `BigTextAgent` |
 | 失败节点显示 `错误: ...`（不是空白） | `runTool(probe-fail.js, timeoutMs:1)` |
 
 截断/脱敏的**确定性**断言在 `tests/contract/explorer-result-view.test.ts`（单元层），
 本脚本负责真实模型 + 真实 journal 的端到端串联。
+
+> **为什么截断不在这里验**：2026-11-19 三次实测（120/240 行两种要求），模型只照抄模板行
+> （每行 ≈ 107 字节），实产 10.9~12.8KB，稳定低于 20KB；模型也不遵守"每行接近 200 字符"。
+> 因此 `BigTextAgent` 只用于验证大文本换行与 PgUp/PgDn 滚动，截断语义交给单测。
 
 不做的事：不修改 submodule 内任何文件（只读约定见 `thirdparties/REFERENCES.md`）。

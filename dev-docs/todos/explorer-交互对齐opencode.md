@@ -92,7 +92,8 @@ REF-001 的 `result-view.ts` 语义已对齐（`src/explorer/repository/result-v
    已扩展到 `tool`。
 3. agent/tool 的错误被头部与结果区各打一遍 → 头部仅对 workflow/phase 显示错误。
 
-同批次数据观察：`BigTextAgent` 实产 12851B（未达 20KB），截断路径由单测确定性覆盖；
+同批次数据观察：`BigTextAgent` 三次实测（120/240 行）实产 10.9~12.8KB，**稳定低于 20KB 阈值**，
+模型也不遵守"每行接近 200 字符"——截断路径只能由单测确定性覆盖，验收脚本已注明不要依赖它触发；
 `model` 字段为空是「用会话默认模型」的正常表现（未显式指定 model/tier 时不写该字段）。
 
 ## 5. 执行顺序
