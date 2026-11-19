@@ -18,6 +18,7 @@ import {
   type PlannerOutput,
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
+import { PiAgentAdapter } from "../adapter/pi-agent-adapter.js"
 import { runOptimizationLoop, renderLoopResult } from "../engine/evaluator/optimization-loop.js"
 import { runBenchmark, renderBenchmark, toEvaluation } from "../engine/evaluator/benchmark-runner.js"
 
@@ -146,7 +147,8 @@ function extractSnippet(source: string, report: AnalysisReport, contextLines = 1
  */
 export function createPlannerAgent(options: { cwd?: string; agentDir?: string; model?: string; timeoutMs?: number } = {}) {
   return async (prompt: string): Promise<string> => {
-    const { PiAgentAdapter } = await import("../adapter/pi-agent-adapter.js")
+    // 与项目其他模块一致用静态 import：jiti 直载 TS 源码时，动态 import "*.js" 可能解析失败
+
     const adapter = new PiAgentAdapter({
       ...(options.agentDir ? { agentDir: options.agentDir } : {}),
       ...(options.cwd ? { defaultCwd: options.cwd } : {}),
@@ -155,10 +157,22 @@ export function createPlannerAgent(options: { cwd?: string; agentDir?: string; m
     // 因此必须用 AbortController 施加真实超时——否则模型调用挂住会让调用方永久静默等待。
     const timeoutMs = options.timeoutMs ?? 60_000
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
     const executionId = `analyze-planner-${Date.now()}`
+
+    // 关键：用 Promise.race 施加调用方超时，而不是“abort 后等底层收尾”。
+    // 底层 session.abort() 在极端情况可能不返回；一旦 await 它，命令就会重新挂住。
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        // 不 await：清理是尽力而为，绝不能阻塞命令返回
+        void adapter.cancel(executionId).catch(() => {})
+        reject(new Error(`Planner 调用超时（${timeoutMs}ms）`))
+      }, timeoutMs)
+    })
+
     try {
-      const result = await adapter.execute(
+      const execution = adapter.execute(
         {
           prompt,
           ...(options.model ? { model: options.model } : {}),
@@ -166,17 +180,13 @@ export function createPlannerAgent(options: { cwd?: string; agentDir?: string; m
         },
         { executionId, runId: "", phase: "analyzer" },
       )
-      if (controller.signal.aborted) {
-        throw new Error(`Planner 调用超时（${timeoutMs}ms）`)
-      }
+      const result = await Promise.race([execution, timeout])
       if (result.status !== "ok") {
         throw new Error(`Planner 调用失败（${result.status}）：${result.error?.message ?? "unknown"}`)
       }
       return String(result.output.value ?? "")
     } finally {
-      clearTimeout(timer)
-      // 超时路径确保底层会话被取消（避免遗留 in-flight 会话）
-      if (controller.signal.aborted) await adapter.cancel(executionId).catch(() => {})
+      if (timer) clearTimeout(timer)
     }
   }
 }

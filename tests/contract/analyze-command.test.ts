@@ -128,3 +128,13 @@ test("createPlannerAgent：1ms 超时必然抛错（证明超时通道生效，�
   await assert.rejects(async () => await agent("只回复 ok"))
   assert.ok(Date.now() - started < 20_000, "必须在超时窗口内返回，不能长时间挂起")
 })
+
+test("analyze：内部异常必须 notify 出来（禁止静默无反应）", async () => {
+  const dir = tmp()
+  // 造一个会抛错的场景：cwd 不存在时 resolveScript/analyze 内部抛 ENOENT
+  const { notes, ctx } = ctxWith(path.join(dir, "missing-dir"))
+  await analyzeSubcommand.run(["wf.js", "--no-suggest"], ctx, deps)
+  assert.ok(notes.length > 0, "必须至少有一条 notify，不能完全静默")
+  const joined = notes.map((n) => n.text).join("\n")
+  assert.match(joined, /找不到脚本|分析失败/)
+})

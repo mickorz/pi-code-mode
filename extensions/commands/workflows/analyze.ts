@@ -79,7 +79,7 @@ function renderSummary(input: {
       lines.push(`…另有 ${input.totalFindings - SUMMARY_FINDINGS} 条，见报告文件`)
     }
   }
-  if (input.recommends > 0) lines.push(`\n优化建议 ${input.recommends} 条（expectedImpact 一律「待 Benchmark」，不虚构数值）`)
+  if (input.recommends > 0) lines.push(`\n静态建议 ${input.recommends} 条（expectedImpact 一律「待 Benchmark」，不虚构数值）`)
   if (input.diagnostics.length > 0) lines.push(`\n诊断：${input.diagnostics.slice(0, 3).join("；")}`)
   if (input.reportPath) lines.push(`\n完整报告：${input.reportPath}`)
   return lines.join("\n")
@@ -88,6 +88,17 @@ function renderSummary(input: {
 export const analyzeSubcommand: Subcommand = {
   usage: "analyze <路径|名> [--no-suggest] [--json]  静态分析+AI建议（别名 anal；报告落盘）",
   async run(argv, ctx, deps) {
+    try {
+      await runAnalyze(argv, ctx, deps)
+    } catch (e) {
+      // 任何异常都必须让用户看到：命令 handler 静默抛错等于“没有任何反应”
+      ctx.ui.notify(`分析失败：${String((e as Error)?.stack ?? e).slice(0, 600)}`, "warning")
+    }
+  },
+}
+
+async function runAnalyze(argv: string[], ctx: any, deps: any): Promise<void> {
+  {
     const cwd = ctx.cwd ?? process.cwd()
     const flags = new Set(argv.filter((a) => a.startsWith("--")))
     const ref = argv.find((a) => !a.startsWith("--"))
@@ -104,16 +115,16 @@ export const analyzeSubcommand: Subcommand = {
 
     // AI 优化建议默认开启（--no-suggest 可关；会真实调用模型，耗 token）
     const withSuggestions = !flags.has("--no-suggest")
-    // 先给即时反馈：AI 建议要等模型返回，静默等待会让人以为命令没生效
-    ctx.ui.notify(withSuggestions ? `分析中（含 AI 建议，最长 60s）…
-${ref}` : `分析中…
+    ctx.ui.notify(`分析中…
 ${ref}`, "info")
-    const result = await analyzeWorkflow({
+
+    // 两段式：静态结果先出（毫秒级），AI 建议随后单独推送。
+    // 这样模型慢/超时也不影响用户看到核心结论（历史问题：默认含 AI 时整体要等满超时）。
+    let result = await analyzeWorkflow({
       source: resolved.source,
       ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
       cwd,
-      includeSuggestions: withSuggestions,
-      ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd }) } : {}),
+      includeSuggestions: false,
       format: flags.has("--json") ? "json" : "md",
     })
 
@@ -124,17 +135,7 @@ ${ref}`, "info")
 
     // 完整报告落盘（会话摘要无法承载数百行）
     let reportPath: string | undefined
-    try {
-      const dir = path.join(cwd, REPORT_DIR)
-      fs.mkdirSync(dir, { recursive: true })
-      const base = path.basename(ref, path.extname(ref))
-      const mdPath = path.join(dir, `${base}.analysis.md`)
-      fs.writeFileSync(mdPath, result.rendered ?? "", "utf8")
-      fs.writeFileSync(path.join(dir, `${base}.analysis.json`), JSON.stringify(result.report, null, 2), "utf8")
-      reportPath = path.relative(cwd, mdPath)
-    } catch (e) {
-      ctx.ui.notify(`报告落盘失败（分析结果仍有效）：${String((e as Error)?.message ?? e)}`, "warning")
-    }
+    reportPath = writeReports(cwd, ref, result)
 
     const r = result.report
     const summary = renderSummary({
@@ -160,23 +161,81 @@ ${ref}`, "info")
       diagnostics: r.diagnostics,
     })
     ctx.ui.notify(summary, "info")
+
+    if (withSuggestions) {
+      // AI 阶段：失败/超时只提示，不影响已给出的静态结论
+      try {
+        const ai = await analyzeWorkflow({
+          source: resolved.source,
+          ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
+          cwd,
+          includeSuggestions: true,
+          plannerAgent: createPlannerAgent({ cwd }),
+          format: "md",
+        })
+        if (ai.planner && ai.planner.proposals.length > 0) {
+          // 覆盖报告文件，让落盘版本包含 AI 建议
+          reportPath = writeReports(cwd, ref, ai)
+          const lines = [`AI 优化建议 ${ai.planner.proposals.length} 条：`]
+          for (const p of ai.planner.proposals.slice(0, 5)) {
+            lines.push(`- [${p.severity}] ${p.title}`)
+            lines.push(`  ${p.proposal.action.slice(0, 120)}`)
+            lines.push(`  验证：${p.validation.join("；").slice(0, 120)}`)
+          }
+          if (ai.planner.proposals.length > 5) lines.push(`…另有 ${ai.planner.proposals.length - 5} 条，见报告文件`)
+          lines.push(`\n完整报告：${reportPath ?? "(落盘失败)"}`)
+          ctx.ui.notify(lines.join("\n"), "info")
+        } else {
+          const diag = ai.report?.diagnostics.find((d) => /AI 建议/.test(d))
+          ctx.ui.notify(
+            `AI 建议未生成${diag ? `：${diag}` : "（模型未给出可校验的结构化建议）"}；静态分析结果已在上方。`,
+            "warning",
+          )
+        }
+      } catch (e) {
+        ctx.ui.notify(`AI 建议失败（静态结果已给出）：${String((e as Error)?.message ?? e).slice(0, 200)}`, "warning")
+      }
+    }
     void deps
-  },
+  }
 }
 
 /** /workflows plan validate <plan.json>：Plan 校验（Schema/Profile 边界/指纹/过期） */
 export const planSubcommand: Subcommand = {
   usage: "plan validate <plan.json>         校验 Plan（Profile 边界/指纹/过期）",
   async run(argv, ctx, deps) {
-    const cwd = ctx.cwd ?? process.cwd()
-    const action = argv[0]
-    const planPath = argv.slice(1).find((a) => !a.startsWith("--"))
-    if (action !== "validate" || !planPath) {
-      ctx.ui.notify("用法: /workflows plan validate <plan.json>", "warning")
-      return
+    try {
+      await runPlanValidate(argv, ctx, deps)
+    } catch (e) {
+      ctx.ui.notify(`Plan 校验失败：${String((e as Error)?.stack ?? e).slice(0, 600)}`, "warning")
     }
-    const r = validatePlanFile({ planPath, cwd })
-    ctx.ui.notify(r.rendered, r.ok ? "info" : "warning")
-    void deps
   },
+}
+
+async function runPlanValidate(argv: string[], ctx: any, deps: any): Promise<void> {
+  const cwd = ctx.cwd ?? process.cwd()
+  const action = argv[0]
+  const planPath = argv.slice(1).find((a) => !a.startsWith("--"))
+  if (action !== "validate" || !planPath) {
+    ctx.ui.notify("用法: /workflows plan validate <plan.json>", "warning")
+    return
+  }
+  const r = validatePlanFile({ planPath, cwd })
+  ctx.ui.notify(r.rendered, r.ok ? "info" : "warning")
+  void deps
+}
+
+/** 报告落盘：Markdown + JSON（两段式共用） */
+function writeReports(cwd: string, ref: string, result: { rendered?: string; report?: unknown }): string | undefined {
+  try {
+    const dir = path.join(cwd, REPORT_DIR)
+    fs.mkdirSync(dir, { recursive: true })
+    const base = path.basename(ref, path.extname(ref))
+    const mdPath = path.join(dir, `${base}.analysis.md`)
+    fs.writeFileSync(mdPath, result.rendered ?? "", "utf8")
+    fs.writeFileSync(path.join(dir, `${base}.analysis.json`), JSON.stringify(result.report ?? {}, null, 2), "utf8")
+    return path.relative(cwd, mdPath)
+  } catch {
+    return undefined
+  }
 }
