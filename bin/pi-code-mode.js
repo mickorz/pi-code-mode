@@ -36,6 +36,7 @@ function usage() {
 
 分析工具：
   pi-code-mode analyze <脚本>  [--json|--md] [--write]  静态分析 workflow（调用图/风险/估算）
+  pi-code-mode optimize <脚本> [--suggest]                生成优化建议（默认不修改生产脚本）
   pi-code-mode plan validate <plan.json>              校验 Plan（Schema/Profile 边界/指纹/过期）
 
 装完后在当前项目启动 pi，首次会弹 project trust 确认，授权一次永久生效。
@@ -100,6 +101,10 @@ process.exit(typeof code === "number" ? code : 0);
 switch (cmd) {
   case "analyze": {
     process.exitCode = runTsCli("src/tools/workflow-analyze-tool.ts", "runAnalyzeCli", process.argv.slice(3));
+    break;
+  }
+  case "optimize": {
+    process.exitCode = runTsCli("src/tools/workflow-analyze-tool.ts", "runOptimizeCli", process.argv.slice(3));
     break;
   }
   case "plan": {

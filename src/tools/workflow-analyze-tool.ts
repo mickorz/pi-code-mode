@@ -209,7 +209,12 @@ export function createWorkflowAnalyzeTool(deps: {
 }
 
 /** Pi 工具：workflow_optimize（真实接线；默认只在独立工作区建议，不自动改生产） */
-export function createWorkflowOptimizeTool(deps: { cwd?: string; plannerAgent?: (prompt: string) => Promise<string> }) {
+export function createWorkflowOptimizeTool(deps: {
+  cwd?: string
+  plannerAgent?: (prompt: string) => Promise<string>
+  /** 可选：授权后的安全 patch 生成器；缺省只生成建议，不猜测整文件 patch */
+  patchSource?: (input: { source: string; proposals: unknown[]; workspacePath: string }) => Promise<string | undefined>
+}) {
   return {
     name: "workflow_optimize",
     label: "Optimize Workflow",
@@ -234,7 +239,12 @@ export function createWorkflowOptimizeTool(deps: { cwd?: string; plannerAgent?: 
           const prompt = buildPlannerPrompt(report, { codeSnippet: source.slice(0, 4000) })
           const parsed = parsePlannerResponse(await deps.plannerAgent(prompt))
           if (!parsed.ok || !parsed.output) return { recommendations: report.recommendations }
-          return { recommendations: mergeRecommendations(report.recommendations, parsed.output), patchedSource: undefined }
+          const merged = mergeRecommendations(report.recommendations, parsed.output)
+          // codeSketch 是局部片段，不能冒充完整文件 patch；只有显式 patchSource 才允许进入闭环应用
+          const patchedSource = deps.patchSource
+            ? await deps.patchSource({ source, proposals: parsed.output.proposals, workspacePath: "" })
+            : undefined
+          return { recommendations: merged, ...(patchedSource !== undefined ? { patchedSource } : {}) }
         },
         // M6 接线第一版不自动执行 benchmark；没有 after 证据则仍不应用（优化闭环安全默认）
         dangerouslyAutoApprove: params.approve === true,
@@ -242,6 +252,23 @@ export function createWorkflowOptimizeTool(deps: { cwd?: string; plannerAgent?: 
       return { content: [{ type: "text" as const, text: renderLoopResult(result) }], ...(result.ok ? {} : { isError: false }) }
     },
   }
+}
+
+/** CLI：optimize（默认只分析并输出建议；不自动修改生产脚本） */
+export async function runOptimizeCli(argv: string[]): Promise<number> {
+  const target = argv.find((a) => !a.startsWith("--"))
+  if (!target) {
+    console.error("用法：pi-code-mode optimize <script> [--apply]")
+    return 2
+  }
+  const result = await analyzeWorkflow({ scriptPath: target, format: "md", includeSuggestions: argv.includes("--suggest") })
+  if (!result.ok) {
+    console.error(`优化分析失败：${result.error}`)
+    return 1
+  }
+  console.log(result.rendered)
+  console.log("\\n安全默认：仅生成分析与建议；修改必须在独立工作区经 Benchmark 与用户确认后应用。")
+  return 0
 }
 
 /** CLI 实现（pi-code-mode analyze） */

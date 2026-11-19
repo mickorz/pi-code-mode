@@ -93,3 +93,12 @@
 - 真实闭环的 Benchmark 执行器仍需业务侧注入（安全默认，不自动执行生产 workflow）
 
 本轮接线回归：engine 206/206，contract 97/97，新增 M6 接线测试 22/22，build 通过。
+
+## 七、继续生产化（本轮）
+
+- **M3 taskResume**：workflow 工具 `taskResume:true` 已接 TaskRegistry；stable taskKey + 完整 fingerprint；第二次 run 复用 done 任务，不调用 Agent。接线测试 2/2。
+- **M4 runtime 接线**：`parallel()` 可选消费 TaskCheckpoint 耗时画像；workflow `taskResume` 自动构造 adaptiveProfiles；长任务先发、返回顺序保持。分片/三层上下文 API 可继续按显式任务接入。
+- **M5 Baseline 接线**：Plan workflow 完成后 `runWorkflow` 聚合 AgentRecord → `EvaluationReport` → `BaselineStore.record()`；接线测试 2/2。无 Plan 旧 workflow 不写基线。
+- **M5 Optimize 入口**：新增 `workflow_optimize` 工具与 `pi-code-mode optimize <script> [--suggest]` CLI；真实调用 Analyzer/Planner，默认独立工作区+授权闸门，不直接改生产脚本。Planner 无完整 patch 时不会猜测整文件。
+
+本轮回归：build 通过、engine 206/206、contract 97/97、M6 接线 15/15；M4/M5 库级模块已进入主要生产路径，但自动分片/parallel 完全接管与真实 Benchmark 执行器仍需显式配置/后续业务接线。
