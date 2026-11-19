@@ -93,11 +93,11 @@ export function wrapByWidth(text: string, width: number): string[] {
   return out
 }
 
-/** 树行：缩进 + 展开标记 + 状态 + 标签（非选中行按节点类型着色，选中行保持 accent 加粗） */
-function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, selected: boolean, expanded: boolean, theme: ThemeLike): string {
+/** 树行：缩进 + 展开标记 + 状态 + 标签（非选中行按节点类型着色，选中行保持 accent 加粗；now 可注入供纯函数测试） */
+export function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, selected: boolean, expanded: boolean, theme: ThemeLike, now: number = Date.now()): string {
   const marker = node.children.length ? (expanded ? "v" : ">") : " "
   const icon = KIND_ICON[node.kind] ?? "?"
-  const dur = rowDuration(node, Date.now())
+  const dur = rowDuration(node, now)
   const head = `${"  ".repeat(Math.min(depth, 8))}${marker}${icon} ${statusIcon(node.status)} ${node.label}`
   const tail = dur ? `  ${dur}` : ""
   const text = truncateToWidth(head + tail, width - 2)
@@ -258,7 +258,7 @@ function treeWindowStart(state: ExplorerViewState, bodyRows: number): number {
 }
 
 /** 行深度：沿 parentKey 向上数层（可见行里父节点必在，折叠会剪掉子树） */
-function depthMapOf(rows: WorkflowTreeNode[]): Map<string, number> {
+export function depthMapOf(rows: WorkflowTreeNode[]): Map<string, number> {
   const byKey = new Map(rows.map((r) => [r.nodeKey, r]))
   const depths = new Map<string, number>()
   for (const row of rows) {

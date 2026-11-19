@@ -10,7 +10,8 @@
  *   - workflow / workflow_control 工具（编排执行与控制）
  *   - schedule_* 工具族 ×8 + ScheduleRuntime 调度循环（M4）
  *   - /workflows、/schedule 斜杠命令
- *   - workflow-tasks TUI widget（在途 runs 实时摘要，M4）
+ *   - workflow-tasks TUI widget（在途 runs 实时摘要，M4）与 Explorer 固定面板 widget 互斥
+ *     （/explorer fixed on 切固定面板；默认 off 保持 workflow-tasks，见 explorer/fixed-panel.ts）
  *   - 全局并发闸 + 模型 tier 解析（model-tiers.json -> resolveTier）
  *
  * RunManager 模块级单例：同进程多会话共享，workflow_control 可跨会话查询/取消。
@@ -38,6 +39,14 @@ import { registerScheduleCommand } from "./commands/schedule.js"
 import { registerExplorerCommand } from "./commands/explorer.js"
 import { toggleExplorer } from "./explorer/index.js"
 import { installExplorerStatusLine } from "./explorer/status-line.js"
+import {
+  createWidgetCoordinator,
+  fixedPanelLines,
+  readFixedPanelConfig,
+  themeLikeOf,
+  FIXED_PANEL_TICK_MS,
+  type WidgetSide,
+} from "./explorer/fixed-panel.js"
 import { ExplorerController } from "../src/explorer/controller/explorer-controller.js"
 import { createRunJournal } from "../src/manager/run-journal.js"
 
@@ -93,10 +102,9 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
 }
 
 /** workflow-tasks widget：在途 runs 实时摘要（事件驱动，idle 零开销）
- *  数据源：RunManager.onEvent（lifecycle 微任务即时刷、progress 500ms 节流合并，替换原 2s 轮询）
- *  宿主 API：widget 挂在 ctx.ui（session_start 事件上下文），工厂期不可直接调用；
- *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 跳过注册 */
-function installTaskWidget(pi: ExtensionAPI): void {
+ *  数据源：RunManager.onEvent（lifecycle 微任务即时刷、progress 500ms 节流合并）
+ *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 时 install 由协调器跳过 */
+function taskWidgetSide(): WidgetSide {
   // render 运行在宿主 TUI 渲染循环内，任何异常都会击穿宿主进程（2026-11-15 实测：
   // 曾因 list() 快照的 agents 是 number 而非数组，r.agents.filter 抛 TypeError 直接
   // 杀死整个 pi 宿主）——因此整个 render 必须自防御，异常时返回空行集。
@@ -120,23 +128,65 @@ function installTaskWidget(pi: ExtensionAPI): void {
     }
   }
 
-  pi.on("session_start", (_event, ctx) => {
-    if (!ctx.hasUI) return
-    ctx.ui.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
-      // 事件驱动刷新：lifecycle 事件（started/finished/stopped）微任务即时，progress（attach）500ms 节流合并
-      const scheduler = createRenderScheduler(() => tui.requestRender())
-      const unsubscribe = runManager.onEvent((e) => scheduler.schedule(e.type === "progress" ? "progress" : "lifecycle"))
-      return {
-        // 宿主 Component 契约要求；本组件按需渲染，无需缓存失效
-        invalidate: () => {},
-        render,
-        dispose: () => {
-          unsubscribe()
-          scheduler.dispose()
+  return {
+    install(ctx: any) {
+      ctx.ui.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
+        // 事件驱动刷新：lifecycle 事件（started/finished/stopped）微任务即时，progress（attach）500ms 节流合并
+        const scheduler = createRenderScheduler(() => tui.requestRender())
+        const unsubscribe = runManager.onEvent((e: any) => scheduler.schedule(e.type === "progress" ? "progress" : "lifecycle"))
+        return {
+          // 宿主 Component 契约要求；本组件按需渲染，无需缓存失效
+          invalidate: () => {},
+          render,
+          dispose: () => {
+            unsubscribe()
+            scheduler.dispose()
+          },
+        }
+      })
+    },
+    uninstall(ctx: any) {
+      ctx.ui.setWidget("workflow-tasks", undefined)
+    },
+  }
+}
+
+/** 固定面板一侧：Explorer 树常驻 widget（只读仪表盘，配置驱动 placement/maxRows） */
+function fixedPanelSide(): WidgetSide {
+  return {
+    install(ctx: any) {
+      // install 时重读配置：/explorer fixed 切换后 placement/maxRows 可能已写盘更新
+      const config = readFixedPanelConfig(process.cwd())
+      ctx.ui.setWidget(
+        "workflow-explorer-fixed",
+        (tui: any, theme: unknown) => {
+          const tl = themeLikeOf(theme)
+          const render = (width: number): string[] => {
+            try {
+              return fixedPanelLines(explorer.view(), width, config.maxRows, Date.now(), tl)
+            } catch {
+              // 自防御：render 异常击穿宿主（同 workflow-tasks 教训），空行集兜底
+              return []
+            }
+          }
+          // 秒表走字：仅运行中重绘（空闲零渲染）
+          const tick = setInterval(() => {
+            if (explorer.hasRunningNodes()) tui.requestRender()
+          }, FIXED_PANEL_TICK_MS)
+          ;(tick as { unref?: () => void }).unref?.()
+          return {
+            invalidate: () => {},
+            render,
+            dispose: () => clearInterval(tick),
+          }
         },
-      }
-    })
-  })
+        { placement: config.placement },
+      )
+    },
+    uninstall(ctx: any) {
+      ctx.ui.setWidget("workflow-explorer-fixed", undefined)
+    },
+  }
 }
 
 export default function extension(pi: ExtensionAPI): void {
@@ -220,8 +270,12 @@ export default function extension(pi: ExtensionAPI): void {
   // ---- 斜杠命令（实现见 extensions/commands/，一命令一文件）----
   registerWorkflowsCommand(pi, { runManager, makeDeps, deliver })
   registerScheduleCommand(pi, { scheduler })
-  registerExplorerCommand(pi, { explorer })
 
-  // workflow-tasks widget（M4）：在途 runs 实时摘要
-  installTaskWidget(pi)
+  // ---- widget 互斥协调器：固定模式 on → Explorer 常驻面板；off（默认）→ workflow-tasks ----
+  const widgets = createWidgetCoordinator({ cwd: process.cwd(), taskWidget: taskWidgetSide(), fixedPanel: fixedPanelSide() })
+  pi.on("session_start", (_event, ctx) => {
+    if (!ctx.hasUI) return
+    widgets.apply(ctx)
+  })
+  registerExplorerCommand(pi, { explorer, widgets })
 }
