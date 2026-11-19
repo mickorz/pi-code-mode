@@ -76,11 +76,10 @@ export async function openExplorer(explorer: ExplorerController, ui: any, option
       // j/k 为 up/down 别名（与 Navigator/watch 一致的手感）
       if (key === "j") return handleKeyData("\x1b[B")
       if (key === "k") return handleKeyData("\x1b[A")
-      if (key === "q") {
-        close()
-        return
-      }
-      if (key === "o") {
+      // q / o / esc 都交给 Controller 语义处理：
+      //   tree:  q|esc 关闭面板   o 打开详情
+      //   detail: q|esc 返回树
+      if (key === "r") {
         cycleRun()
         return
       }

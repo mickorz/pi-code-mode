@@ -48,13 +48,10 @@ function state(over: Partial<ExplorerViewState> = {}): ExplorerViewState {
   return {
     runs: [{ runId: "r1", label: "r1", status: "running", startedAt: 1, workflows: 1, agentsTotal: 1, agentsDone: 1 }],
     activeRunId: "r1",
-    activeTab: "workflow",
+    view: "tree",
     rows,
-    listRows: rows,
-    listSelectedIndex: 3,
     collapsedNodeKeys: new Set(),
     selectedIndex: 3,
-    focus: "tree",
     detailScrollTop: 0,
     selected: agent,
     detail: { node: agent, ancestors: [phase, wf, root], agent: { executions: [], prompt: "做一个侧边栏", result: "ok" } },
@@ -65,13 +62,10 @@ function state(over: Partial<ExplorerViewState> = {}): ExplorerViewState {
 test("渲染: 空态（无 run）不崩且给出提示", () => {
   const empty: ExplorerViewState = {
     runs: [],
-    activeTab: "workflow",
+    view: "tree",
     rows: [],
-    listRows: [],
-    listSelectedIndex: -1,
     collapsedNodeKeys: new Set(),
     selectedIndex: -1,
-    focus: "tree",
     detailScrollTop: 0,
   }
   const lines = renderExplorerBox(empty, 80, 12, theme)
@@ -89,14 +83,15 @@ test("渲染: 宽终端双栏 + 窄终端单栏，行宽不超宽", () => {
   }
 })
 
-test("渲染: 四个 Tab 都有内容且带选中标记", () => {
-  for (const tab of ["workflow", "agents", "tools", "journal"] as const) {
-    const lines = renderExplorerFrame(state({ activeTab: tab }), 100, 14, theme)
-    const text = lines.join("\n")
-    assert.ok(text.includes("[") && text.length > 0)
-    if (tab === "agents") assert.ok(text.includes("AgentA"), "Agents Tab 列出 agent")
-    if (tab === "tools") assert.ok(text.includes("无工具节点") || text.includes("[tool]"), "Tools Tab 有稳定输出")
-  }
+test("渲染: 树态满屏展示树，详情态满屏展示详情（无 Tab 栏）", () => {
+  const treeText = renderExplorerFrame(state(), 100, 14, theme).join("\n")
+  assert.ok(treeText.includes("AgentA"), "树里能看到 agent")
+  assert.ok(!treeText.includes("Journal"), "Tab 栏已移除")
+  assert.ok(!treeText.includes("-- prompt --"), "树态不渲染详情块")
+
+  const detailText = renderExplorerFrame(state({ view: "detail" }), 100, 14, theme).join("\n")
+  assert.ok(detailText.includes("-- prompt --"), "详情态展示 prompt")
+  assert.ok(!detailText.includes("AgentA  "), "详情态不渲染树行")
 })
 
 test("渲染: 收起节点后子行不再出现", () => {
@@ -107,7 +102,7 @@ test("渲染: 收起节点后子行不再出现", () => {
 })
 
 test("渲染: 详情态显示 prompt/result/attempts", () => {
-  const text = renderExplorerFrame(state({ focus: "detail" }), 80, 16, theme).join("\n")
+  const text = renderExplorerFrame(state({ view: "detail" }), 80, 16, theme).join("\n")
   assert.ok(text.includes("做一个侧边栏"), "prompt 可见")
   assert.ok(text.includes("路径:"), "祖先路径可见")
 })

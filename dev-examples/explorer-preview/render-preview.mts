@@ -1,7 +1,7 @@
 /**
  * Explorer 布局预览（开发期沙盒）：把真实渲染结果打到 stdout，用于目视核对宽/窄终端布局。
  *
- * 用法：npx tsx dev-examples/explorer-preview/render-preview.mts [宽度] [行数] [tab]
+ * 用法：npx tsx dev-examples/explorer-preview/render-preview.mts [宽度] [行数] [tree|detail]
  * 说明：纯渲染预览，不连接 runtime；数据是构造的执行树样例。
  */
 
@@ -55,10 +55,8 @@ const state: ExplorerViewState = {
     { runId: "run-prev", label: "上一轮（已完成）", status: "completed", startedAt: Date.now() - 900000, finishedAt: Date.now() - 800000, workflows: 1, agentsTotal: 3, agentsDone: 3 },
   ],
   activeRunId: "run-demo",
-  activeTab: "workflow",
+  view: "tree",
   rows,
-  listRows: rows,
-  listSelectedIndex: 8,
   collapsedNodeKeys: new Set(),
   selectedIndex: 8,
   focus: "tree",
@@ -80,9 +78,9 @@ const state: ExplorerViewState = {
   },
 }
 
-// 可选：第 3 个参数指定 Tab（workflow|agents|tools|journal），默认 workflow
-const tabArg = (process.argv[4] ?? process.env.EXPLORER_TAB ?? "workflow") as ExplorerViewState["activeTab"]
-state.activeTab = tabArg
+// 可选：第 3 个参数指定视图（tree|detail），默认 tree
+const viewArg = (process.argv[4] ?? process.env.EXPLORER_VIEW ?? "tree") as ExplorerViewState["view"]
+state.view = viewArg
 
 const width = Number(process.argv[2] ?? 76)
 const bodyRows = Number(process.argv[3] ?? 22)

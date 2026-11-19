@@ -196,7 +196,7 @@ test("M3: 详情 End / 连续 ↓ 被钳制到最大滚动起点（不越界白�
     rootKey: () => "k0",
     node: (key) => fakes[key],
   })
-  nav.state.focus = "detail"
+  nav.state.view = "detail"
   nav.setDetailMaxScroll(7) // 内容 10 行、视口 3 行 -> 最大起点 7
 
   for (const effect of nav.end()) assert.equal(effect.kind, "redraw")
@@ -212,7 +212,7 @@ test("M3: 详情 End / 连续 ↓ 被钳制到最大滚动起点（不越界白�
   assert.equal(nav.state.detailScrollTop, 0, "内容变短时滚动位置回收")
 })
 
-test("M4: Agents/Tools Tab 列表不受树折叠影响，键盘在列表内移动", () => {
+test("B1: 折叠后子树不可见，展开恢复（Tab 移除后的等价覆盖）", () => {
   const bus = new RuntimeEventBus()
   const rm = new RunManager(4, bus)
   const explorer = new ExplorerController({ runManager: rm, eventBus: bus, journalDir: "/tmp/none" })
@@ -225,50 +225,19 @@ test("M4: Agents/Tools Tab 列表不受树折叠影响，键盘在列表内移�
   })
   bus.publish({
     runId: "r1",
-    type: "phase.started",
-    scopePath: ["root"],
-    payload: { phaseId: "root#批处理", title: "批处理", scopePath: ["root"], status: "running", startedAt: 1 },
-  })
-  bus.publish({
-    runId: "r1",
     type: "agent.started",
     scopePath: ["root"],
-    payload: { id: "r1:0", label: "HiddenA", phase: "批处理", status: "running", workflowScopePath: ["root"] },
-  })
-  bus.publish({
-    runId: "r1",
-    type: "agent.started",
-    scopePath: ["root"],
-    payload: { id: "r1:1", label: "HiddenB", phase: "批处理", status: "running", workflowScopePath: ["root"] },
-  })
-  bus.publish({
-    runId: "r1",
-    type: "run.finished",
-    payload: { status: "completed" },
+    payload: { id: "r1:0", label: "InnerAgent", status: "running", workflowScopePath: ["root"] },
   })
   explorer.open(() => {})
   const nav = explorer.nav
   nav.ensureSelection()
-
-  // 折叠整个 workflow（树里 agents 全部不可见）
   const wf = nav.visibleRows().find((r) => r.kind === "workflow")!
   nav.select(wf.nodeKey)
   nav.left()
-  assert.ok(!explorer.view().rows.some((r) => r.kind === "agent"), "树里已折叠掉 agent")
-
-  // 切到 Agents Tab：列表仍完整（来自全树，不受折叠影响）
-  nav.setTab("agents")
-  let view = explorer.view()
-  assert.equal(view.listRows.length, 2, "Agents Tab 仍列出 2 个 agent")
-  assert.equal(view.listSelectedIndex, 0, "Tab 列表有选中高亮")
-
-  // 键盘在列表内移动
-  explorer.handleKey("down")
-  view = explorer.view()
-  assert.equal(view.listRows[view.listSelectedIndex].label, "HiddenB", "↓ 在 Tab 列表内移动")
-  explorer.handleKey("up")
-  view = explorer.view()
-  assert.equal(view.listRows[view.listSelectedIndex].label, "HiddenA", "↑ 回到上一项")
+  assert.ok(!explorer.view().rows.some((r) => r.label === "InnerAgent"), "折叠后子树不可见")
+  nav.right()
+  assert.ok(explorer.view().rows.some((r) => r.label === "InnerAgent"), "展开后子树恢复")
   explorer.dispose()
 })
 

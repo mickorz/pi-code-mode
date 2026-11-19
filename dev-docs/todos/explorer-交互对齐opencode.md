@@ -37,17 +37,25 @@
 
 非目标：不改布局、不改 Tab、不动导航键位。
 
-## 3. B —— 交互模型对齐（待评估）
+## 3. B —— 交互模型对齐（已完成 2026-11-18）
 
 **目标**：单树 + 全屏详情两态，贴近 opencode。
 
-- [ ] B1 去掉 Workflow/Agents/Tools/Journal 四 Tab，改为单执行树（Agents/Tools 作为树内节点已存在，Journal 信息并入详情面板）
-- [ ] B2 详情改为独立全屏路由视图（opencode 的 `node detail route` 形态），Esc 返回树
-- [ ] B3 键位语义对齐：`enter` 展开/进入首个子节点，`o` 打开详情；`up/k`、`down/j`、`escape/q`
-- [ ] B4 键位接入宿主 keybind 提示（在面板底部显示可配置键位而非硬编码文案）
-- [ ] B5 迁移既有测试（controller / render / overlay / e2e 与 Tab 相关的断言）
+- [x] B1 去掉四 Tab，改为单执行树（Tools 本就是树内节点；Journal 的 attempts 信息在详情面板呈现）
+- [x] B2 详情改为**全屏**视图（等价 opencode 的 node detail route），Esc/q 返回树；不再有左右分栏
+- [x] B3 键位语义对齐：`enter`/`→` 展开（已展开则进首个子节点）、`o` 打开详情、`↑/k`、`↓/j`、`Esc/q`
+- [x] B4 底部提示按视图给键位（tree / detail 两套），窄终端自动切短提示
+- [x] B5 迁移测试：controller（Tab→两态）、render（Tab 用例→树/详情满屏用例）、overlay（enter→o、o→r 切 run）、fixes（M4 Tab 用例改为折叠等价覆盖）
 
-风险：破坏现有四 Tab 的信息密度；Journal/Attempts 需要有新的落点。
+### B 的实施取舍
+
+| 项 | opencode | 本实现 | 说明 |
+| -- | -------- | ------ | ---- |
+| run 切换 | 侧栏同屏多棵树 | `r` 键轮换（表头显示 `runs N（r 切换）`） | pi 单 overlay 内不做多树同屏，避免树过大 |
+| 详情进入 | 点击 / Enter | `o` | Enter 让给"展开"，与 opencode 列表行为一致 |
+| 键位可配置 | 宿主 keybind 系统 | 面板内硬编码 + 底部提示 | pi 的 `registerShortcut` 只在 default editor 有焦点时派发，overlay 内无法复用；keybind 化不可行（见 A1 记录） |
+
+风险（已接受）：四 Tab 的信息密度换成了单树 + 详情两态；Agents/Tools 聚合视图不再单独存在。
 
 ## 4. C —— 真常驻侧栏（远期，可能不做）
 

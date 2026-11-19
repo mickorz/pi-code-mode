@@ -95,7 +95,7 @@ test("Overlay: q 关闭；关闭只 hide 视图，重开恢复选中节点", asy
   explorer.dispose()
 })
 
-test("Overlay: esc 树模式关闭、详情态 esc 返回树；j/k 为上下别名", async () => {
+test("Overlay: esc/q 树模式关闭、详情态 esc 返回树；j/k 为上下别名", async () => {
   const { explorer } = seed()
   const { ui, captured } = fakeUi()
   await openExplorer(explorer, ui)
@@ -109,10 +109,10 @@ test("Overlay: esc 树模式关闭、详情态 esc 返回树；j/k 为上下别�
   captured.component.handleInput("k") // up 别名 → 回到 workflow
   assert.equal(nav.selectedNode?.kind, "workflow")
 
-  captured.component.handleInput("\r") // enter → 详情
-  assert.equal(nav.state.focus, "detail")
+  captured.component.handleInput("o") // o → 全屏详情（B3：enter 只展开，详情走 o）
+  assert.equal(nav.state.view, "detail")
   captured.component.handleInput("\x1b") // esc → 回树，不关闭
-  assert.equal(nav.state.focus, "tree")
+  assert.equal(nav.state.view, "tree")
   assert.equal(captured.doneCalls, 0, "详情态 esc 不关闭面板")
 
   captured.component.handleInput("\x1b") // 树模式 esc → 关闭
@@ -120,7 +120,7 @@ test("Overlay: esc 树模式关闭、详情态 esc 返回树；j/k 为上下别�
   explorer.dispose()
 })
 
-test("Overlay: o 键在多个 run 间轮换", async () => {
+test("Overlay: r 键在多个 run 间轮换", async () => {
   const { bus, rm, explorer } = seed()
   rm.register("r2", { label: "r2" })
   bus.publish({
@@ -132,7 +132,7 @@ test("Overlay: o 键在多个 run 间轮换", async () => {
   const { ui, captured } = fakeUi()
   await openExplorer(explorer, ui, { runId: "r1" })
   assert.equal(explorer.activeRun, "r1")
-  captured.component.handleInput("o")
-  assert.equal(explorer.activeRun, "r2", "o 轮换到下一个 run")
+  captured.component.handleInput("r")
+  assert.equal(explorer.activeRun, "r2", "r 轮换到下一个 run")
   explorer.dispose()
 })

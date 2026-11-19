@@ -16,7 +16,7 @@ import type { RuntimeEventBus } from "../../engine/events/runtime-event-bus.js"
 import { JournalStore } from "../../engine/persistence/journal.js"
 import { JournalDetailRepository, type AgentDetail } from "../repository/detail-repository.js"
 import { WorkflowTreeModel, type WorkflowTreeNode } from "../model/workflow-tree-model.js"
-import { NavigationModel, type ExplorerTab, type NavigationEffect } from "../model/navigation-model.js"
+import { NavigationModel, type ExplorerView, type NavigationEffect } from "../model/navigation-model.js"
 import path from "node:path"
 
 export interface ExplorerRunRow {
@@ -34,21 +34,13 @@ export interface ExplorerRunRow {
 export interface ExplorerViewState {
   runs: ExplorerRunRow[]
   activeRunId?: string
-  activeTab: ExplorerTab
+  /** 全屏视图态：树 / 节点详情（B2：两态满屏切换，无 Tab、无分栏） */
+  view: ExplorerView
   /** 当前可见行（树展开序，受折叠影响） */
   rows: WorkflowTreeNode[]
-  /**
-   * 当前 Tab 的列表行：
-   *   - workflow Tab = 树可见行（同 rows）
-   *   - agents/tools/journal Tab = 全树对应类型节点（评审修复 M4：不受树折叠影响）
-   */
-  listRows: WorkflowTreeNode[]
-  /** 选中节点在 listRows 中的下标（Tab 列表高亮用） */
-  listSelectedIndex: number
   /** 显式收起的节点（渲染展开/折叠标记用） */
   collapsedNodeKeys: Set<string>
   selectedIndex: number
-  focus: "tree" | "detail"
   detailScrollTop: number
   selected?: WorkflowTreeNode
   detail?: NodeDetailView
@@ -183,64 +175,23 @@ export class ExplorerController {
     const nav = this.navigation
     nav.pruneSelection()
     const rows = nav.visibleRows()
-    const activeTab = nav.state.activeTab
-    // tabRows 可能把选中项迁到本 Tab 的第一个同类节点，因此 selected 必须在它之后取
-    const listRows = activeTab === "workflow" ? rows : this.tabRows(activeTab, nav.selectedNode?.nodeKey)
     const selected = nav.selectedNode
     return {
       runs: this.runRows(),
       activeRunId: this.activeRunId,
-      activeTab,
+      view: nav.state.view,
       rows,
-      listRows,
-      listSelectedIndex: listRows.findIndex((r) => r.nodeKey === selected?.nodeKey),
       collapsedNodeKeys: nav.state.collapsedNodeKeys,
       selectedIndex: nav.selectedIndex(rows),
-      focus: nav.state.focus,
       detailScrollTop: nav.state.detailScrollTop,
       selected,
       detail: selected ? this.detailFor(selected.nodeKey) : undefined,
     }
   }
 
-  /**
-   * 非 workflow Tab 的列表：全树同类型节点（不经折叠过滤）。
-   * 选中节点若不在该类型列表里，用第一个同类型节点兜底定位（保证 Tab 内有可见高亮）。
-   */
-  private tabRows(tab: ExplorerTab, selectedKey?: string): WorkflowTreeNode[] {
-    const tree = this.tree
-    if (!tree) return []
-    const kind = tab === "agents" ? "agent" : tab === "tools" ? "tool" : "agent"
-    const all = tree.flatten().filter((n) => n.kind === kind)
-    if (!all.length) return all
-    if (selectedKey && all.some((n) => n.nodeKey === selectedKey)) return all
-    // 选中项不在本 Tab 类型内：把选中点迁到第一个同类节点，避免"高亮在别的 Tab 的行上"
-    this.navigation.state.selectedNodeKey = all[0].nodeKey
-    return all
-  }
-
-  /**
-   * 逻辑键分发（TUI 适配器把原始字节归一化后调用）。
-   * 评审修复 M4：非 workflow Tab 里上下/Home/End 移动的是该 Tab 的列表行，
-   * 而不是（可能不可见的）树行，否则按 j/k 没有任何可见反馈。
-   */
+  /** 逻辑键分发（TUI 适配器把原始字节归一化后调用） */
   handleKey(key: string): NavigationEffect[] {
     const nav = this.navigation
-    if (nav.state.activeTab !== "workflow" && nav.state.focus === "tree") {
-      const list = this.tabRows(nav.state.activeTab, nav.selectedNode?.nodeKey)
-      if (list.length) {
-        const cur = list.findIndex((r) => r.nodeKey === nav.selectedNode?.nodeKey)
-        if (key === "up" || key === "down") {
-          const next = Math.min(list.length - 1, Math.max(0, cur + (key === "up" ? -1 : 1)))
-          nav.select(list[next].nodeKey)
-          return [{ kind: "redraw" }]
-        }
-        if (key === "home" || key === "end") {
-          nav.select(key === "home" ? list[0].nodeKey : list[list.length - 1].nodeKey)
-          return [{ kind: "redraw" }]
-        }
-      }
-    }
     switch (key) {
       case "up":
         return nav.up()
@@ -252,18 +203,15 @@ export class ExplorerController {
         return nav.left()
       case "enter":
         return nav.enter()
+      case "o":
+        return nav.openDetail()
       case "escape":
+      case "q":
         return nav.escape()
       case "home":
         return nav.home()
       case "end":
         return nav.end()
-      case "tab":
-        nav.nextTab(1)
-        return [{ kind: "redraw" }]
-      case "shiftTab":
-        nav.nextTab(-1)
-        return [{ kind: "redraw" }]
       default:
         return []
     }

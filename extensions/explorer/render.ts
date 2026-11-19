@@ -1,31 +1,23 @@
 /**
- * Explorer TUI 渲染（M4）。
+ * Explorer TUI 渲染（交互模型对齐 REF-001）。
  *
- * 布局：
- *   宽终端（>=110 列）：左侧执行树 + 右侧节点详情双栏
- *   窄终端：单栏；focus=detail 时只显示详情（架构设计 §10.3 的降级要求）
+ * 布局：**单树与全屏详情两态满屏切换**，无 Tab、无左右分栏。
+ *   view=tree   -> 整屏执行树（opencode 侧栏树的等价物）
+ *   view=detail -> 整屏节点详情（opencode 的 node detail route 等价物）
  *
  * 自防御：任何渲染异常都返回错误行而不是抛出——render 运行在宿主 TUI 渲染循环里，
- * 异常会击穿 pi 宿主进程（2026-11-15 实测教训，见 dev-docs/experience/）。
+ * 异常会击穿 pi 宿主进程（详见 dev-docs/experience/）。
  */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
 import type { ExplorerViewState, NodeDetailView } from "../../src/explorer/controller/explorer-controller.js"
 import type { WorkflowTreeNode } from "../../src/explorer/model/workflow-tree-model.js"
-import type { ExplorerTab } from "../../src/explorer/model/navigation-model.js"
 
 export interface ThemeLike {
   fg(color: string, s: string): string
   bg(color: string, s: string): string
   bold(s: string): string
 }
-
-const TAB_LABELS: Array<{ id: ExplorerTab; label: string }> = [
-  { id: "workflow", label: "Workflow" },
-  { id: "agents", label: "Agents" },
-  { id: "tools", label: "Tools" },
-  { id: "journal", label: "Journal" },
-]
 
 const KIND_ICON: Record<string, string> = {
   run: "*",
@@ -92,7 +84,7 @@ function renderTreeRow(node: WorkflowTreeNode, depth: number, width: number, sel
   return selected ? theme.fg("accent", theme.bold(line)) : line
 }
 
-/** 详情面板全量内容行（滚动与切片由调用方负责，以便钳制越界滚动） */
+/** 详情全量内容行（滚动与切片由调用方负责，以便钳制越界滚动） */
 function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: ThemeLike): string[] {
   if (!d) return [theme.fg("muted", "  （未选中节点）")]
   const { node } = d
@@ -133,7 +125,7 @@ function detailLinesOf(d: NodeDetailView | undefined, width: number, theme: Them
   return lines
 }
 
-/** 详情视口：把全量内容按 clamp 后的起点切片，并回报最大滚动起点 */
+/** 详情视口：按 clamp 后的起点切片，并回报最大滚动起点 */
 function renderDetail(
   d: NodeDetailView | undefined,
   width: number,
@@ -151,46 +143,6 @@ function renderDetail(
   return view
 }
 
-/** Tab 列表行（带选中标记；listRows 是全树过滤，不受树折叠影响） */
-function tabListRow(text: string, selected: boolean, width: number, theme: ThemeLike): string {
-  const line = `${selected ? "> " : "  "}${text}`
-  return truncateToWidth(selected ? theme.fg("accent", theme.bold(line)) : line, width)
-}
-
-function renderAgentsTab(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
-  const agents = (state.listRows ?? state.rows).filter((r) => r.kind === "agent")
-  if (!agents.length) return [theme.fg("muted", "  （无 Agent 节点）")]
-  return agents.slice(0, bodyRows).map((a, idx) => {
-    const parts = [statusIcon(a.status), a.label, fmtDuration(a.durationMs)]
-    if (a.metadata?.model) parts.push(a.metadata.model)
-    if (a.metadata?.tokens != null) parts.push(`${a.metadata.tokens}tok`)
-    if (a.metadata?.replayed) parts.push("[回放]")
-    return tabListRow(parts.filter(Boolean).join("  "), idx === state.listSelectedIndex, width, theme)
-  })
-}
-
-function renderToolsTab(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
-  const tools = (state.listRows ?? state.rows).filter((r) => r.kind === "tool")
-  if (!tools.length) return [theme.fg("muted", "  （无工具节点——runTool / MCP 调用会出现在这里）")]
-  return tools
-    .slice(0, bodyRows)
-    .map((t, idx) => tabListRow(`${statusIcon(t.status)} ${t.label}  ${fmtDuration(t.durationMs)}`, idx === state.listSelectedIndex, width, theme))
-}
-
-function renderJournalTab(state: ExplorerViewState, width: number, bodyRows: number, theme: ThemeLike): string[] {
-  const agents = (state.listRows ?? state.rows).filter((r) => r.kind === "agent")
-  const lines: string[] = []
-  for (const [idx, a] of agents.entries()) {
-    lines.push(tabListRow(`${a.label}  ${statusIcon(a.status)}${a.metadata?.replayed ? "  [replayed]" : ""}`, idx === state.listSelectedIndex, width, theme))
-    const detail = state.detail?.node.nodeKey === a.nodeKey ? state.detail : undefined
-    for (const e of detail?.agent?.executions ?? []) {
-      lines.push(truncateToWidth(`  #${e.attempt} ${statusIcon(e.status)} ${fmtDuration(e.durationMs)}${e.error ? `  ${e.error.slice(0, 60)}` : ""}`, width))
-    }
-  }
-  if (!lines.length) return [theme.fg("muted", "  （无执行历史）")]
-  return lines.slice(0, bodyRows)
-}
-
 export interface RenderHooks {
   /** 详情内容最大滚动起点（渲染层才知道内容行数）；Controller 用它钳制 End/↓ */
   onDetailMaxScroll?: (maxStart: number) => void
@@ -206,41 +158,17 @@ export function renderExplorerFrame(
 ): string[] {
   const lines: string[] = []
 
-  // Tab 栏 + 当前 run
-  const tabs = TAB_LABELS.map((t) => (t.id === state.activeTab ? theme.fg("accent", theme.bold(`[${t.label}]`)) : theme.fg("muted", ` ${t.label} `))).join("")
+  // 头部：当前 run（无 Tab 栏）
   const runRow = state.runs.find((r) => r.runId === state.activeRunId)
-  const runText = runRow ? `  ${statusIcon(runRow.status)} ${runRow.label ?? runRow.runId} (${runRow.agentsDone}/${runRow.agentsTotal})` : "  （无 run）"
-  lines.push(truncateToWidth(`${tabs}${runText}`, width))
-
-  const hintRow = state.runs.length > 1 ? theme.fg("muted", `runs ${state.runs.length} 个（o 切换）`) : ""
-  if (hintRow) lines.push(truncateToWidth(hintRow, width))
+  const runText = runRow
+    ? `${statusIcon(runRow.status)} ${runRow.label ?? runRow.runId} (${runRow.agentsDone}/${runRow.agentsTotal})`
+    : "（无 run）"
+  const runSwitch = state.runs.length > 1 ? theme.fg("muted", `  · runs ${state.runs.length}（r 切换）`) : ""
+  lines.push(truncateToWidth(`${runText}${runSwitch}`, width))
 
   const bodyHeight = Math.max(4, bodyRows - lines.length - 1)
-  const wide = width >= 110
 
-  if (state.activeTab !== "workflow") {
-    const body =
-      state.activeTab === "agents"
-        ? renderAgentsTab(state, width, bodyHeight, theme)
-        : state.activeTab === "tools"
-          ? renderToolsTab(state, width, bodyHeight, theme)
-          : renderJournalTab(state, width, bodyHeight, theme)
-    lines.push(...body)
-  } else if (wide) {
-    const leftWidth = Math.max(32, Math.floor(width * 0.52))
-    const rightWidth = Math.max(20, width - leftWidth - 1)
-    const depthMap = depthMapOf(state.rows)
-    const treeLines = state.rows.map((node, idx) =>
-      renderTreeRow(node, depthMap.get(node.nodeKey) ?? 0, leftWidth, idx === state.selectedIndex && state.focus === "tree", !state.collapsedNodeKeys.has(node.nodeKey), theme),
-    )
-    const detailLines = renderDetail(state.detail, rightWidth, state.detailScrollTop, bodyHeight, theme, hooks.onDetailMaxScroll)
-    const start = treeWindowStart(state, bodyHeight)
-    for (let i = 0; i < bodyHeight; i++) {
-      const l = treeLines[start + i] ?? ""
-      const r = detailLines[i] ?? ""
-      lines.push(`${truncateToWidth(l, leftWidth, "", true)}${theme.fg("borderMuted", "|")}${truncateToWidth(r, rightWidth, "", true)}`)
-    }
-  } else if (state.focus === "detail") {
+  if (state.view === "detail") {
     lines.push(...renderDetail(state.detail, width, state.detailScrollTop, bodyHeight, theme, hooks.onDetailMaxScroll))
   } else {
     const depthMap = depthMapOf(state.rows)
@@ -250,17 +178,15 @@ export function renderExplorerFrame(
       const idx = start + i
       lines.push(renderTreeRow(node, depthMap.get(node.nodeKey) ?? 0, width, idx === state.selectedIndex, !state.collapsedNodeKeys.has(node.nodeKey), theme))
     })
+    if (!state.rows.length) lines.push(theme.fg("muted", "  （无节点——执行 workflow 后这里会出现执行树）"))
   }
 
+  // 底部键位提示（对齐 opencode：up/k、down/j、enter 展开、o 详情、esc/q 返回）
   const fullHints =
-    state.activeTab === "workflow"
-      ? state.focus === "detail"
-        ? "up/down 滚动  left/right 上下节点  esc 返回树  tab 切 Tab  ctrl+b/q 关闭"
-        : "up/down 选择  right/enter 展开或详情  left 收起  tab 切 Tab  o 切 run  ctrl+b/q 关闭"
-      : "tab 切 Tab  ctrl+b/q 关闭"
-  // 窄终端换短提示，不依赖截断（截断会丢掉关键键位信息）
-  const shortHints =
-    state.activeTab !== "workflow" ? "tab / ^B" : state.focus === "detail" ? "↑↓ 滚动  ←→ 节点  esc 返回  ^B" : "↑↓ 选择  →/enter 详情  ← 收起  ^B"
+    state.view === "detail"
+      ? "↑/↓ 滚动  ←/→ 上/下一个节点  esc/q 返回树  ^B 关闭"
+      : "↑/k ↓/j 选择  →/enter 展开  ← 收起  o 详情  esc/q 关闭"
+  const shortHints = state.view === "detail" ? "↑↓ 滚动  ←→ 节点  esc 返回" : "↑↓ 选择  → 展开  o 详情  q 退出"
   const hints = visibleWidth(fullHints) <= width ? fullHints : shortHints
   lines.push(truncateToWidth(theme.fg("muted", hints), width))
 
@@ -295,7 +221,7 @@ function depthMapOf(rows: WorkflowTreeNode[]): Map<string, number> {
 const BOX_LEFT = "| "
 const BOX_RIGHT = " |"
 
-/** 盒式包装（右侧栏视觉；宽度自适应） */
+/** 盒式包装（宽度自适应） */
 export function renderExplorerBox(
   state: ExplorerViewState,
   width: number,

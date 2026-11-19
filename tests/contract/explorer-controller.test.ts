@@ -57,7 +57,7 @@ test("Controller: 关闭再打开保持选中节点与 Tab（逻辑单实例常�
   // 选中第二个 agent 并展开 phase
   const agentRow = rows.find((r) => r.label === "A2")!
   nav.select(agentRow.nodeKey)
-  nav.setTab("agents")
+  nav.openDetail()
   const selectedBefore = nav.state.selectedNodeKey
 
   explorer.hide()
@@ -66,7 +66,7 @@ test("Controller: 关闭再打开保持选中节点与 Tab（逻辑单实例常�
   // 重新打开：状态不丢
   explorer.open(() => renders++)
   assert.equal(explorer.nav!.state.selectedNodeKey, selectedBefore, "选中节点保持")
-  assert.equal(explorer.nav!.state.activeTab, "agents", "Tab 保持")
+  assert.equal(explorer.nav!.state.view, "detail", "视图态保持（详情）")
   explorer.dispose()
 })
 
@@ -98,7 +98,7 @@ test("Controller: 后台事件到达不改变选中节点", () => {
   explorer.dispose()
 })
 
-test("Controller: 切 Tab 不清空树展开态，Tab 循环闭合", () => {
+test("Controller: 详情/树两态切换不清空树展开态", () => {
   const bus = new RuntimeEventBus()
   const rm = new RunManager(2, bus)
   const explorer = new ExplorerController({ runManager: rm, eventBus: bus, journalDir: "/tmp/none" })
@@ -110,15 +110,12 @@ test("Controller: 切 Tab 不清空树展开态，Tab 循环闭合", () => {
   nav.select(wf.nodeKey)
   nav.left() // 收起
   const collapsed = nav.visibleRows().length
-  nav.setTab("tools")
-  nav.setTab("workflow")
-  assert.equal(nav.visibleRows().length, collapsed, "切 Tab 不影响展开态")
-  // 4 个 Tab 循环
-  nav.setTab("workflow")
-  for (const expect of ["agents", "tools", "journal", "workflow"]) {
-    nav.nextTab(1)
-    assert.equal(nav.state.activeTab, expect)
-  }
+  // 进详情再返回树：展开态不变（B2 两态满屏）
+  nav.openDetail()
+  assert.equal(nav.state.view, "detail")
+  nav.escape()
+  assert.equal(nav.state.view, "tree")
+  assert.equal(nav.visibleRows().length, collapsed, "详情往返不影响展开态")
   explorer.dispose()
 })
 
@@ -153,13 +150,13 @@ test("Controller: 导航动作（上下左右/详情/返回）语义", () => {
   const afterDown = nav.state.selectedNodeKey
   assert.equal(nav.selectedNode?.kind, "phase", "down 选中 phase")
 
-  explorer.handleKey("enter") // 进入详情
-  assert.equal(nav.state.focus, "detail")
+  explorer.handleKey("o") // 打开全屏详情
+  assert.equal(nav.state.view, "detail")
   explorer.handleKey("right") // 详情态右 → 下一个节点
   assert.notEqual(nav.state.selectedNodeKey, afterDown, "详情态 right 切换节点")
 
   explorer.handleKey("escape")
-  assert.equal(nav.state.focus, "tree", "esc 从详情回到树")
+  assert.equal(nav.state.view, "tree", "esc 从详情回到树")
 
   explorer.handleKey("left") // 无子节点且已收起 → 回到父级
   assert.ok(nav.selectedNode, "left 回到父节点")

@@ -1,33 +1,37 @@
 /**
- * ExplorerNavigationState / NavigationModel —— 导航状态机（M4）。
+ * ExplorerNavigationState / NavigationModel —— 导航状态机。
  *
- * 双状态分离（架构设计 §4.2 / §9）：
- *   - 导航状态（selectedNodeKey / expandedNodeKeys / focus）：用户在看哪
- *   - 展示状态（detailScrollTop / detailContentKey）：详情区在展示什么
- * 两者不混为一个字段，否则后台事件刷新会与用户跨节点切换互相打架。
+ * 交互模型对齐 REF-001（opencode-dynamic-workflows）：**单树 + 全屏详情两态**，无 Tab。
+ *   view = "tree"   执行树（唯一入口视图）
+ *   view = "detail" 当前节点的全屏详情（opencode 的 node detail route 等价物）
  *
- * 纯状态机：不依赖 TUI，输入是逻辑键名（keys.ts 归一化后的 up/down/left/right/enter/escape/tab/home/end）。
+ * 双状态分离（架构设计 §4.2）：导航状态（选中/折叠）与展示状态（详情滚动）互不覆盖，
+ * 后台事件刷新不会抢走焦点。
+ *
+ * 键位（对齐 opencode 的 up/k、down/j、escape/q 语义）：
+ *   tree:   ↑/k ↓/j 选择   →/enter 展开（已展开则进首个子节点）   ← 收起/回父级
+ *           o 打开详情     Home/End 首/末节点                    ^B/q 关闭
+ *   detail: ↑/↓ 滚动  ←/→ 上一个/下一个节点  Esc/q 返回树
+ *
+ * 纯状态机：不依赖 TUI，输入是逻辑键名（keys.ts 归一化后的 up/down/left/right/enter/escape/home/end/o）。
  */
 
 import type { WorkflowTreeNode } from "./workflow-tree-model.js"
 
-export type ExplorerTab = "workflow" | "agents" | "tools" | "journal"
-export const EXPLORER_TABS: ExplorerTab[] = ["workflow", "agents", "tools", "journal"]
-
-export type ExplorerFocus = "tree" | "detail"
+/** 全屏视图态（B2：两个视图满屏切换，不再有 Tab 与分栏） */
+export type ExplorerView = "tree" | "detail"
 
 export type NavigationEffect =
   | { kind: "redraw" }
   | { kind: "close" }
-  /** 详情数据需要异步加载（Agent → journal 读取） */
+  /** 详情数据加载（Agent → journal 读取；同步实现，保留 effect 便于将来异步化） */
   | { kind: "load-detail"; nodeKey: string }
 
 export interface ExplorerNavigationState {
-  activeTab: ExplorerTab
   selectedNodeKey?: string
   /** 显式收起的节点（缺省全部展开：运行中的树通常只有几十个节点，默认展开信息量更大） */
   collapsedNodeKeys: Set<string>
-  focus: ExplorerFocus
+  view: ExplorerView
   detailScrollTop: number
   /** 详情内容的最大滚动起点（渲染层回报；End/↓ 用它钳制，避免越界白屏） */
   detailMaxScroll: number
@@ -41,9 +45,8 @@ export interface NavigationHost {
 
 export class NavigationModel {
   state: ExplorerNavigationState = {
-    activeTab: "workflow",
     collapsedNodeKeys: new Set<string>(),
-    focus: "tree",
+    view: "tree",
     detailScrollTop: 0,
     detailMaxScroll: 0,
   }
@@ -81,7 +84,7 @@ export class NavigationModel {
     this.state.selectedNodeKey = root?.children[0] ?? this.host.rootKey()
   }
 
-  /** 节点被删除/不可达时回退到最近的有效父节点（架构设计 §9.3） */
+  /** 节点被删除/不可达时回退到有效节点（架构设计 §9.3） */
   pruneSelection(): void {
     if (!this.state.selectedNodeKey) return
     if (this.host.node(this.state.selectedNodeKey)) return
@@ -94,32 +97,20 @@ export class NavigationModel {
     this.state.detailMaxScroll = 0
   }
 
-  setTab(tab: ExplorerTab): void {
-    this.state.activeTab = tab
-    this.state.focus = "tree"
-    this.state.detailScrollTop = 0
-  }
-
-  nextTab(dir: 1 | -1): void {
-    const idx = EXPLORER_TABS.indexOf(this.state.activeTab)
-    const next = (idx + dir + EXPLORER_TABS.length) % EXPLORER_TABS.length
-    this.setTab(EXPLORER_TABS[next])
-  }
-
   // ---- 按键动作（返回需要宿主配合的 effect）----
 
   up(): NavigationEffect[] {
-    if (this.state.focus === "detail") return this.scrollDetail(-1)
+    if (this.state.view === "detail") return this.scrollDetail(-1)
     return this.moveSelection(-1)
   }
 
   down(): NavigationEffect[] {
-    if (this.state.focus === "detail") return this.scrollDetail(1)
+    if (this.state.view === "detail") return this.scrollDetail(1)
     return this.moveSelection(1)
   }
 
   home(): NavigationEffect[] {
-    if (this.state.focus === "detail") {
+    if (this.state.view === "detail") {
       this.state.detailScrollTop = 0
       return [{ kind: "redraw" }]
     }
@@ -129,7 +120,7 @@ export class NavigationModel {
   }
 
   end(): NavigationEffect[] {
-    if (this.state.focus === "detail") {
+    if (this.state.view === "detail") {
       this.state.detailScrollTop = this.state.detailMaxScroll
       return [{ kind: "redraw" }]
     }
@@ -138,27 +129,15 @@ export class NavigationModel {
     return [{ kind: "redraw" }]
   }
 
-  /** → ：树模式下展开子节点；无子节点则进入详情。详情模式下切换到下一个节点 */
+  /** → ：树里展开（已展开则进首个子节点）；详情态切到下一个节点 */
   right(): NavigationEffect[] {
-    if (this.state.focus === "detail") return this.moveSelection(1)
-    const node = this.selectedNode
-    if (!node) return [{ kind: "redraw" }]
-    if (node.children.length) {
-      if (this.state.collapsedNodeKeys.has(node.nodeKey)) {
-        this.state.collapsedNodeKeys.delete(node.nodeKey)
-      } else {
-        // 已展开：进入第一个子节点
-        const first = node.children[0]
-        if (first) this.select(first)
-      }
-      return [{ kind: "redraw" }]
-    }
-    return this.enter()
+    if (this.state.view === "detail") return this.moveSelection(1)
+    return this.expandOrEnterChild()
   }
 
-  /** ← ：收起或回到父级；详情模式切换到上一个节点 */
+  /** ← ：收起或回父级；详情态切到上一个节点 */
   left(): NavigationEffect[] {
-    if (this.state.focus === "detail") return this.moveSelection(-1)
+    if (this.state.view === "detail") return this.moveSelection(-1)
     const node = this.selectedNode
     if (!node) return [{ kind: "redraw" }]
     if (node.children.length && !this.state.collapsedNodeKeys.has(node.nodeKey)) {
@@ -172,20 +151,26 @@ export class NavigationModel {
     return [{ kind: "redraw" }]
   }
 
-  /** Enter ：进入详情 */
+  /** Enter ：展开（已展开则进首个子节点）—— 对齐 opencode：Enter 不进详情，详情走 o */
   enter(): NavigationEffect[] {
+    if (this.state.view === "detail") return [{ kind: "redraw" }]
+    return this.expandOrEnterChild()
+  }
+
+  /** o ：打开当前节点的全屏详情（opencode 的 node detail route） */
+  openDetail(): NavigationEffect[] {
     const node = this.selectedNode
     if (!node) return [{ kind: "redraw" }]
-    if (node.children.length) this.state.collapsedNodeKeys.delete(node.nodeKey)
-    this.state.focus = "detail"
+    this.state.view = "detail"
     this.state.detailScrollTop = 0
+    this.state.detailMaxScroll = 0
     return [{ kind: "redraw" }, { kind: "load-detail", nodeKey: node.nodeKey }]
   }
 
-  /** Esc ：详情 → 树；树 → 关闭面板（由 Controller 决定 close 语义） */
+  /** Esc / q ：详情 → 树；树 → 关闭面板（由 Controller 决定 close 语义） */
   escape(): NavigationEffect[] {
-    if (this.state.focus === "detail") {
-      this.state.focus = "tree"
+    if (this.state.view === "detail") {
+      this.state.view = "tree"
       return [{ kind: "redraw" }]
     }
     return [{ kind: "close" }]
@@ -204,6 +189,19 @@ export class NavigationModel {
     if (this.state.detailScrollTop > this.state.detailMaxScroll) {
       this.state.detailScrollTop = this.state.detailMaxScroll
     }
+  }
+
+  private expandOrEnterChild(): NavigationEffect[] {
+    const node = this.selectedNode
+    if (!node) return [{ kind: "redraw" }]
+    if (!node.children.length) return [{ kind: "redraw" }]
+    if (this.state.collapsedNodeKeys.has(node.nodeKey)) {
+      this.state.collapsedNodeKeys.delete(node.nodeKey)
+      return [{ kind: "redraw" }]
+    }
+    const first = node.children[0]
+    if (first) this.select(first)
+    return [{ kind: "redraw" }]
   }
 
   private moveSelection(delta: number): NavigationEffect[] {
