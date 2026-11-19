@@ -8,7 +8,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { openExplorer } from "../../extensions/explorer/index.js"
+import { openExplorer, closeExplorer } from "../../extensions/explorer/index.js"
 import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
 import { RunManager } from "../../src/manager/run-manager.js"
 import { ExplorerController } from "../../src/explorer/controller/explorer-controller.js"
@@ -135,4 +135,35 @@ test("Overlay: r 键在多个 run 间轮换", async () => {
   captured.component.handleInput("r")
   assert.equal(explorer.activeRun, "r2", "r 轮换到下一个 run")
   explorer.dispose()
+})
+
+test("Overlay: 详情态 PgUp/PgDn 按视口翻页滚动（↑ 已改为返回树）", async () => {
+  const { explorer } = seed()
+  const { ui, captured } = fakeUi()
+  await openExplorer(explorer, ui)
+  const nav = explorer.nav
+  nav.ensureSelection()
+  captured.component.handleInput("\r") // enter → 详情
+  assert.equal(nav.state.view, "detail")
+
+  // 触发一次 render：渲染层回报视口行数与最大滚动起点
+  captured.component.render(90)
+  assert.ok(nav.state.pageSize > 0, "视口行数已回报")
+  const pageSize = nav.state.pageSize
+
+  // 详情内容不足以滚动时不应越界
+  const before = nav.state.detailScrollTop
+  captured.component.handleInput("\x1b[6~") // PgDn
+  assert.ok(nav.state.detailScrollTop >= before)
+  assert.ok(nav.state.detailScrollTop <= nav.state.detailMaxScroll, "PgDn 不越界")
+
+  // 手动放大可滚动范围后验证按页步进
+  nav.setDetailMaxScroll(pageSize * 3)
+  nav.state.detailScrollTop = 0
+  captured.component.handleInput("\x1b[6~")
+  assert.equal(nav.state.detailScrollTop, pageSize, "PgDn 前进一页")
+  captured.component.handleInput("\x1b[5~")
+  assert.equal(nav.state.detailScrollTop, 0, "PgUp 回退一页")
+  explorer.dispose()
+  closeExplorer()
 })

@@ -154,6 +154,11 @@ export class ExplorerController {
     this.navigation.setDetailMaxScroll(maxStart)
   }
 
+  /** 渲染层回报视口行数（翻页步长，PgUp/PgDn 用） */
+  noteDetailPageSize(rows: number): void {
+    this.navigation.setPageSize(rows)
+  }
+
   /** 当前 run 的树模型（TUI 渲染与测试用） */
   get tree(): WorkflowTreeModel | undefined {
     return this.activeRunId ? this.trees.get(this.activeRunId) : undefined
@@ -202,9 +207,12 @@ export class ExplorerController {
       case "left":
         return nav.left()
       case "enter":
-        return nav.enter()
       case "o":
-        return nav.openDetail()
+        return nav.enter()
+      case "pageUp":
+        return nav.pageUp()
+      case "pageDown":
+        return nav.pageDown()
       case "escape":
       case "q":
         return nav.escape()

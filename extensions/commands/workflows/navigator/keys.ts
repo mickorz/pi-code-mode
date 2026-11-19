@@ -25,8 +25,15 @@ export function mapKey(data: string): string {
     case "\t":
       return "tab"
     case "\x1b[Z":
-      // Shift+Tab（部分终端发 CSI Z）：Explorer 用它反向切 Tab
+      // Shift+Tab（部分终端发 CSI Z）
       return "shiftTab"
+    case "\x1b[5~":
+    case "\x1b[5;2~":
+      // PageUp（xterm CSI 5~；带修饰位的变体同样归一）
+      return "pageUp"
+    case "\x1b[6~":
+    case "\x1b[6;2~":
+      return "pageDown"
   }
   // 单个可打印字符原样透传（含中文；filter 模式逐字符追加）
   if (data.length === 1 && data >= " ") return data

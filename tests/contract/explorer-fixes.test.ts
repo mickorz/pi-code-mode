@@ -202,11 +202,12 @@ test("M3: 详情 End / 连续 ↓ 被钳制到最大滚动起点（不越界白�
   for (const effect of nav.end()) assert.equal(effect.kind, "redraw")
   assert.equal(nav.state.detailScrollTop, 7, "End 钳到最大起点")
 
-  nav.down()
-  assert.equal(nav.state.detailScrollTop, 7, "已在末尾时 ↓ 不越界")
+  nav.pageDown()
+  assert.equal(nav.state.detailScrollTop, 7, "已在末尾时 PgDn 不越界")
 
-  nav.up()
-  assert.equal(nav.state.detailScrollTop, 6, "从真实末尾回退一位（不是从 MAX_SAFE_INTEGER）")
+  nav.setPageSize(3)
+  nav.pageUp()
+  assert.equal(nav.state.detailScrollTop, 4, "PgUp 按视口行数回退（不是从 MAX_SAFE_INTEGER）")
 
   nav.setDetailMaxScroll(0)
   assert.equal(nav.state.detailScrollTop, 0, "内容变短时滚动位置回收")

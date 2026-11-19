@@ -43,7 +43,9 @@
 
 - [x] B1 去掉四 Tab，改为单执行树（Tools 本就是树内节点；Journal 的 attempts 信息在详情面板呈现）
 - [x] B2 详情改为**全屏**视图（等价 opencode 的 node detail route），Esc/q 返回树；不再有左右分栏
-- [x] B3 键位语义对齐：`enter`/`→` 展开（已展开则进首个子节点）、`o` 打开详情、`↑/k`、`↓/j`、`Esc/q`
+- [x] B3 键位语义对齐：`→` 展开（已展开则进首个子节点）、`Enter`/`o` 打开详情、`↑/k`、`↓/j`、`Esc/q`
+      - 2026-11-18 二次调整（使用者反馈）：`Enter` 改为**进入详情**；详情滚动改 `PgUp/PgDn`；
+        详情态 `↑` 改为**返回树**；树内 `PgUp/PgDn` 按页移动选中
 - [x] B4 底部提示按视图给键位（tree / detail 两套），窄终端自动切短提示
 - [x] B5 迁移测试：controller（Tab→两态）、render（Tab 用例→树/详情满屏用例）、overlay（enter→o、o→r 切 run）、fixes（M4 Tab 用例改为折叠等价覆盖）
 

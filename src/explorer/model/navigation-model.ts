@@ -8,10 +8,10 @@
  * 双状态分离（架构设计 §4.2）：导航状态（选中/折叠）与展示状态（详情滚动）互不覆盖，
  * 后台事件刷新不会抢走焦点。
  *
- * 键位（对齐 opencode 的 up/k、down/j、escape/q 语义）：
- *   tree:   ↑/k ↓/j 选择   →/enter 展开（已展开则进首个子节点）   ← 收起/回父级
- *           o 打开详情     Home/End 首/末节点                    ^B/q 关闭
- *   detail: ↑/↓ 滚动  ←/→ 上一个/下一个节点  Esc/q 返回树
+ * 键位（2026-11-18 二次调整，按使用者反馈）：
+ *   tree:   ↑/k ↓/j 选择   PgUp/PgDn 翻页选择   → 展开（已展开则进首个子节点）
+ *           ← 收起/回父级   Enter/o 打开详情   Home/End 首/末节点   Esc/q/^B 关闭
+ *   detail: PgUp/PgDn 滚动   ↑ 返回树   ←/→ 上一个/下一个节点   Esc/q 返回树
  *
  * 纯状态机：不依赖 TUI，输入是逻辑键名（keys.ts 归一化后的 up/down/left/right/enter/escape/home/end/o）。
  */
@@ -33,8 +33,10 @@ export interface ExplorerNavigationState {
   collapsedNodeKeys: Set<string>
   view: ExplorerView
   detailScrollTop: number
-  /** 详情内容的最大滚动起点（渲染层回报；End/↓ 用它钳制，避免越界白屏） */
+  /** 详情内容的最大滚动起点（渲染层回报；End/PgDn 用它钳制，避免越界白屏） */
   detailMaxScroll: number
+  /** 翻页步长（渲染层按视口行数回报；PgUp/PgDn 与 Home/End 用） */
+  pageSize: number
 }
 
 export interface NavigationHost {
@@ -49,6 +51,7 @@ export class NavigationModel {
     view: "tree",
     detailScrollTop: 0,
     detailMaxScroll: 0,
+    pageSize: 10,
   }
 
   constructor(private readonly host: NavigationHost) {}
@@ -99,14 +102,26 @@ export class NavigationModel {
 
   // ---- 按键动作（返回需要宿主配合的 effect）----
 
+  /** ↑/k ：树里上移；**详情态回树**（滚动改用 PgUp/PgDn） */
   up(): NavigationEffect[] {
-    if (this.state.view === "detail") return this.scrollDetail(-1)
+    if (this.state.view === "detail") return this.escape()
     return this.moveSelection(-1)
   }
 
   down(): NavigationEffect[] {
-    if (this.state.view === "detail") return this.scrollDetail(1)
+    if (this.state.view === "detail") return [{ kind: "redraw" }]
     return this.moveSelection(1)
+  }
+
+  /** PgUp/PgDn ：详情态按视口翻页滚动；树里按页移动选中 */
+  pageUp(): NavigationEffect[] {
+    if (this.state.view === "detail") return this.scrollDetail(-this.state.pageSize)
+    return this.moveSelection(-this.state.pageSize)
+  }
+
+  pageDown(): NavigationEffect[] {
+    if (this.state.view === "detail") return this.scrollDetail(this.state.pageSize)
+    return this.moveSelection(this.state.pageSize)
   }
 
   home(): NavigationEffect[] {
@@ -151,10 +166,9 @@ export class NavigationModel {
     return [{ kind: "redraw" }]
   }
 
-  /** Enter ：展开（已展开则进首个子节点）—— 对齐 opencode：Enter 不进详情，详情走 o */
+  /** Enter ：打开当前节点的全屏详情（与 o 同义；展开由 → 负责） */
   enter(): NavigationEffect[] {
-    if (this.state.view === "detail") return [{ kind: "redraw" }]
-    return this.expandOrEnterChild()
+    return this.openDetail()
   }
 
   /** o ：打开当前节点的全屏详情（opencode 的 node detail route） */
@@ -181,6 +195,12 @@ export class NavigationModel {
     const base = Math.min(this.state.detailScrollTop, this.state.detailMaxScroll)
     this.state.detailScrollTop = Math.min(this.state.detailMaxScroll, Math.max(0, base + delta))
     return [{ kind: "redraw" }]
+  }
+
+  /** 渲染层回报视口行数（翻页步长） */
+  setPageSize(rows: number): void {
+    const size = Math.max(1, Math.trunc(rows) || 1)
+    this.state.pageSize = size
   }
 
   /** 渲染层回报详情内容的最大滚动起点（内容行数 - 视口行数） */

@@ -133,8 +133,10 @@ function renderDetail(
   bodyRows: number,
   theme: ThemeLike,
   onMaxScroll?: (maxStart: number) => void,
+  onPageSize?: (rows: number) => void,
 ): string[] {
   const lines = detailLinesOf(d, width, theme)
+  onPageSize?.(Math.max(1, bodyRows))
   const maxStart = Math.max(0, lines.length - Math.max(1, bodyRows))
   onMaxScroll?.(maxStart)
   const start = Math.min(Math.max(0, scrollTop), maxStart)
@@ -144,8 +146,10 @@ function renderDetail(
 }
 
 export interface RenderHooks {
-  /** 详情内容最大滚动起点（渲染层才知道内容行数）；Controller 用它钳制 End/↓ */
+  /** 详情内容最大滚动起点（渲染层才知道内容行数）；Controller 用它钳制 End/PgDn */
   onDetailMaxScroll?: (maxStart: number) => void
+  /** 视口行数（翻页步长，PgUp/PgDn 用） */
+  onDetailPageSize?: (rows: number) => void
 }
 
 /** 主渲染：返回 overlay 正文行（不含边框） */
@@ -169,7 +173,7 @@ export function renderExplorerFrame(
   const bodyHeight = Math.max(4, bodyRows - lines.length - 1)
 
   if (state.view === "detail") {
-    lines.push(...renderDetail(state.detail, width, state.detailScrollTop, bodyHeight, theme, hooks.onDetailMaxScroll))
+    lines.push(...renderDetail(state.detail, width, state.detailScrollTop, bodyHeight, theme, hooks.onDetailMaxScroll, hooks.onDetailPageSize))
   } else {
     const depthMap = depthMapOf(state.rows)
     const start = treeWindowStart(state, bodyHeight)
@@ -184,9 +188,9 @@ export function renderExplorerFrame(
   // 底部键位提示（对齐 opencode：up/k、down/j、enter 展开、o 详情、esc/q 返回）
   const fullHints =
     state.view === "detail"
-      ? "↑/↓ 滚动  ←/→ 上/下一个节点  esc/q 返回树  ^B 关闭"
-      : "↑/k ↓/j 选择  →/enter 展开  ← 收起  o 详情  esc/q 关闭"
-  const shortHints = state.view === "detail" ? "↑↓ 滚动  ←→ 节点  esc 返回" : "↑↓ 选择  → 展开  o 详情  q 退出"
+      ? "PgUp/PgDn 滚动  ←/→ 上/下一个节点  ↑/esc/q 返回树  ^B 关闭"
+      : "↑/k ↓/j 选择  PgUp/PgDn 翻页  → 展开  ← 收起  enter/o 详情  esc/q 关闭"
+  const shortHints = state.view === "detail" ? "PgUp/Dn 滚动  ←→ 节点  ↑ 返回" : "↑↓ 选择  → 展开  enter 详情  q 退出"
   const hints = visibleWidth(fullHints) <= width ? fullHints : shortHints
   lines.push(truncateToWidth(theme.fg("muted", hints), width))
 

@@ -150,7 +150,7 @@ test("Controller: 导航动作（上下左右/详情/返回）语义", () => {
   const afterDown = nav.state.selectedNodeKey
   assert.equal(nav.selectedNode?.kind, "phase", "down 选中 phase")
 
-  explorer.handleKey("o") // 打开全屏详情
+  explorer.handleKey("enter") // Enter 打开全屏详情
   assert.equal(nav.state.view, "detail")
   explorer.handleKey("right") // 详情态右 → 下一个节点
   assert.notEqual(nav.state.selectedNodeKey, afterDown, "详情态 right 切换节点")
