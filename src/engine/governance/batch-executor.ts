@@ -41,6 +41,8 @@ export interface BatchExecutorOptions {
   maxAttempts?: number
   /** 租约时长（缺省 10 分钟） */
   leaseMs?: number
+  /** 单任务硬超时（缺省不设；超时即失败并释放租约，防止挂死任务永久占用） */
+  taskTimeoutMs?: number
 }
 
 export interface TaskOutcome {
@@ -69,6 +71,24 @@ export interface BatchResult {
   }
 }
 
+/** 单任务超时包装（超时即 reject，交给失败路径释放租约） */
+function withTaskTimeout<T>(run: () => Promise<T>, timeoutMs: number | undefined, taskKey: string): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return run()
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`任务超时（${timeoutMs}ms）：${taskKey}`)), timeoutMs)
+    run().then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
 /** 并发限制器（保序执行，超出排队） */
 function createLimiter(limit: number) {
   let active = 0
@@ -87,7 +107,11 @@ function createLimiter(limit: number) {
 
 export class BatchExecutor {
   private readonly registry: TaskRegistry
-  private readonly opts: Required<Omit<BatchExecutorOptions, "cwd" | "storageDir">> & { cwd: string; storageDir: string }
+  private readonly opts: Required<Omit<BatchExecutorOptions, "cwd" | "storageDir" | "taskTimeoutMs">> & {
+    cwd: string
+    storageDir: string
+    taskTimeoutMs?: number
+  }
 
   constructor(options: BatchExecutorOptions) {
     const cwd = options.cwd ?? process.cwd()
@@ -100,6 +124,7 @@ export class BatchExecutor {
       resume: options.resume ?? true,
       maxAttempts: Math.max(1, options.maxAttempts ?? 1),
       leaseMs: options.leaseMs ?? 10 * 60_000,
+      ...(options.taskTimeoutMs !== undefined ? { taskTimeoutMs: options.taskTimeoutMs } : {}),
     }
     this.registry = new TaskRegistry({ dir: this.opts.storageDir, workflowId: this.opts.workflowId })
   }
@@ -114,10 +139,19 @@ export class BatchExecutor {
       tasks.map((task) =>
         limit(async () => {
           const started = Date.now()
-          const fingerprint = computeTaskFingerprint({
-            taskKey: task.taskKey,
-            ...(task.fingerprint ?? { promptHash: contentHash(task.taskKey) }),
-          })
+          // M6-P1-1：缺 fingerprint 时不再只 hash taskKey（会导致输入变化复用陈旧产物）
+          if (!task.fingerprint) {
+            return {
+              taskKey: task.taskKey,
+              status: "failed" as TaskStatus,
+              reused: false,
+              attempts: 0,
+              durationMs: Date.now() - started,
+              error:
+                "缺少 fingerprint：BatchTask 必须提供 fingerprint（promptHash/inputHash 等），否则无法安全判定产物复用",
+            } satisfies TaskOutcome
+          }
+          const fingerprint = computeTaskFingerprint({ taskKey: task.taskKey, ...task.fingerprint })
 
           // ① resume：可复用 → 直接返回，零执行
           if (this.opts.resume) {
@@ -165,8 +199,10 @@ export class BatchExecutor {
 
           const leaseGeneration = acquired.checkpoint!.leaseGeneration
           let lastError: string | undefined
-          // 租约自动续期（M4-T1）：按 leaseMs 的 1/3 周期续租，避免超长任务（T0 基线 59min/agent）被接管
-          const renewTimer = setInterval(() => {
+          // 租约自动续期（M4-T1）：按 leaseMs 的 1/3 周期续租，避免超长任务被接管
+          // M6-P1-1：任务超时后停止续租（否则挂死任务永久占槽且租约永不过期）
+          let renewTimer: ReturnType<typeof setInterval> | undefined
+          const startRenew = () => setInterval(() => {
             try {
               this.registry.renew({
                 taskKey: task.taskKey,
@@ -178,7 +214,11 @@ export class BatchExecutor {
               /* 续期失败不中断任务（提交时仍有 CAS 校验兜底） */
             }
           }, Math.max(1000, Math.floor(this.opts.leaseMs / 3)))
-          if (typeof renewTimer.unref === "function") renewTimer.unref()
+
+          const clearRenew = () => {
+            if (renewTimer) clearInterval(renewTimer)
+            renewTimer = undefined
+          }
 
           // 本次运行内尝试计数（与历史 attempt 分离：接管失败任务时历史 attempt 已 >1）
           let localAttempt = 0
@@ -186,7 +226,13 @@ export class BatchExecutor {
           for (localAttempt = 1; localAttempt <= this.opts.maxAttempts; localAttempt++) {
             attempt = localAttempt
             try {
-              const value = await task.run({ attempt, leaseGeneration })
+              renewTimer = startRenew()
+              if (typeof renewTimer?.unref === "function") renewTimer.unref()
+              const value = await withTaskTimeout(
+                () => task.run({ attempt, leaseGeneration }),
+                this.opts.taskTimeoutMs,
+                task.taskKey,
+              )
               const committed = this.registry.commit({
                 taskKey: task.taskKey,
                 runId: this.opts.runId,
@@ -199,7 +245,7 @@ export class BatchExecutor {
                 lastError = `提交被拒：${committed.reason}`
                 break
               }
-              clearInterval(renewTimer)
+              clearRenew()
               return {
                 taskKey: task.taskKey,
                 status: "done" as TaskStatus,
@@ -213,7 +259,7 @@ export class BatchExecutor {
               if (localAttempt >= this.opts.maxAttempts) break
             }
           }
-          clearInterval(renewTimer)
+          clearRenew()
           this.registry.fail({
             taskKey: task.taskKey,
             runId: this.opts.runId,
