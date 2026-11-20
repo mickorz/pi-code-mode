@@ -23,6 +23,7 @@ import {
   type ManifestEntry,
 } from "../../../src/engine/runtime/workflow-registry.js"
 import type { Subcommand } from "./types.js"
+import { isDirectCommandSafeName } from "./direct-commands.js"
 
 export const registerSubcommand: Subcommand = {
   usage: "register|reg <脚本路径>        注册工作流（校验后配置入 .pi/workflows/register.json）",
@@ -72,7 +73,10 @@ export const registerSubcommand: Subcommand = {
     }
     ctx.ui.notify(
       `已注册 workflow "${workflowId}"（配置 ${path.resolve(cwd, ".pi/workflows/register.json")}，脚本保持原位 ${srcPath}）。` +
-        `移动或删除源文件后需重新 register；/workflows list 查看，执行用 /workflows run ${workflowId}`,
+        (isDirectCommandSafeName(workflowId)
+          ? `重启会话后可直接 /${workflowId} [k=v...] 直跑，当前会话请用 /workflows run ${workflowId}`
+          : `该 id 不适合作为顶层命令（限字母数字、下划线、连字符），执行用 /workflows run ${workflowId}`) +
+        `；移动或删除源文件后需重新 register，/workflows list 查看`,
       "info",
     )
   },

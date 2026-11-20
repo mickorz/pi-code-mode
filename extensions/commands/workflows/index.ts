@@ -78,3 +78,11 @@ export function registerWorkflowsCommand(pi: ExtensionAPI, deps: WorkflowsComman
 }
 
 export type { WorkflowsCommandDeps } from "./types.js"
+// 注册表顶层命令直跑（/<workflowId>）：非 /workflows 子命令，独立注册器
+// （同时满足 commands-structure 架构守卫对目录内文件的引用检查）
+export {
+  directCommandConflict,
+  isDirectCommandSafeName,
+  registerWorkflowDirectCommands,
+  type DirectCommandRegistration,
+} from "./direct-commands.js"

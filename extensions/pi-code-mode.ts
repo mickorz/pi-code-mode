@@ -41,7 +41,7 @@ import {
 import { createPlanValidateTool } from "../src/tools/plan-tool.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 import { createRenderScheduler } from "../src/manager/render-scheduler.js"
-import { registerWorkflowsCommand } from "./commands/workflows/index.js"
+import { registerWorkflowsCommand, registerWorkflowDirectCommands } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
 import { registerExplorerCommand } from "./commands/explorer.js"
 import { toggleExplorer } from "./explorer/index.js"
@@ -290,6 +290,18 @@ export default function extension(pi: ExtensionAPI): void {
   // ---- 斜杠命令（实现见 extensions/commands/，一命令一文件）----
   registerWorkflowsCommand(pi, { runManager, makeDeps, deliver })
   registerScheduleCommand(pi, { scheduler })
+
+  // ---- workflow 注册表顶层命令直跑（/<workflowId>）----
+  // 仅显式 manifest 模式注册；命名/冲突问题汇总为一条 warning（诊断由注册器返回）
+  pi.on("session_start", (_event, ctx) => {
+    const r = registerWorkflowDirectCommands(pi, { runManager, makeDeps, deliver }, ctx.cwd)
+    if (r.skipped.length) {
+      ctx.ui.notify(
+        `以下 workflow 未注册顶层斜杠命令（/workflows run <id> 仍可用）:\n  ${r.skipped.join("\n  ")}`,
+        "warning",
+      )
+    }
+  })
 
   // ---- widget 互斥协调器：固定模式 on → Explorer 常驻面板；off（默认）→ workflow-tasks ----
   const widgets = createWidgetCoordinator({ cwd: process.cwd(), taskWidget: taskWidgetSide(), fixedPanel: fixedPanelSide() })

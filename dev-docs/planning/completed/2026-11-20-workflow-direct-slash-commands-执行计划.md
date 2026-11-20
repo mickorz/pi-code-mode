@@ -1,7 +1,7 @@
 # Workflow 顶层斜杠命令直跑（/<workflowId>）执行计划
 
 > 对应调研：`dev-docs/research/2026-11-20-pi-dynamic-workflows-slash-command-integration.md`
-> 状态：评审修订完成，待执行
+> 状态：已实施（T1-T5 完成，T6 自动化部分完成，交互式端到端待人工）
 > 涉及模型调用：无（不涉及 model-tiers 档位确认）
 
 ---
@@ -267,12 +267,12 @@ pi.on("session_start", (_event, ctx) => {
 | 任务 | 状态 | 完成时间 | 备注 |
 |---|---|---|---|
 | 报告评审与计划修订 | 已完成 | 2026-11-20 | 修复 R1-R7，明确 manifest-only 边界 |
-| T1 direct-commands.ts | 未开始 | — | — |
-| T2 index.ts re-export | 未开始 | — | — |
-| T3 主入口装配 | 未开始 | — | — |
-| T4 register.ts 提示 | 未开始 | — | — |
-| T5 contract 测试 | 未开始 | — | — |
-| T6 构建与验收 | 未开始 | — | — |
+| T1 direct-commands.ts | 已完成 | 2026-11-20 | 注册器 + 27 保留名 + 调用时求值 |
+| T2 index.ts re-export | 已完成 | 2026-11-20 | 架构守卫通过 |
+| T3 主入口装配 | 已完成 | 2026-11-20 | session_start + 汇总 warning |
+| T4 register.ts 提示 | 已完成 | 2026-11-20 | 按命名安全性分支文案 |
+| T5 contract 测试 | 已完成 | 2026-11-20 | 12 项断言全绿；契约套件 229/229 |
+| T6 构建与验收 | 部分完成 | 2026-11-20 | build + test:contract 通过；真实注册表装配自检通过；交互式 TUI 端到端待人工 |
 
 完成实施后，将本文件移入 `dev-docs/planning/completed/`，并按项目规范同步 `dev-docs/progress/执行进度.md` 与 `dev-docs/progress-result/` 阶段报告。
 
