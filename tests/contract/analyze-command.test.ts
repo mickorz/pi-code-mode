@@ -52,6 +52,49 @@ test("analyze：完整报告落盘到 .pi/workflows/reports/", async () => {
   assert.match(notes.at(-1)!.text, /Dashboard/, "应提示 dashboard 路径")
 })
 
+test("analyze：传目录时分析目录下全部 js（不是只找入口）", async () => {
+  const dir = tmp()
+  const wf = path.join(dir, "demo-audit")
+  fs.mkdirSync(wf, { recursive: true })
+  fs.writeFileSync(path.join(wf, "a.js"), "export const meta = { name: 'a' }\nawait agent('x')\nreturn 1")
+  fs.writeFileSync(path.join(wf, "b.js"), "export const meta = { name: 'b' }\nawait agent('y')\nreturn 2")
+
+  const { notes, ctx } = ctxWith(dir)
+  await analyzeSubcommand.run(["demo-audit", "--no-suggest", "--no-open", "--no-rule-check"], ctx, deps)
+  const out = notes.at(-1)!.text
+  assert.match(out, /风险分 \d+\/100/, `传目录应成功分析，实际：${out.slice(0, 200)}`)
+  assert.doesNotMatch(out, /EISDIR/, "不得出现 EISDIR 报错")
+  // 关键：目录下所有 js 都参与分析（2 个文件 / 2 个调用点）
+  assert.match(out, /2 个文件/, "目录下全部 js 都要被分析")
+  assert.match(out, /2 个调用点/, "两个文件的调用点都要计入")
+})
+
+
+test("analyze：目录内唯一 workflow 脚本时可自动解析", async () => {
+  const dir = tmp()
+  const wf = path.join(dir, "solo")
+  fs.mkdirSync(wf, { recursive: true })
+  fs.writeFileSync(path.join(wf, "entry-v2.js"), "export const meta = { name: 'solo' }\nawait agent('x')\nreturn 1")
+  const { notes, ctx } = ctxWith(dir)
+  await analyzeSubcommand.run(["solo", "--no-suggest", "--no-open", "--no-rule-check"], ctx, deps)
+  assert.match(notes.at(-1)!.text, /风险分 \d+\/100/)
+})
+
+test("analyze：目录内多个 workflow 无同名入口 → 同样全部分析（不再要求指定入口）", async () => {
+  const dir = tmp()
+  const wf = path.join(dir, "multi")
+  fs.mkdirSync(wf, { recursive: true })
+  const BS = String.fromCharCode(92) + "n"
+  for (const n of ["a.js", "b.js"]) {
+    fs.writeFileSync(path.join(wf, n), `export const meta = { name: '${n}' }${BS}await agent('x')${BS}return 1`)
+  }
+  const { notes, ctx } = ctxWith(dir)
+  await analyzeSubcommand.run(["multi", "--no-suggest", "--no-open", "--no-rule-check"], ctx, deps)
+  const out = notes.at(-1)!.text
+  assert.doesNotMatch(out, /EISDIR/)
+  assert.doesNotMatch(out, /无法自动确定入口/, "目录模式不需要用户指定入口")
+  assert.match(out, /2 个文件/, "目录下两个脚本都要分析")
+})
 test("analyze：缺参数提示用法", async () => {
   const { notes, ctx } = ctxWith(tmp())
   await analyzeSubcommand.run([], ctx, deps)

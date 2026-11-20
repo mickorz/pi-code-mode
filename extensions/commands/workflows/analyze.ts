@@ -28,7 +28,23 @@ const REPORT_DIR = path.join(".pi", "workflows", "reports")
 /** 会话摘要里最多展示的 finding 条数（完整报告看文件） */
 const SUMMARY_FINDINGS = 6
 
-function resolveScript(cwd: string, ref: string): { source: string; label: string } | string {
+/**
+ * 解析分析目标：注册表名 / 文件 / **目录**（目录自动找入口）。
+ *
+ * 目录形态的必要性：真实 workflow 是「入口壳 + 同目录子流程」结构，
+ * 用户很自然地传目录（如 `.../game-requirement-audit`）。
+ * 此前直接 `readFileSync(目录)` 抛 EISDIR，堆栈完全无法理解。
+ */
+interface ResolvedScript {
+  source: string
+  label: string
+  /** 解析后的实际文件路径（单文件模式），供 analyzeWorkflow 的 tree 聚合使用 */
+  filePath?: string
+  /** 目录模式：该目录下全部 .js 都要分析 */
+  dirPath?: string
+}
+
+function resolveScript(cwd: string, ref: string): ResolvedScript | string {
   // 注册表名与路径都支持，与 /workflows run 语义一致
   try {
     const registry = loadRegistry(cwd)
@@ -40,7 +56,34 @@ function resolveScript(cwd: string, ref: string): { source: string; label: strin
   }
   const abs = path.resolve(cwd, ref)
   if (!fs.existsSync(abs)) return `找不到脚本：${ref}（相对项目根 ${cwd} 解析）`
-  return { source: fs.readFileSync(abs, "utf8"), label: ref }
+
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(abs)
+  } catch (e) {
+    return `无法访问 ${ref}：${String((e as Error)?.message ?? e)}`
+  }
+
+  if (stat.isDirectory()) {
+    return resolveFromDirectory(abs, ref)
+  }
+  return { source: fs.readFileSync(abs, "utf8"), label: ref, filePath: abs }
+}
+
+/**
+ * 目录模式：分析目录下**全部 .js**（用户语义：传文件夹就分析文件夹里的所有脚本）。
+ * 返回 files 列表，由 analyzeWorkflow({ dirPath }) 统一做聚合与 AI 阶段。
+ */
+function resolveFromDirectory(dir: string, ref: string): ResolvedScript | string {
+  let names: string[] = []
+  try {
+    names = fs.readdirSync(dir).filter((n) => /.(m?js)$/.test(n)).sort()
+  } catch (e) {
+    return `目录不可读：${ref}（${String((e as Error)?.message ?? e)}）`
+  }
+  if (names.length === 0) return `目录下没有 .js 文件：${ref}`
+  // dirPath 交给 analyzeWorkflow 读文件并聚合；这里只做存在性/清单校验，避免重复读盘
+  return { label: ref, dirPath: dir }
 }
 
 function renderSummary(input: {
@@ -147,7 +190,8 @@ ${ref}`, "info")
     }
     let result = await analyzeWorkflow({
       source: resolved.source,
-      ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
+      // 目录模式走 dirPath（分析全部 js）；单文件用解析后的真实路径（传目录时若把目录当 scriptPath，tree 聚合会 readFileSync(目录) 抛 EISDIR）
+      ...(ref.startsWith("registry:") ? {} : resolved.dirPath ? { dirPath: resolved.dirPath } : { scriptPath: resolved.filePath ?? ref }),
       cwd,
       includeSuggestions: false,
       includeRuleCheck: false,
@@ -206,7 +250,7 @@ ${ref}`, "info")
       try {
         const ai = await analyzeWorkflow({
           source: resolved.source,
-          ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
+          ...(ref.startsWith("registry:") ? {} : resolved.dirPath ? { dirPath: resolved.dirPath } : { scriptPath: resolved.filePath ?? ref }),
           cwd,
           includeSuggestions: withSuggestions,
           ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd, ...modelOpts }) } : {}),
@@ -326,7 +370,7 @@ function writeReports(
   try {
     const dir = path.join(cwd, REPORT_DIR)
     fs.mkdirSync(dir, { recursive: true })
-    const base = path.basename(ref, path.extname(ref))
+    const base = path.basename(ref.replace(/[/]$/, ""), path.extname(ref)) || path.basename(ref)
     const mdPath = path.join(dir, `${base}.analysis.md`)
     fs.writeFileSync(mdPath, result.rendered ?? "", "utf8")
     fs.writeFileSync(path.join(dir, `${base}.analysis.json`), JSON.stringify(result.report ?? {}, null, 2), "utf8")

@@ -37,6 +37,11 @@ import { runBenchmark, renderBenchmark, toEvaluation } from "../engine/evaluator
 export interface AnalyzeInput {
   /** 脚本路径（与 source 二选一） */
   scriptPath?: string
+  /**
+   * 目录模式：分析目录下**全部 .js**（每个都当平级 workflow，不是「入口 + 子流程」语义）。
+   * 与 scriptPath 互斥，scriptPath 优先。
+   */
+  dirPath?: string
   /** 内联脚本源码 */
   source?: string
   cwd?: string
@@ -82,14 +87,242 @@ export interface AnalyzeResult {
   reportPath?: string
 }
 
+/**
+ * 目录模式：分析目录下**全部 .js** 并聚合。
+ *
+ * 与 scriptPath 的 tree 聚合不同：目录模式下每个文件都是**平级** workflow，
+ * 没有"入口 vs 子流程"之分（用户传目录时的语义就是这个目录下的所有脚本）。
+ *
+ * 聚合口径与 tree 分支一致：顶层 findings/ruleInventory/summary 为 aggregate，
+ * aggregateRiskScore 取最危险单文件（不求和）。
+ */
+async function analyzeDirectory(input: AnalyzeInput): Promise<AnalyzeResult> {
+  const cwd = input.cwd ?? process.cwd()
+  const dirAbs = path.resolve(cwd, input.dirPath!)
+  if (!fs.existsSync(dirAbs)) return { ok: false, error: `目录不存在：${input.dirPath}` }
+
+  let names: string[]
+  try {
+    names = fs.readdirSync(dirAbs).filter((n) => /\.(m?js)$/.test(n)).sort()
+  } catch (e) {
+    return { ok: false, error: `目录不可读：${input.dirPath}（${String((e as Error)?.message ?? e)}）` }
+  }
+  if (names.length === 0) return { ok: false, error: `目录下没有 .js 文件：${input.dirPath}` }
+
+  const sources: Array<{ file: string; content: string }> = []
+  const perFile: Array<{ file: string; report: AnalysisReport }> = []
+  for (const name of names) {
+    const abs = path.join(dirAbs, name)
+    let src: string
+    try {
+      src = fs.readFileSync(abs, "utf8")
+    } catch {
+      continue // 单文件读失败不影响其余（目录里可能有临时/锁文件）
+    }
+    sources.push({ file: name, content: src })
+    perFile.push({ file: name, report: buildReport({ source: src, file: name, ...(input.generatedAt ? { generatedAt: input.generatedAt } : {}) }) })
+  }
+  if (perFile.length === 0) return { ok: false, error: `目录下没有可读的 .js 文件：${input.dirPath}` }
+
+  // 聚合：findings 全部合并（标 file），ruleInventory 合并命中，counts 重算，风险取最大
+  const aggregated: AnalysisFindingWithSnippet[] = []
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 } as Record<Severity, number>
+  const ruleHits: Record<string, number> = {}
+  for (const { file: fname, report } of perFile) {
+    for (const f of report.findings) {
+      aggregated.push({ ...f, location: { ...f.location, file: fname } })
+      counts[f.severity] += 1
+    }
+    for (const r of report.ruleInventory) if (r.hits > 0) ruleHits[r.id] = (ruleHits[r.id] ?? 0) + r.hits
+  }
+
+  const first = perFile[0]!.report
+  const maxRisk = Math.max(...perFile.map((p) => p.report.summary.riskScore))
+  const riskiest = perFile.reduce((a, b) => (b.report.summary.riskScore > a.report.summary.riskScore ? b : a)).file
+
+  // 目录模式没有单一入口，executionEstimate 必须用聚合值——否则摘要会显示
+  // 第一个文件的"调用点 2"，与下方"40 个调用点"矛盾（用户会以为是漏分析）
+  const est = perFile.reduce(
+    (acc, p) => {
+      const e = p.report.executionEstimate
+      return {
+        callSites: acc.callSites + e.callSites,
+        agentCallSites: acc.agentCallSites + e.agentCallSites,
+        workflowCallSites: acc.workflowCallSites + e.workflowCallSites,
+        estimatedTasks: acc.estimatedTasks + e.estimatedTasks,
+        dynamicNodes: acc.dynamicNodes + e.dynamicNodes,
+        determined: acc.determined && e.determined,
+        concurrency: acc.concurrency ?? e.concurrency,
+        estimatedWaves: acc.estimatedWaves ?? e.estimatedWaves,
+      }
+    },
+    {
+      callSites: 0,
+      agentCallSites: 0,
+      workflowCallSites: 0,
+      estimatedTasks: 0,
+      dynamicNodes: 0,
+      determined: true,
+      concurrency: undefined as number | undefined,
+      estimatedWaves: undefined as number | undefined,
+    },
+  )
+
+  let report: AnalysisReport = {
+    ...first,
+    file: `dir:${input.dirPath}`,
+    executionEstimate: {
+      callSites: est.callSites,
+      agentCallSites: est.agentCallSites,
+      workflowCallSites: est.workflowCallSites,
+      estimatedTasks: est.estimatedTasks,
+      determined: est.determined,
+      dynamicNodes: est.dynamicNodes,
+      ...(est.concurrency !== undefined ? { concurrency: est.concurrency } : {}),
+      ...(est.estimatedWaves !== undefined ? { estimatedWaves: est.estimatedWaves } : {}),
+    },
+    summary: { riskScore: first.summary.riskScore, counts, totalFindings: aggregated.length },
+    findings: aggregated,
+    aggregateRiskScore: maxRisk,
+    // 目录模式没有"入口"概念：entry 记第一个文件，报告头部靠 subtree 展示全量
+    entry: { findings: first.findings, ruleInventory: first.ruleInventory, totalFindings: first.findings.length },
+    ruleInventory: first.ruleInventory.map((r) => {
+      const extra = ruleHits[r.id] ?? 0
+      return extra > 0 ? { ...r, hits: r.hits + extra, status: "hit" as const } : r
+    }),
+    subtree: {
+      files: perFile.length,
+      callSites: perFile.reduce((n, p) => n + p.report.executionEstimate.callSites, 0),
+      totalFindings: perFile.reduce((n, p) => n + p.report.summary.totalFindings, 0),
+      maxRisk,
+      riskiest,
+      rules: ruleHits,
+      subWorkflows: perFile.map((p) => {
+        const rules: Record<string, number> = {}
+        for (const f of p.report.findings) rules[f.ruleId] = (rules[f.ruleId] ?? 0) + 1
+        return {
+          file: p.file,
+          riskScore: p.report.summary.riskScore,
+          callSites: p.report.executionEstimate.callSites,
+          totalFindings: p.report.summary.totalFindings,
+          ...(p.report.findings[0] ? { topRule: p.report.findings[0].ruleId } : {}),
+          findings: p.report.findings.map((f) => ({
+            ruleId: f.ruleId,
+            severity: f.severity,
+            confidence: f.confidence,
+            startLine: f.location.startLine,
+            endLine: f.location.endLine,
+            evidence: f.evidence,
+            ...(f.suggestion ? { suggestion: f.suggestion } : {}),
+            ...(f.snippet ? { snippet: f.snippet } : {}),
+          })),
+        }
+      }),
+    },
+  }
+
+  return runAiStages(report, sources, input)
+}
+
+/**
+ * AI Rule Check + Planner（scriptPath / 目录模式共用）。
+ * 抽出来避免两处逻辑漂移——AI 阶段的行为必须完全一致。
+ */
+async function runAiStages(
+  reportIn: AnalysisReport,
+  sources: Array<{ file: string; content: string }>,
+  input: AnalyzeInput,
+): Promise<AnalyzeResult> {
+  let report = reportIn
+  const SEMANTIC_AI_RULES = new Set(["CONC-002", "SERIAL-002", "DET-001", "REC-002", "BUDGET-001", "SIDEFX-001"])
+
+  const wantRuleCheck = input.includeRuleCheck !== false && Boolean(input.ruleCheckAgent)
+  if (wantRuleCheck && input.ruleCheckAgent) {
+    try {
+      const loaded = loadRuleDocs()
+      for (const p of loaded.problems) report.diagnostics.push(`规则文档：${p}`)
+      const aiRules = input.aiRules === "all" ? loaded.rules : loaded.rules.filter((r) => SEMANTIC_AI_RULES.has(r.id))
+      if (aiRules.length > 0) {
+        const staticSummary = [
+          `风险分 ${report.summary.riskScore}/100，聚合 ${report.summary.totalFindings} 条 finding，${report.subtree?.files ?? 1} 个文件。`,
+          "静态规则结果：" +
+            report.ruleInventory
+              .map((r) => `${r.id}=${r.status === "error" ? "error" : r.hits > 0 ? `hit(${r.hits})` : "pass"}`)
+              .join(", "),
+          ...report.findings.slice(0, 12).map(
+            (f) => `- ${f.ruleId} ${f.severity} ${f.location.file ?? "(entry)"}:${f.location.startLine}-${f.location.endLine} ${f.evidence[0] ?? ""}`,
+          ),
+        ].join("\n")
+        const aiResult = await runAIRuleCheck({
+          rules: aiRules,
+          sources: toSourceFiles(sources),
+          staticSummary,
+          plannerAgent: input.ruleCheckAgent,
+        })
+        report = {
+          ...report,
+          aiRuleCheck: {
+            status: aiResult.status,
+            ...(aiResult.durationMs !== undefined ? { durationMs: aiResult.durationMs } : {}),
+            checks: aiResult.checks.map((c) => ({
+              ruleId: c.ruleId,
+              status: c.status,
+              confidence: c.confidence,
+              reason: c.reason,
+              ...(c.error ? { error: c.error } : {}),
+              evidence: c.evidence,
+            })),
+            diagnostics: aiResult.diagnostics,
+          },
+          ruleMerge: mergeRuleResults(report.ruleInventory, aiResult.checks),
+        }
+        for (const d of aiResult.diagnostics) report.diagnostics.push(`AI 规则检查：${d}`)
+      }
+    } catch (e) {
+      report.diagnostics.push(`AI 规则检查失败（静态结果仍有效）：${String((e as Error)?.message ?? e).slice(0, 200)}`)
+    }
+  }
+
+  let planner: PlannerOutput | undefined
+  let recommendations = report.recommendations
+  if (input.includeSuggestions && !input.plannerAgent) {
+    report.diagnostics.push("已请求 AI 建议但当前入口未配置 Planner（静态分析结果仍有效）")
+  }
+  if (input.includeSuggestions && input.plannerAgent) {
+    const prompt = buildPlannerPrompt(report)
+    try {
+      const text = await input.plannerAgent(prompt)
+      const parsed = parsePlannerResponse(text)
+      if (parsed.ok) {
+        planner = parsed.output
+        recommendations = mergeRecommendations(report.recommendations, planner)
+      } else {
+        report.diagnostics.push(`AI 建议校验失败：${parsed.errors.join("; ")}`)
+      }
+    } catch (e) {
+      report.diagnostics.push(`AI 建议调用失败：${String((e as Error)?.message ?? e)}`)
+    }
+  }
+
+  const finalReport: AnalysisReport = { ...report, recommendations }
+  const format = input.format ?? "json"
+  const rendered = format === "md" ? renderMarkdown(finalReport) : JSON.stringify(finalReport, null, 2)
+  return { ok: true, report: finalReport, recommendations, ...(planner ? { planner } : {}), rendered }
+}
+
 /** 核心：所有入口走这里 */
 export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResult> {
   const cwd = input.cwd ?? process.cwd()
   let source = input.source
   let file = input.scriptPath
 
+  // 目录模式必须最先判断：它既没有 source 也没有 scriptPath
+  if (!source && !input.scriptPath && input.dirPath) {
+    return analyzeDirectory(input)
+  }
+
   if (!source) {
-    if (!file) return { ok: false, error: "需要 scriptPath 或 source 之一" }
+    if (!file) return { ok: false, error: "需要 scriptPath / dirPath / source 之一" }
     const abs = path.resolve(cwd, file)
     if (!fs.existsSync(abs)) return { ok: false, error: `脚本不存在：${file}` }
     source = fs.readFileSync(abs, "utf8")
