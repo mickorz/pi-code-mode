@@ -1,0 +1,46 @@
+{
+  "generatedAt": "2026-11-18T10:58:08.969Z",
+  "results": [
+    {
+      "name": "同规模基线可比较",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "跨规模不误判（样本不足即不判定）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "注入性能回归可检出",
+      "pass": true,
+      "detail": "durationMs×3.0"
+    },
+    {
+      "name": "有效建议判可信",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "伤质量的改善判不可信",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "headless 默认拒绝应用",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "生产脚本未被修改",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "授权后应用成功",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "allPass": true
+}

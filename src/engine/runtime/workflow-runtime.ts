@@ -47,6 +47,14 @@ import type {
 } from "../types/index.js"
 import type { WorkflowEventInput } from "../events/workflow-events.js"
 import { McpClientPool, makeMcpInvoker, type McpInvoker } from "../../mcp/mcp-client-pool.js"
+import { planSchedule, buildProfiles, type TaskProfile } from "../adaptive/adaptive-scheduler.js"
+import { evaluate, type EvaluationReport } from "../evaluator/evaluator.js"
+import { BaselineStore } from "../evaluator/baseline-store.js"
+import type { WorkflowPlan } from "../plan/schema.js"
+import { TaskRegistry } from "../governance/task-registry.js"
+import { BatchExecutor } from "../governance/batch-executor.js"
+import { computeTaskFingerprint, contentHash } from "../governance/task-fingerprint.js"
+import type { BudgetGate } from "../governance/budget-gate.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createNodeExecutor, compositeScopeStorage, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
@@ -140,6 +148,26 @@ export interface WorkflowRunOptions {
   onRuntimeEvent?: (event: WorkflowEventInput) => void
   /** M4：宿主全局配置目录（直调池读 mcp.json 用；缺省 ~/.pi/agent） */
   agentDir?: string
+  /** M2：预算闸（可选注入——旧脚本零改动；未注入时不限预算） */
+  budgetGate?: BudgetGate
+  /** M6/M3：任务级恢复注册表（可选；启用后按 agent call taskKey/fingerprint 复用） */
+  taskRegistry?: TaskRegistry
+  /** M6/M4：可选历史耗时画像；parallel 有画像时长任务先发（不改变结果顺序） */
+  adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/M4：parallel 自动任务化接入 BatchExecutor 的阈值（启用 taskRegistry 时生效；缺省 8） */
+  autoShardThreshold?: number
+  /**
+   * M6/3：自适应画像自动加载（缺省 true）
+   * 从 TaskCheckpoint 与 BaselineStore 自动构建耗时画像，无需调用方手填 adaptiveProfiles。
+   */
+  autoAdaptive?: boolean
+  /** M6/M5：完成后评估并写 BaselineStore（可选生产接线） */
+  evaluationPlan?: WorkflowPlan
+  baselineStore?: BaselineStore
+  evaluationInputScale?: string
+  onEvaluation?: (report: EvaluationReport) => void
+  /** M6/M3：任务级恢复模式；true 时跳过 done 且指纹一致任务 */
+  taskResume?: boolean
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
   trigger?: {
     type: string
@@ -232,6 +260,24 @@ interface SharedRunContext {
   onMcpCall?: (record: McpToolCallSummary, scope?: { scopePath: string[]; phase?: string }) => void
   /** M4：宿主全局配置目录（池读 mcp.json 用） */
   agentDir?: string
+  /** M2：预算闸（run 级；未注入时不限预算） */
+  budgetGate?: BudgetGate
+  /** M6/M3：任务级恢复注册表与模式 */
+  taskRegistry?: TaskRegistry
+  /** M6/M4：自适应耗时画像（显式传入优先） */
+  adaptiveProfiles?: Map<string, TaskProfile>
+  /** M6/3：是否自动加载画像（缺省 true） */
+  autoAdaptive?: boolean
+  /** M6/3：自动画像缓存（首次使用时从 checkpoint/baseline 构建） */
+  autoProfilesCache?: Map<string, TaskProfile>
+  /** M6/M4：parallel 自动分片阈值 */
+  autoShardThreshold?: number
+  /** M6/M5：评估/基线接线 */
+  evaluationPlan?: WorkflowPlan
+  baselineStore?: BaselineStore
+  evaluationInputScale?: string
+  onEvaluation?: (report: EvaluationReport) => void
+  taskResume?: boolean
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
   /** 子 workflow 嵌套深度上限（分支 A） */
@@ -361,6 +407,16 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     toolSeq: 0,
     onRuntimeEvent: options.onRuntimeEvent,
     agentDir: options.agentDir,
+    budgetGate: options.budgetGate,
+    taskRegistry: options.taskRegistry,
+    taskResume: options.taskResume ?? false,
+    adaptiveProfiles: options.adaptiveProfiles,
+    autoShardThreshold: options.autoShardThreshold ?? 8,
+    autoAdaptive: options.autoAdaptive !== false,
+    evaluationPlan: options.evaluationPlan,
+    baselineStore: options.baselineStore,
+    evaluationInputScale: options.evaluationInputScale,
+    onEvaluation: options.onEvaluation,
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
     phaseFailed: [],
     continueOnAgentFailure: options.continueOnAgentFailure ?? false,
@@ -421,6 +477,42 @@ export async function runWorkflow<T = unknown>(
       WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
       { recoverable: false },
     )
+  }
+
+  // M6/M5：真实 run 完成后评估并写基线（此前 BaselineStore.record 无生产调用方）
+  if (shared.evaluationPlan && shared.baselineStore) {
+    const byStage = new Map<string, { agents: number; inputTokens: number; durationMs: number; failed: number }>()
+    for (const a of shared.agents) {
+      const stageId = a.phase ?? "root"
+      const current = byStage.get(stageId) ?? { agents: 0, inputTokens: 0, durationMs: 0, failed: 0 }
+      current.agents++
+      current.inputTokens += a.inputTokens ?? 0
+      current.durationMs += a.durationMs ?? 0
+      if (a.status === "failed") current.failed++
+      byStage.set(stageId, current)
+    }
+    const evaluation = evaluate({
+      plan: shared.evaluationPlan,
+      runId,
+      inputScale: shared.evaluationInputScale,
+      actuals: [...byStage.entries()].map(([stageId, v]) => ({ stageId, ...v })),
+    })
+    const baselineWorkflowId = shared.evaluationPlan.workflowId ?? meta.name
+    const baselineScriptHash = shared.evaluationPlan.source.scriptHash ?? "unknown"
+    // M6/M5：先用历史样本检测回归，再写入当前样本，避免当前样本稀释自己
+    const regression = shared.baselineStore.detectRegression({
+      workflowId: baselineWorkflowId,
+      scriptHash: baselineScriptHash,
+      ...(shared.evaluationInputScale ? { inputScale: shared.evaluationInputScale } : {}),
+      actual: {
+        agents: evaluation.summary.actualAgents,
+        durationMs: evaluation.summary.durationMs,
+        inputTokens: evaluation.summary.actualInputTokens,
+      },
+    })
+    ;(evaluation as any).regression = regression
+    shared.baselineStore.record({ workflowId: baselineWorkflowId, scriptHash: baselineScriptHash, report: evaluation })
+    shared.onEvaluation?.(evaluation)
   }
 
   return {
@@ -666,6 +758,27 @@ async function executeWorkflow(
     // 哈希身份：prompt/model/phase/agentType/schema（与 Pi 同思路，无 thread/agentDef/tier 面）
     const deltaKey = record.id
     const callHash = hashAgentCall(prompt, scriptOptions, displayPhase)
+    // M6/M3 任务级恢复：taskKey 使用稳定 workflow scope + callIndex；指纹含 prompt/model/契约
+    const taskKeyForResume = shared.taskRegistry ? `${scope.pathKeys?.join(":") ?? "root"}:${callIndex}` : deltaKey
+    const taskFingerprint = shared.taskRegistry
+      ? computeTaskFingerprint({
+          taskKey: taskKeyForResume,
+          promptHash: contentHash(prompt),
+          inputHash: contentHash(prompt),
+          modelConfigHash: contentHash({ model: modelSpec ?? "default", tier: scriptOptions.tier ?? "" }),
+          executionContractVersion: scriptOptions.schema ? JSON.stringify(scriptOptions.schema) : "text-v1",
+        })
+      : undefined
+    if (shared.taskRegistry && shared.taskResume && taskFingerprint && (shared.replayPolicy !== "explicit" || scriptOptions.replayable === true)) {
+      const reusable = shared.taskRegistry.reusable(taskKeyForResume, taskFingerprint.fingerprint)
+      if (reusable.reusable) {
+        record.status = "ok"
+        record.outputType = "structured"
+        record.outputPreview = buildOutputPreview(shared.taskRegistry.readResult(taskKeyForResume))
+        shared.onAgentUpdate?.(record)
+        return shared.taskRegistry.readResult(taskKeyForResume)
+      }
+    }
     const cached = shared.resumeJournal?.get(deltaKey)
     const hashMatches = cached != null && cached.hash === callHash
     // 空文本结果不回放：历史 journal 里的空串一律重跑（与 Pi isEmptyTextAgentResult 同语义）
@@ -774,6 +887,40 @@ async function executeWorkflow(
               },
             })
           }
+          // M2：预算闸（硬预算前拦截 + 软预算原子预留）；未注入时零影响
+          const gate = shared.budgetGate
+          // M6-P1-2：消费降级后的 effectivePolicy（此前 budgetDecision.policy 生成后即被丢弃）
+          if (gate) {
+            const eff = gate.policyState.policy
+            const effConcurrency = eff.concurrency?.max
+            if (effConcurrency !== undefined) shared.scheduler.setConcurrency(effConcurrency)
+            if (!scriptOptions.model && eff.modelPolicy?.writing) {
+              const routed = shared.resolveTier?.(eff.modelPolicy.writing)
+              if (routed) modelSpec = routed
+            }
+          }
+          let budgetDecision: ReturnType<BudgetGate["beforeDispatch"]> | undefined
+          if (gate) {
+            budgetDecision = gate.beforeDispatch(effectivePrompt, executionId)
+            if (budgetDecision.degraded) {
+              shared.logs.push(
+                `预算降级：${budgetDecision.degraded.from} → ${budgetDecision.degraded.to}（${budgetDecision.degraded.reason}）`,
+              )
+            }
+            if (!budgetDecision.allow) {
+              const violation = budgetDecision.violation
+              record.status = "failed"
+              record.error = violation?.message ?? "预算拒绝 dispatch"
+              record.durationMs = Date.now() - agentStarted
+              emitExecution("failed", record.error)
+              shared.onAgentUpdate?.(record)
+              log(`agent "${label}" 被预算拦截: ${record.error}`)
+              // 硬预算属不可恢复（结构性），直接终止该节点
+              throw new WorkflowError(`预算拦截：${record.error}`, WorkflowErrorCode.AGENT_LIMIT_EXCEEDED, {
+                recoverable: false,
+              })
+            }
+          }
           try {
             const runOptions: AgentRunOptions = {
               label,
@@ -806,6 +953,19 @@ async function executeWorkflow(
               attemptController.abort(),
             )
             const value = execution.value
+            // M2：结算软预算（真实 usage 优先；缺失时按估算并标记）
+            // M6-P1-2：取消/超时路径的迟到 usage 也走同一次结算入口（见 catch 分支的 settleLateUsage）
+            if (gate) {
+              const used = attemptUsage()
+              const hasRealUsage = used.inputTokens > 0 || used.outputTokens > 0
+              gate.afterDispatch(
+                budgetDecision?.reservationId,
+                hasRealUsage ? { input: used.inputTokens, output: used.outputTokens } : undefined,
+                "ok",
+              )
+              const deg = gate.maybeDegradeOnSoftLimit()
+              if (deg) shared.logs.push(`预算降级：${deg.from} → ${deg.to}（${deg.reason}）`)
+            }
             record.status = "ok"
             record.durationMs = Date.now() - agentStarted
             record.model = modelSpec
@@ -840,14 +1000,39 @@ async function executeWorkflow(
                 usage: attemptUsage(),
               })
             }
+            if (shared.taskRegistry && taskFingerprint) {
+              const acquired = shared.taskRegistry.acquire({ taskKey: taskKeyForResume, taskFingerprint: taskFingerprint.fingerprint, runId: shared.runId })
+              if (acquired.ok) {
+                shared.taskRegistry.commit({ taskKey: taskKeyForResume, runId: shared.runId, leaseGeneration: acquired.checkpoint!.leaseGeneration, taskFingerprint: taskFingerprint.fingerprint, result: value })
+              }
+            }
             return value
           } catch (error) {
             if (isAborted()) {
+              if (gate) {
+                // M6-P1-2：超时/中止前已产生的 usage 必须计入（原实现直接释放，造成漏计）
+                const used = attemptUsage()
+                const hasUsage = used.inputTokens > 0 || used.outputTokens > 0
+                gate.afterDispatch(
+                  budgetDecision?.reservationId,
+                  hasUsage ? { input: used.inputTokens, output: used.outputTokens } : undefined,
+                  hasUsage ? "ok" : "cancelled",
+                )
+              }
               record.status = "aborted"
               record.durationMs = Date.now() - agentStarted
               emitExecution("aborted")
               shared.onAgentUpdate?.(record)
               throw wrapError(error)
+            }
+            if (gate) {
+              const used = attemptUsage()
+              const hasUsage = used.inputTokens > 0 || used.outputTokens > 0
+              gate.afterDispatch(
+                budgetDecision?.reservationId,
+                hasUsage ? { input: used.inputTokens, output: used.outputTokens } : undefined,
+                hasUsage ? "ok" : "failed",
+              )
             }
             const workflowError = wrapError(error)
             if (!workflowError.recoverable) {
@@ -1024,26 +1209,94 @@ async function executeWorkflow(
     }
   }
 
+  /** M6/3：自动构建耗时画像（TaskCheckpoint + 已有 adaptiveProfiles），按需懒加载一次 */
+  const profilesForScheduling = (): Map<string, TaskProfile> | undefined => {
+    if (shared.adaptiveProfiles && shared.adaptiveProfiles.size > 0) return shared.adaptiveProfiles
+    if (!shared.autoAdaptive) return undefined
+    if (shared.autoProfilesCache) return shared.autoProfilesCache
+    const samples: Array<{ taskType: string; durationMs: number }> = []
+    if (shared.taskRegistry) {
+      for (const t of shared.taskRegistry.list()) {
+        if (t.committedAt === undefined || t.updatedAt === undefined) continue
+        const duration = t.updatedAt - t.committedAt
+        if (!Number.isFinite(duration) || duration <= 0) continue
+        samples.push({ taskType: t.taskKey.split(/[:/-]/)[0] ?? t.taskKey, durationMs: duration })
+      }
+    }
+    const built = samples.length > 0 ? buildProfiles(samples) : new Map<string, TaskProfile>()
+    shared.autoProfilesCache = built
+    if (built.size > 0) log(`自适应画像自动加载：${built.size} 类任务（来源 TaskCheckpoint）`)
+    return built.size > 0 ? built : undefined
+  }
+
   const parallel = async (thunks: Array<() => Promise<unknown>>) => {
     throwIfAborted()
     if (!Array.isArray(thunks)) throw new TypeError("parallel() 期望函数数组")
     if (thunks.some((thunk) => typeof thunk !== "function")) {
       throw new TypeError("parallel() 期望函数数组而非 Promise 数组，请用 () => agent(...) 包裹")
     }
-    return Promise.all(
-      thunks.map(async (thunk, index) => {
+    // M6/2：taskRegistry 启用且任务数达阈值 → 走 BatchExecutor（跨 run 复用 + 租约 + 超时）
+    if (shared.taskRegistry && thunks.length >= (shared.autoShardThreshold ?? 8)) {
+      const executor = new BatchExecutor({
+        workflowId: `${shared.runId}:parallel:${scope.pathKeys?.join(".") ?? "root"}`,
+        runId: shared.runId,
+        cwd: shared.cwd,
+        storageDir: path.join(shared.cwd, ".pi", "workflows", "tasks"),
+        concurrency: shared.scheduler.getConcurrency(),
+        // thunk 闭包内容无法从 AST 在 runtime 安全提取；不能用 index+length 伪造 fingerprint。
+        // auto-shard 默认不跨 run 复用（TaskRegistry 仍记录本次任务）；显式 taskResume 只对 agent 级稳定 key 生效。
+        resume: false,
+      })
+      const batch = await executor.run(
+        thunks.map((thunk, index) => ({
+          taskKey: `p:${scope.pathKeys?.join(".") ?? "root"}:${index}`,
+          fingerprint: { promptHash: contentHash(`parallel:${index}:${thunks.length}`) },
+          run: async () => {
+            try {
+              return await thunk()
+            } catch (error) {
+              if (isAborted()) throw error
+              const workflowError = wrapError(error)
+              // BatchExecutor 任务失败必须保留 failed，不得把可恢复错误塌缩 null 后提交 done。
+              // 普通 parallel 才保留 null 塌缩语义；auto-shard 交给 task resume 重跑。
+              throw workflowError
+            }
+          },
+        })),
+      )
+      if (isAborted()) throw new WorkflowError("parallel 自动任务化被中止", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: false })
+      log(`parallel 自动任务化：${batch.stats.total} 任务，复用 ${batch.stats.reused}，失败 ${batch.stats.failed}`)
+      return batch.outcomes.map((o) => (o.status === "done" ? o.value : null))
+    }
+
+    // M6/M4：有历史画像时长任务先发；返回值仍按原索引顺序，业务语义不变。
+    const order = thunks.map((_, index) => index)
+    const profiles = profilesForScheduling()
+    if (profiles && profiles.size > 0) {
+      const scheduled = planSchedule(
+        thunks.map((_, index) => ({ taskKey: `parallel:${index}`, taskType: `parallel:${index}` })),
+        profiles,
+        { typeOf: (t) => t.taskType ?? t.taskKey },
+      )
+      order.splice(0, order.length, ...scheduled.order.map((k) => Number(k.split(":").at(-1))))
+      log(`parallel 自适应调度：${scheduled.notes.join("；")}`)
+    }
+    const results = new Array<unknown>(thunks.length)
+    await Promise.all(
+      order.map(async (index) => {
+        const thunk = thunks[index]!
         try {
-          return await thunk()
+          results[index] = await thunk()
         } catch (error) {
           if (isAborted()) throw error
           const workflowError = wrapError(error)
-          // 不可恢复失败（脚本校验错/agent 超限）终止整个 run，不塌缩为 null
           if (!workflowError.recoverable) throw workflowError
           log(`parallel[${index}] 失败: ${workflowError.message}`)
-          return null
+          results[index] = null
         }
       }),
     )
+    return results
   }
 
   const pipeline = async (
@@ -1739,6 +1992,11 @@ async function executeWorkflow(
     retry,
     checkpoint,
     console: consoleShim,
+    // M2-T5：budget.remaining() —— 脚本可查询余量并自主降级（未注入预算闸时返回空对象）
+    budget: {
+      remaining: () => (shared.budgetGate ? shared.budgetGate.remaining() : {}),
+      totals: () => (shared.budgetGate ? shared.budgetGate.totals() : { inputTokens: 0, outputTokens: 0, agents: 0, retries: 0, estimated: false, reservations: 0 }),
+    },
     // M4：workflow 直调 MCP——mcp 显式函数注入（零枚举成本）；tools 走沙箱内 Proxy + __mcpBridge（惰性，
     // 调用时才校验可达面/连接；跨边界 Proxy 不可靠，故 Proxy 在 body 前的沙箱内创建，官方 prelude 同思路）
     ...(mcpInvoker

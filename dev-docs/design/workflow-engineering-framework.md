@@ -44,6 +44,8 @@ Workflow Evaluator   真实耗时、Token、成本、失败率、质量与优化
 
 其中 Plan 和 JS 是两个独立产物，但必须保持一致。
 
+定位宣言：**pi-code-mode 不应该最终变成一个只能执行 JS 的 Workflow Runtime，而应该成为一个能帮助 Agent 工程化创建、诊断、执行、恢复和优化 Workflow 的框架。** 五层框架的全部设计（Plan/Analyzer/治理/恢复/自适应/评估）都服务于这一定位。
+
 ### 1.2 三条架构原则
 
 **原则一：业务逻辑和执行策略分离。**
@@ -96,50 +98,44 @@ Analyzer 可以提出优化建议，但不能把静态估算当成真实耗时�
 
 ```json
 {
-  "schemaVersion": "1.0",
+  "planVersion": "1.0",
+  "planHash": "sha256:...",
   "workflowId": "game_difference_review",
   "name": "游戏差异审查",
 
   "source": {
     "scriptPath": ".pi/workflows/game-requirement-audit/8-difference-review.js",
     "scriptHash": "sha256:...",
-    "analyzedAt": "2026-11-18"
+    "analyzedAt": "2026-11-18"          // 报告元数据，不属于 Plan 身份
   },
 
-  "execution": {
-    "mode": "balanced",
-    "concurrency": { "max": 4 },
-    "modelPolicy": {
-      "analysis": "fast",
-      "writing": "default"
+  "definition": {                        // Plan Definition：长期维护，Stage 只有一份
+    "stages": [
+      { "id": "scan", "name": "差异扫描", "type": "parallel", "dependsOn": [], "estimatedAgents": 8, "estimatedInputTokens": 50000 },
+      { "id": "review", "name": "差异复核", "type": "parallel", "dependsOn": ["scan"], "estimatedAgents": 8 },
+      { "id": "summary", "name": "汇总", "type": "sequential", "dependsOn": ["review"], "estimatedAgents": 1 }
+    ],
+    "quality": {
+      "requiredValidation": true,        // 强制项：Profile 不可关闭
+      "acceptanceCriteria": [
+        "所有输入分片均有处理结果",
+        "关键差异具有来源证据"
+      ]
     }
   },
 
-  "budget": {
-    "maxAgents": 20,
-    "maxDurationMs": 1800000,
-    "maxInputTokens": 200000,
-    "maxOutputTokens": 50000,
-    "maxRetries": 5
-  },
-
-  "stages": [
-    { "id": "scan", "name": "差异扫描", "type": "parallel", "dependsOn": [], "estimatedAgents": 8, "estimatedInputTokens": 50000 },
-    { "id": "review", "name": "差异复核", "type": "parallel", "dependsOn": ["scan"], "estimatedAgents": 8 },
-    { "id": "summary", "name": "汇总", "type": "sequential", "dependsOn": ["review"], "estimatedAgents": 1 }
-  ],
-
-  "quality": {
-    "requiredValidation": true,
-    "acceptanceCriteria": [
-      "所有输入分片均有处理结果",
-      "关键差异具有来源证据"
-    ]
+  "profiles": {                          // Plan Profile：只覆盖执行策略，不复制 stages
+    "balanced": {
+      "execution": { "mode": "balanced", "concurrency": { "max": 4 } },
+      "modelPolicy": { "analysis": "fast", "writing": "default" },
+      "budget": { "maxAgents": 20, "maxDurationMs": 1800000, "maxInputTokens": 200000, "maxOutputTokens": 50000, "maxRetries": 5 }
+    },
+    "fast":     { "execution": { "mode": "fast", "concurrency": { "max": 8 } } }
   }
 }
 ```
 
-三个关键设计：
+四个关键设计：
 
 **第一，sourceHash。**
 Plan 必须记录对应的 JS 内容指纹。JS 修改后，Analyzer 能知道原 Plan 是否过期，不能继续把旧分析结果当作当前版本。
@@ -147,7 +143,21 @@ Plan 必须记录对应的 JS 内容指纹。JS 修改后，Analyzer 能知道�
 **第二，estimated 和 actual 分开。**
 Plan 只记录预估值，真实运行数据归 Evaluator 管理。
 
-**第三，execution mode。**
+**第三，Plan 身份与 Profile 分离（评审 2026-11-18 补）。**
+
+- Plan 有自己的 `planVersion` 与 `planHash`（Plan 内容指纹）；`source.analyzedAt` 是分析报告元数据，**不属于 Plan 身份**
+- 区分两个概念：
+  - **Plan Definition**：长期维护的工作流计划（stages 结构、质量策略）
+  - **Plan Profile**：同一 Definition 下的执行策略变体（fast / balanced / quality）
+- fast/balanced/quality 三个 Profile **不复制三份完整 stages**——修改一个 Stage 只改 Definition，Profiles 只存差异化执行参数，避免多文件同步维护
+
+**Profile 解析规则（Plan Validator 实现依据，五轮评审 P1-3）**：
+- 默认 Profile 为 **balanced**（run 未指定 activeProfile 时使用）
+- Profile 允许继承 Definition 公共配置；未声明字段回退 Definition 级默认值
+- **Profile 不可覆盖的 Definition 约束**：`requiredValidation` 强制项、`acceptanceCriteria`、stage 结构与依赖
+- 三个 Profile（fast/balanced/quality）均须在 Schema 中给出完整示例
+
+**第四，execution mode。**
 三个模式继承现有 `workflow-authoring` skill 的速度优先、质量优先设计：
 
 | 模式 | 目标 | 策略 |
@@ -246,6 +256,30 @@ groups 有 48 组时输出：
 评估分片合并策略，或减少不必要的任务数量。
 ```
 同时需考虑任务耗时差异，不能直接认定墙钟时间一定是三倍。
+
+**依赖置信度分级（长期约束）**：静态分析不能断定业务独立性，依赖边必须携带置信度标注——
+Explicit（明确数据依赖）/ Structural（控制流依赖）/ Candidate（可能独立，交语义层确认）/ Unknown（无法静态确定）。
+Candidate 与 Unknown **不允许被自动并行化建议直接采纳**。
+
+**规则注册机制**：每条规则实现统一接口，支持持续扩展与第三方贡献，不需要反复修改 Analyzer 主体：
+
+```ts
+interface AnalyzerRule {
+  id: string
+  version: string
+  severity: "critical" | "high" | "medium" | "low"
+  analyze(context: AnalyzerContext): AnalyzerFinding[]
+}
+
+interface AnalyzerFinding {
+  ruleId: string
+  severity: string
+  confidence: number      // 0-1，静态结论的置信度
+  location: { file: string; startLine: number; endLine: number }
+  evidence: string[]
+  suggestion?: string
+}
+```
 
 ### 3.3 Semantic Analyzer：AI 的职责边界
 
@@ -402,6 +436,74 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 
 ---
 
+## 四点五、长期约束：恢复模型、配置优先级与存储边界（评审 2026-11-18 补）
+
+### 数据能力分层（各阶段数据归属，评审 P0-1 修正依据）
+
+| 数据能力 | 归属阶段 |
+| --- | --- |
+| 当前 Run 实时耗时、Token、失败率 | M2 |
+| 多 Run 的基础执行记录 | M2/M3 |
+| 简单历史性能统计 | M4 可先消费已有记录 |
+| 正式性能基线、趋势、回归检测 | M5 |
+| 基于历史表现的自适应调度 | M4（消费 M2/M3 数据，不依赖 M5） |
+
+原则：**下游阶段不得依赖上游尚未建立的数据能力**（M4/M5 依赖倒置的教训，见陷阱 8）。
+
+**Workflow Execution Trace**（静态分析 + 动态执行观测关联）为跨阶段能力：M1 起分阶段建设（M1 先做静态 Analyzer 并读取已有 Journal 关联数据；M2/M3/M5 逐步完善），不为它提前重构 Runtime——详见执行计划"五点五"节。
+
+### 任务恢复模型（M3 设计约束，四轮评审同步为六项指纹）
+
+产物复用判定使用**分层指纹**，整体 scriptHash 只用于审计：
+
+```
+workflowId
+  └── taskKey
+       ├── taskDefinitionHash        # 任务定义（prompt 模板/调用形态）
+       ├── inputHash                 # 输入数据指纹
+       ├── promptHash                # 最终 prompt 指纹
+       ├── modelConfigHash           # 模型 ID + 关键参数及一切影响输出的配置（不能只比模型名称）
+       ├── executionContractVersion  # 输出契约版本（输出结构变化 → 旧产物不能被新下游安全消费）
+       └── externalDepsHash          # 外部依赖指纹（**按任务实际依赖逐项计算**：客户端任务只含客户端代码快照；
+                                     #   规则检查任务只含规则文档指纹——客户端变化不失效规则任务）
+```
+
+- **taskFingerprint** = hash({ taskKey, 六项指纹 }) → 判定单个任务产物是否可复用（改一行日志不失效全部产物；改无关外部依赖不失效其他任务）
+- **workflowVersionHash**（整体 scriptHash）→ 仅审计与 Plan 过期检测
+- **外部副作用四状态**（缺一不可）：任务执行状态 / 产物持久化状态 / 外部副作用提交状态 / 重试幂等性——避免崩溃后重复发布
+
+**Registry 与 Checkpoint 的一致性（四轮评审补）**：
+
+1. **Checkpoint 是任务是否完成的最终事实源**；TaskRegistry 状态可从 Checkpoint 重建或校正
+2. 产物写入采用**临时文件 + 原子替换**，避免半成品
+3. Checkpoint 提交前必须验证 `resultRef` 对应的产物确实存在且完整
+4. 副作用状态独立管理——**Checkpoint 已提交不等于外部操作一定成功**（文件系统原子替换与外部 API 副作用不是同一种事务）
+
+### 配置优先级链（M2 设计约束）
+
+```
+Runtime 安全上限      ← 不可被 Plan 或 JS 覆盖
+      ↓
+Plan 执行配置         ← meta.mcp / Plan budget 等
+      ↓
+Workflow JS 显式配置  ← agent({ model, timeoutMs, ... })
+      ↓
+Runtime 默认配置
+```
+
+Run 级并发与 Agent 级并发是两个概念，Plan 中必须分别声明，不混用。
+
+### 存储边界：四个系统各司其职（M3 设计约束）
+
+| 系统 | 职责 |
+| --- | --- |
+| Journal | Agent 调用回放、执行历史（现有，语义不变） |
+| TaskRegistry | 任务清单与状态 |
+| TaskCheckpoint | 任务结果持久化与跨 Run 复用 |
+| Run Snapshot | 当前 Run 的整体状态 |
+
+四个概念独立实现，不互相塞数据；M3 不得为任务级恢复破坏现有 Journal 的 resume 语义。
+
 ## 五、架构陷阱（约束条款）
 
 以下六条直接作为框架约束写入后续所有阶段的设计评审：
@@ -412,6 +514,8 @@ workflow_analyze({ scriptPath: ".pi/workflows/example.js", includeSuggestions: t
 4. **不要为了 Plan 引入另一套完整 DSL。** Plan 是执行策略与工程元数据，JS 继续负责实际流程。
 5. **不要为了性能牺牲需求覆盖率。** 拆分、截断、瘦身都必须保留完整证据覆盖能力。
 6. **不要过早重构 Runtime。** 现有 `workflow-runtime.ts` 已有并发、重试、超时、Journal、子 Workflow 和执行观测能力，先利用这些能力建立分析基础。
+7. **Token 预算不能只靠执行前拦截。** output token 无法在调用前准确预估——预算体系分三类：硬预算（agent 数/总时间/重试次数，前拦截）、软预算（token 预估，预留+结算+超限降级）、实际计量（模型返回 usage）；`maxOutputTokens` 区分单次输出上限与累计输出预算；`maxAgents` 明确为总 dispatch 次数。
+8. **下游阶段不得依赖上游尚未建立的能力。** 教训：M4 AdaptiveScheduler 原设计依赖 M5 的历史性能基线（M5 在 M4 之后）——依赖倒置。修订：M4 第一版基于 M2/M3 已有运行观测数据做轻量耗时画像，无历史样本时静态调度；M5 完成后再接入正式基线。
 
 ---
 
@@ -463,6 +567,12 @@ Workflow: 10-unified-spec
 ```
 
 ---
+
+## 修订记录
+
+- 2026-11-18 五轮评审修订：Profile 补齐三示例（默认 balanced）、Profile 解析规则（继承/默认值/不可覆盖项）、Checkpoint leaseGeneration（Fencing Token）与原子 CAS 提交、四系统边界确认（Checkpoint 为恢复事实源，不改 Runtime 为调度系统）
+
+- 2026-11-18 评审修订（二轮）：M4/M5 依赖倒置修正（陷阱 8 + 数据能力分层表）；M3 任务恢复模型改分层指纹 taskFingerprint（整体 scriptHash 仅审计）与外部副作用四状态；M2 预算三分类（硬/软/实际）与 maxOutputTokens/maxAgents 语义明确；M1 依赖置信度分级（Explicit/Structural/Candidate/Unknown）与 AnalyzerRule/AnalyzerFinding 规则注册接口；Plan 身份（planVersion/planHash）与 Plan Definition/Profile 分离；T7 授权边界六步链；配置优先级链与四系统存储边界；M5 验收指标替换（同类输入估算误差/P50-P90 耗时/回归检测准确率）。M1 开发顺序：T2/T3 即用 PrdGameSkill S8/S10 阶段性验证。
 
 ## 引用
 

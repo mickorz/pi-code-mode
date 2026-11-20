@@ -1,0 +1,75 @@
+{
+  "generatedAt": "2026-11-18T10:48:57.106Z",
+  "scenario": {
+    "total": 48,
+    "failed": 10
+  },
+  "results": [
+    {
+      "name": "首轮 48 任务全部执行",
+      "pass": true,
+      "detail": "calls=48"
+    },
+    {
+      "name": "首轮 10 个失败",
+      "pass": true,
+      "detail": "{\"total\":48,\"reused\":0,\"executed\":48,\"succeeded\":38,\"failed\":10,\"savedExecutions\":0}"
+    },
+    {
+      "name": "resume 复用 38 个",
+      "pass": true,
+      "detail": "{\"total\":48,\"reused\":38,\"executed\":10,\"succeeded\":48,\"failed\":0,\"savedExecutions\":38}"
+    },
+    {
+      "name": "resume 只执行 10 个（重跑率 0%）",
+      "pass": true,
+      "detail": "calls=10"
+    },
+    {
+      "name": "resume 后全部成功",
+      "pass": true,
+      "detail": "{\"total\":48,\"reused\":38,\"executed\":10,\"succeeded\":48,\"failed\":0,\"savedExecutions\":38}"
+    },
+    {
+      "name": "节省执行数 = 已完成的 38",
+      "pass": true,
+      "detail": "38"
+    },
+    {
+      "name": "无关代码修改后产物仍可复用",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "任务依赖的 externalDeps 变化 → 失效",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "跨任务隔离：客户端代码变化不影响规则任务",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "自己声明的外部依赖变化 → 失效",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Fencing：旧执行者提交被拒",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Fencing：结果保持新执行者产物",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "非幂等 + 副作用未确认 → 不复用",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "allPass": true
+}

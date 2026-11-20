@@ -126,6 +126,64 @@ pi install $REPO
 4. **新增命令三步**：`commands/` 加文件（子命令 = 新文件 + index 路由表一行）→ 主入口一行接入 → `tests/contract/` 补路由/解析用例（无模型，fake pi + 真 RunManager）。
 5. **架构守卫**：`tests/contract/commands-structure.test.ts` 强制检查「每个命令被主入口装配、每个子命令文件被 index 路由引用」，漏接即测试失败——新增文件后先跑 `npm run test:contract`。
 
+## 大模型调用规范（强制）：一律走 model-tiers.json
+
+**任何功能（anal / workflow / 子代理 / 分析器 / 命令）只要调用大模型，必须使用 `.pi/workflows/model-tiers.json` 中配置的档位，禁止绕过。**
+
+### 硬性要求
+
+1. **禁止依赖宿主默认模型**。不要写 `createPlannerAgent({ cwd })` 这类不指定模型的调用——它会落到
+   `~/.pi/agent/settings.json` 的 `defaultModel`，而该默认可能是 reasoning 模型（实测 `glm-5.3-flash`
+   单条规则 97s，超时频发）。
+2. **禁止硬编码 provider/model**。不要写 `model: "openai/gpt-4o"` 之类具体串；模型必须来自档位配置。
+3. **档位选择必须先问用户**。默认档位不是开发者自行决定的；新增调用点前用 `ask_user_question`
+   确认用哪个档位（`fast` / `big` / `ultra` / 自定义档），并记录在文档里。
+4. **配置缺失时显式告警**。档位解析不到要打印 warning 并回退会话默认，不能静默改变行为。
+
+### 标准实现方式
+
+```ts
+import { loadModelTiers } from "../engine/agent/model-tiers.js"
+
+/** tier 名 → "provider/modelId"（数组档位取首模型）；解析失败返回 undefined 供回退 */
+export function resolveTierModel(tier: string, cwd?: string): string | undefined {
+  const tiers = loadModelTiers({ projectDir: cwd ?? process.cwd() })
+  const entry = tiers[tier]
+  return typeof entry === "string" ? entry : Array.isArray(entry) ? entry[0]?.model : undefined
+}
+
+// 调用侧：显式 model > tier > 会话默认
+const model = options.model ?? resolveTierModel(options.tier ?? "<已确认的档位>", options.cwd)
+```
+
+- 已实现参考：`src/tools/workflow-analyze-tool.ts` 的 `resolveTierModel()` 与 `createPlannerAgent()`
+- workflow 脚本内用 `agent(prompt, { tier: "fast" })`，由 `workflow-runtime` 经 `resolveTier` 解析
+- CLI 覆盖入口：`--tier <档位>` / `--model <供应商/模型>`
+
+### 实测依据（不要重复踩坑）
+
+同一 prompt（REC-002 规则检查，20k 字符）在不同档位下：
+
+| 模型来源 | 实际模型 | 耗时 | reasoning |
+| --- | --- | ---: | --- |
+| 宿主默认 | `glm-5.3-flash` | **97s** | true |
+| `tiers.fast` | `deepseek-v4.1-flash-official` | **14.1s** | false |
+| `tiers.big` | `BF_ULTRA` | 89.6s | false |
+
+结论：**reasoning 模型用于「读代码 + 输出结构化 JSON」这类任务会慢 5~10 倍**，且更容易超时。
+档位选择直接决定功能可用性，所以必须问用户而不是默认。
+
+### 已确认的档位决策（2026-11-19，用户确认）
+
+| 调用点 | 档位 | 说明 |
+| --- | --- | --- |
+| `/workflows anal` 的 AI 规则检查 | **fast** | 6 条规则 254s；单条 14s |
+| `/workflows anal` 的 AI 优化建议（Planner） | **fast**（与规则检查一致） | 少一个配置面 |
+| 档位解析失败 | **告警 + 回退会话默认** | 必须打印 warning，禁止静默回退 |
+
+新增调用点时的流程：先 `ask_user_question` 确认档位 → 在 `createPlannerAgent({ tier })` 或
+`agent(prompt, { tier })` 写明 → 回填本表。
+
 ## 专项约定：pi 插件与工作流联调测试
 
 本项目是 pi agent 插件（workflow 编排引擎），联调测试涉及真实模型调用：

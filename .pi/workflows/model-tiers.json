@@ -1,24 +1,7 @@
 {
-  "__说明": "tier 名 -> 模型池配置。workflow 脚本里 agent(提示词, { tier: 'fast' }) 按此档位路由；未列出的 tier 回退会话默认模型。填写时删除 __ 开头的说明字段，把条目写进 tiers。详细说明见插件 docs/configuration.md",
-  "__示例_单模型": {
-    "tiers": {
-      "fast": "provider/model-a",
-      "big": "provider/model-b"
-    }
-  },
-  "__示例_模型池": {
-    "tiers": {
-      "fast": [
-        {
-          "model": "provider/a",
-          "concurrency": 16
-        },
-        {
-          "model": "provider/b",
-          "concurrency": 8
-        }
-      ]
-    }
-  },
-  "tiers": {}
+  "tiers": {
+    "fast": "cc-switch-zhipu-glm-copy/deepseek-v4.1-flash-official",
+    "big": "cc-switch-zhipu-glm-copy/BF_ULTRA",
+    "ultra": "cc-switch-zhipu-glm-copy/gpt-5.6-terra"
+  }
 }

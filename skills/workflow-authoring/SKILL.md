@@ -32,7 +32,8 @@ description: 编写 pi 动态工作流 JavaScript 脚本时加载。涉及 workf
 5. `agent()` 的 agentType 选项在 pi 版当前被忽略（子代理默认可用全部工具）；只读任务在 prompt 中明确「不要修改任何文件」，写文件任务无需额外参数
 6. **阶段失败闸门**：agent 重试耗尽（缺省重试 1 次）后，当前阶段收尾、下一 `phase()` 边界终止 run 并报告失败明细；需静默继续传工具参数 `continueOnAgentFailure: true`，需要容错降级用 `fallback()`（降级成功自动吸收失败）
 7. **默认超时 1 小时**：生成的每个 `agent()` 调用默认带 `timeoutMs: 3600000`；任务明显更快（如固定文本回复）可用更小值，用户显式指定时从其指定——缺省无兜底超时的裸 agent 不要生成
-8. **不要用 `tools` 或 `mcp` 作局部变量名**：两者是注入的全局（MCP 直调，见下节），局部同名会遮蔽导致 TypeError
+8. **交付前必须过 Analyzer**：`workflow_analyze`（或 CLI `analyze`）无 critical/high 未处理项；报告写入 `.pi/workflows/reports/` 随交付
+9. **不要用 `tools` 或 `mcp` 作局部变量名**：两者是注入的全局（MCP 直调，见下节），局部同名会遮蔽导致 TypeError
 
 ## 可用全局
 
@@ -269,6 +270,49 @@ try { await checkpoint('即将改动生产配置，确认？') } catch { return 
 
 默认建议：日常迭代用速度档快速反馈，正式交付前用质量档重跑一遍。细节与代码片段见 [性能与质量模式手册](references/performance.md)。
 
+## Workflow Plan 与 Analyzer（M1 工程化流程）
+
+脚本写完后不是直接交付，走两步工程化检查：
+
+### 1. 生成/更新 Plan（多阶段 workflow 必做）
+
+Plan 是**独立于 JS 的执行策略文件**（stages / quality 强制项 / fast·balanced·quality 三个 Profile）：
+
+```
+.pi/workflows/<脚本名>.plan.json     # 与脚本同级
+```
+
+- 结构、指纹规则、Definition/Profile 边界见 [workflow-plan.md](references/workflow-plan.md)
+- **不改 JS 就能换策略**（改 Profile）；`source.scriptHash` 用于检测 Plan 是否过期
+- 没有 Plan 的旧 Workflow 照常运行——Plan 是可选的工程化增量
+
+### 2. Analyzer 静态分析（必做）
+
+```
+/workflows analyze <脚本路径>          # 会话内命令（唯一手动入口，AI 建议默认开启）
+/workflows plan validate <plan.json>   # Plan 校验
+workflow_analyze({ scriptPath: "..." })  # 等价工具（Agent 自动调用，同一 Core）
+```
+
+读报告要点（详见 [analyzer-rules.md](references/analyzer-rules.md)）：
+
+- `summary.riskScore` 与 findings：**confidence < 0.5 的结论不作为修改依据**
+- `dependencies.unknowns` / `Candidate` 边：**禁止据此自动并行化**（需语义确认）
+- `executionEstimate.determined=false`：含动态节点，任务量只是下限
+- `recommendations[].expectedImpact` 一律「待 Benchmark」——静态分析不给数值收益
+
+### 3. 优化修改的授权边界（强制，不可绕过）
+
+```
+Analyzer 分析 → 生成 Optimization Suggestions → Agent 在独立工作区修改
+→ 重新 Analyzer + Benchmark → 用户确认 → 应用修改
+```
+
+- **不得直接修改生产脚本**（尤其 PrdGameSkill 等已验证 workflow）
+- 修改必须保留：需求覆盖检查、证据映射、质量验证
+- 共享上下文优化必须保留 Evidence Reference 层（原始证据可按需读取），不能只留摘要
+- 改完必须重跑 Analyzer（确认风险消除）+ Benchmark（确认耗时/Token 不劣化、质量不降级）
+
 ## 交付前语法自检（必做）
 
 生成或修改 workflow 脚本后、写盘交付前，先跑本 skill 自带的语法检查：
@@ -285,6 +329,8 @@ node <skill 目录>/scripts/wf-syntax-check.cjs <脚本路径> [更多脚本...]
 
 - [生成前问询：本文件开头章节，动笔前必读](#生成前问询必做动笔之前)
 - [runtime API 详解](references/runtime.md)
+- [Workflow Plan（执行策略文件）](references/workflow-plan.md)
+- [Analyzer 规则参考](references/analyzer-rules.md)
 - [性能与质量模式手册](references/performance.md)
 - [Schedule 定时执行](references/schedule.md)
 - [范例：扇出汇总](examples/fan-out-and-synthesize.js)

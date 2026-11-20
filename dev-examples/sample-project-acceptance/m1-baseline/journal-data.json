@@ -1,0 +1,986 @@
+{
+  "totalRuns": 58,
+  "runs": [
+    {
+      "file": "run-mwkpasup-2.json",
+      "runId": "run-mwkpasup-2",
+      "entries": 140,
+      "agents": 140,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 17,
+      "durationP50Min": 14.1,
+      "durationP90Min": 42.5,
+      "durationMaxMin": 59,
+      "slowestAgent": {
+        "label": "写阶段规格 ST-C10",
+        "durationMs": 3540050,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfb5d3r-7.json",
+      "runId": "run-mwfb5d3r-7",
+      "entries": 86,
+      "agents": 86,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 2,
+      "durationP50Min": 8.9,
+      "durationP90Min": 57.5,
+      "durationMaxMin": 68.3,
+      "slowestAgent": {
+        "label": "查证 ST-C07 自摸、放铳、抢杠胡",
+        "durationMs": 4097925,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwep59gd-1.json",
+      "runId": "run-mwep59gd-1",
+      "entries": 65,
+      "agents": 64,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 17,
+      "durationP50Min": 10.2,
+      "durationP90Min": 47,
+      "durationMaxMin": 57.7,
+      "slowestAgent": {
+        "label": "查证 ST-C10 吃碰禁手",
+        "durationMs": 3459998,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwc4mskn-2.json",
+      "runId": "run-mwc4mskn-2",
+      "entries": 50,
+      "agents": 50,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 4,
+      "durationP50Min": 13.4,
+      "durationP90Min": 24.3,
+      "durationMaxMin": 38.3,
+      "slowestAgent": {
+        "label": "提取 托管与超时",
+        "durationMs": 2298309,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwczawsy-1.json",
+      "runId": "run-mwczawsy-1",
+      "entries": 50,
+      "agents": 50,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 10,
+      "durationP90Min": 25.4,
+      "durationMaxMin": 26.9,
+      "slowestAgent": {
+        "label": "检查 房间配置",
+        "durationMs": 1612123,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwdinyo0.json",
+      "runId": "run-mwdinyo0",
+      "entries": 51,
+      "agents": 50,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 2,
+      "durationP50Min": 8.3,
+      "durationP90Min": 33.6,
+      "durationMaxMin": 46.5,
+      "slowestAgent": {
+        "label": "检查 对局",
+        "durationMs": 2790986,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwdl8mw1.json",
+      "runId": "run-mwdl8mw1",
+      "entries": 47,
+      "agents": 46,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 6,
+      "durationP50Min": 7.3,
+      "durationP90Min": 50.2,
+      "durationMaxMin": 59.4,
+      "slowestAgent": {
+        "label": "检查 断线重连场景",
+        "durationMs": 3564960,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwg8iegw-1.json",
+      "runId": "run-mwg8iegw-1",
+      "entries": 39,
+      "agents": 39,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 17.7,
+      "durationP90Min": 29.4,
+      "durationMaxMin": 36.9,
+      "slowestAgent": {
+        "label": "匹配 ST-C05 ST-C05-p02.json",
+        "durationMs": 2215281,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwgbqusi-2.json",
+      "runId": "run-mwgbqusi-2",
+      "entries": 37,
+      "agents": 37,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 13.7,
+      "durationP90Min": 25.8,
+      "durationMaxMin": 26.7,
+      "slowestAgent": {
+        "label": "匹配 ST-C11 ST-C11-p06.json",
+        "durationMs": 1599189,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwbxgtbd-1.json",
+      "runId": "run-mwbxgtbd-1",
+      "entries": 35,
+      "agents": 35,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 10.1,
+      "durationP90Min": 53.1,
+      "durationMaxMin": 59.1,
+      "slowestAgent": {
+        "label": "提取 界面清单与弹层生命周期",
+        "durationMs": 3544157,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwbyh0v5.json",
+      "runId": "run-mwbyh0v5",
+      "entries": 28,
+      "agents": 28,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 1,
+      "durationP50Min": 10.6,
+      "durationP90Min": 19.9,
+      "durationMaxMin": 23.1,
+      "slowestAgent": {
+        "label": "审核 亮牌",
+        "durationMs": 1387526,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwg6o42u-14.json",
+      "runId": "run-mwg6o42u-14",
+      "entries": 27,
+      "agents": 27,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 9.3,
+      "durationP90Min": 17.6,
+      "durationMaxMin": 20.7,
+      "slowestAgent": {
+        "label": "匹配 ST-C15 ST-C15-p01.json",
+        "durationMs": 1240507,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwegeph3-2.json",
+      "runId": "run-mwegeph3-2",
+      "entries": 26,
+      "agents": 26,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 11.9,
+      "durationP90Min": 17.1,
+      "durationMaxMin": 19.2,
+      "slowestAgent": {
+        "label": "审核 小结算详情、流程、买马、数坎、音效、封顶",
+        "durationMs": 1150712,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwaosryq-1.json",
+      "runId": "run-mwaosryq-1",
+      "entries": 25,
+      "agents": 25,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 1,
+      "durationP50Min": 7.8,
+      "durationP90Min": 11.4,
+      "durationMaxMin": 13.4,
+      "slowestAgent": {
+        "label": "检查 摸打吃碰杠与操作权限",
+        "durationMs": 801765,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwabu7sy-1.json",
+      "runId": "run-mwabu7sy-1",
+      "entries": 24,
+      "agents": 24,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 9.4,
+      "durationP90Min": 10.8,
+      "durationMaxMin": 14.2,
+      "slowestAgent": {
+        "label": "检查 配置做牌与特殊玩法",
+        "durationMs": 852704,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwj15bv2-1.json",
+      "runId": "run-mwj15bv2-1",
+      "entries": 20,
+      "agents": 20,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 2.9,
+      "durationP90Min": 5.7,
+      "durationMaxMin": 9.9,
+      "slowestAgent": {
+        "label": "盲答-G10",
+        "durationMs": 596374,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf9hupm-6.json",
+      "runId": "run-mwf9hupm-6",
+      "entries": 19,
+      "agents": 19,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 10,
+      "durationP90Min": 33,
+      "durationMaxMin": 34.1,
+      "slowestAgent": {
+        "label": "策划版 ST-C06",
+        "durationMs": 2044035,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwge7ien-3.json",
+      "runId": "run-mwge7ien-3",
+      "entries": 19,
+      "agents": 19,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 2,
+      "durationP50Min": 13.5,
+      "durationP90Min": 31.5,
+      "durationMaxMin": 46.6,
+      "slowestAgent": {
+        "label": "策划版 ST-C12",
+        "durationMs": 2795155,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwi2rvx1-8.json",
+      "runId": "run-mwi2rvx1-8",
+      "entries": 18,
+      "agents": 18,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 12.6,
+      "durationP90Min": 18.2,
+      "durationMaxMin": 23,
+      "slowestAgent": {
+        "label": "策划版 ST-C11",
+        "durationMs": 1380831,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwlhe4sk.json",
+      "runId": "run-mwlhe4sk",
+      "entries": 18,
+      "agents": 18,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 1.1,
+      "durationP90Min": 42.2,
+      "durationMaxMin": 45.3,
+      "slowestAgent": {
+        "label": "客户端查证 ST-C01 ST-C01-cp03.json",
+        "durationMs": 2719544,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwhx3hlp-6.json",
+      "runId": "run-mwhx3hlp-6",
+      "entries": 16,
+      "agents": 16,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 28.6,
+      "durationP90Min": 34.8,
+      "durationMaxMin": 40.3,
+      "slowestAgent": {
+        "label": "落判 ST-C11 ST-C11-r01.json",
+        "durationMs": 2418860,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwhykgx8-7.json",
+      "runId": "run-mwhykgx8-7",
+      "entries": 15,
+      "agents": 15,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 25.7,
+      "durationP90Min": 30.8,
+      "durationMaxMin": 32.9,
+      "slowestAgent": {
+        "label": "复核建议 ST-C11 ST-C11-r01.json",
+        "durationMs": 1975375,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwkomqfd.json",
+      "runId": "run-mwkomqfd",
+      "entries": 21,
+      "agents": 14,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 8.9,
+      "durationP90Min": 11.5,
+      "durationMaxMin": 11.6,
+      "slowestAgent": {
+        "label": "拆解 ST-C08 自摸、放铳、抢杠胡",
+        "durationMs": 697005,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwg59v7b-13.json",
+      "runId": "run-mwg59v7b-13",
+      "entries": 12,
+      "agents": 12,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 5.1,
+      "durationP90Min": 8.7,
+      "durationMaxMin": 9.1,
+      "slowestAgent": {
+        "label": "匹配 ST-C02 ST-C02-p01.json",
+        "durationMs": 545759,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwee0k70-1.json",
+      "runId": "run-mwee0k70-1",
+      "entries": 11,
+      "agents": 11,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 12.3,
+      "durationP90Min": 15.7,
+      "durationMaxMin": 19.2,
+      "slowestAgent": {
+        "label": "全文一致性检查",
+        "durationMs": 1151227,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwekpt2y-2.json",
+      "runId": "run-mwekpt2y-2",
+      "entries": 11,
+      "agents": 11,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 16.8,
+      "durationP90Min": 19.8,
+      "durationMaxMin": 22,
+      "slowestAgent": {
+        "label": "全文一致性检查",
+        "durationMs": 1320549,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mweo250p-3.json",
+      "runId": "run-mweo250p-3",
+      "entries": 11,
+      "agents": 11,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 11,
+      "durationP90Min": 15,
+      "durationMaxMin": 18.9,
+      "slowestAgent": {
+        "label": "全文一致性检查",
+        "durationMs": 1134578,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwikzxco-11.json",
+      "runId": "run-mwikzxco-11",
+      "entries": 11,
+      "agents": 11,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 13.3,
+      "durationP90Min": 15.4,
+      "durationMaxMin": 17.9,
+      "slowestAgent": {
+        "label": "落判 ST-C11 ST-C11-r201.json",
+        "durationMs": 1076324,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwilnw46-12.json",
+      "runId": "run-mwilnw46-12",
+      "entries": 11,
+      "agents": 11,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 14.6,
+      "durationP90Min": 20,
+      "durationMaxMin": 26.4,
+      "slowestAgent": {
+        "label": "复核建议 ST-C07 ST-C07-r201.json",
+        "durationMs": 1584489,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwec365c.json",
+      "runId": "run-mwec365c",
+      "entries": 9,
+      "agents": 9,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 8.8,
+      "durationP90Min": 11.2,
+      "durationMaxMin": 11.2,
+      "slowestAgent": {
+        "label": "检查 操作按钮与权限",
+        "durationMs": 673681,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf8gm3p-3.json",
+      "runId": "run-mwf8gm3p-3",
+      "entries": 9,
+      "agents": 9,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 2.2,
+      "durationP90Min": 7.3,
+      "durationMaxMin": 7.3,
+      "slowestAgent": {
+        "label": "规格文档 ST-C01",
+        "durationMs": 439242,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwg3hayc-12.json",
+      "runId": "run-mwg3hayc-12",
+      "entries": 6,
+      "agents": 6,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 2,
+      "durationP90Min": 3.5,
+      "durationMaxMin": 3.5,
+      "slowestAgent": {
+        "label": "匹配 ST-C01 ST-C01-p01.json",
+        "durationMs": 212647,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfwny87.json",
+      "runId": "run-mwfwny87",
+      "entries": 5,
+      "agents": 5,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 3.8,
+      "durationP90Min": 6.7,
+      "durationMaxMin": 6.7,
+      "slowestAgent": {
+        "label": "策划版 ST-C04",
+        "durationMs": 399033,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwenfqqo.json",
+      "runId": "run-mwenfqqo",
+      "entries": 4,
+      "agents": 4,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 7.2,
+      "durationP90Min": 10.5,
+      "durationMaxMin": 10.5,
+      "slowestAgent": {
+        "label": "评审 问题条目内容",
+        "durationMs": 631132,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf8smis-4.json",
+      "runId": "run-mwf8smis-4",
+      "entries": 4,
+      "agents": 4,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 1.7,
+      "durationP90Min": 7.5,
+      "durationMaxMin": 7.5,
+      "slowestAgent": {
+        "label": "策划版 ST-C01",
+        "durationMs": 450252,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfweuxk.json",
+      "runId": "run-mwfweuxk",
+      "entries": 4,
+      "agents": 4,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 3.7,
+      "durationP90Min": 5.1,
+      "durationMaxMin": 5.1,
+      "slowestAgent": {
+        "label": "策划版 ST-C01",
+        "durationMs": 306936,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwi4nzjl-9.json",
+      "runId": "run-mwi4nzjl-9",
+      "entries": 4,
+      "agents": 4,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 8.9,
+      "durationP90Min": 9.9,
+      "durationMaxMin": 9.9,
+      "slowestAgent": {
+        "label": "客户端落判 ST-C10 ST-C10-pc01.json",
+        "durationMs": 593793,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwdbr58e.json",
+      "runId": "run-mwdbr58e",
+      "entries": 3,
+      "agents": 3,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 0.5,
+      "durationP90Min": 8.1,
+      "durationMaxMin": 8.1,
+      "slowestAgent": {
+        "label": "提取需求 【杭州麻将】核心流程杭州麻将好友房AI-11-12-2",
+        "durationMs": 483045,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf7e6nc-2.json",
+      "runId": "run-mwf7e6nc-2",
+      "entries": 3,
+      "agents": 3,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 3.9,
+      "durationP90Min": 10.4,
+      "durationMaxMin": 10.4,
+      "slowestAgent": {
+        "label": "策划版 ST-C05",
+        "durationMs": 626353,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfgnueu-8.json",
+      "runId": "run-mwfgnueu-8",
+      "entries": 3,
+      "agents": 3,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 4.2,
+      "durationP90Min": 5.6,
+      "durationMaxMin": 5.6,
+      "slowestAgent": {
+        "label": "规格文档 ST-C13 片1/2（修复）",
+        "durationMs": 335521,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfhua35-10.json",
+      "runId": "run-mwfhua35-10",
+      "entries": 3,
+      "agents": 3,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 5.8,
+      "durationP90Min": 7.7,
+      "durationMaxMin": 7.7,
+      "slowestAgent": {
+        "label": "策划版补跑章节抽检",
+        "durationMs": 462500,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfhvdzp-11.json",
+      "runId": "run-mwfhvdzp-11",
+      "entries": 3,
+      "agents": 3,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 4.5,
+      "durationP90Min": 8.8,
+      "durationMaxMin": 8.8,
+      "slowestAgent": {
+        "label": "策划版补跑章节抽检",
+        "durationMs": 525187,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwi53nj6-10.json",
+      "runId": "run-mwi53nj6-10",
+      "entries": 3,
+      "agents": 3,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 2.4,
+      "durationP90Min": 2.6,
+      "durationMaxMin": 2.6,
+      "slowestAgent": {
+        "label": "复核建议 ST-C15 ST-C15-pc01.json",
+        "durationMs": 155756,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf3k0na.json",
+      "runId": "run-mwf3k0na",
+      "entries": 2,
+      "agents": 2,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 11.2,
+      "durationP90Min": 11.2,
+      "durationMaxMin": 11.2,
+      "slowestAgent": {
+        "label": "ST-C11 分片 1/3",
+        "durationMs": 670050,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwlh93gv.json",
+      "runId": "run-mwlh93gv",
+      "entries": 2,
+      "agents": 2,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 0.2,
+      "durationP90Min": 0.2,
+      "durationMaxMin": 0.2,
+      "slowestAgent": {
+        "label": "回读 latest.json",
+        "durationMs": 14827,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mweq9or0.json",
+      "runId": "run-mweq9or0",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 0.1,
+      "durationP90Min": 0.1,
+      "durationMaxMin": 0.1,
+      "slowestAgent": {
+        "label": "最小探针",
+        "durationMs": 7112,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mweqf2cn-4.json",
+      "runId": "run-mweqf2cn-4",
+      "entries": 10,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 0.7,
+      "durationP90Min": 0.7,
+      "durationMaxMin": 0.7,
+      "slowestAgent": {
+        "label": "扫描规则基准与需求文档",
+        "durationMs": 42246,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf40sdo.json",
+      "runId": "run-mwf40sdo",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 13.6,
+      "durationP90Min": 13.6,
+      "durationMaxMin": 13.6,
+      "slowestAgent": {
+        "label": "ST-C11 分片 3/3（补写）",
+        "durationMs": 814669,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwf9b49u-5.json",
+      "runId": "run-mwf9b49u-5",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 9.6,
+      "durationP90Min": 9.6,
+      "durationMaxMin": 9.6,
+      "slowestAgent": {
+        "label": "查证 ST-C05 吃、碰、杠",
+        "durationMs": 576930,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwfh8aby-9.json",
+      "runId": "run-mwfh8aby-9",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 7.2,
+      "durationP90Min": 7.2,
+      "durationMaxMin": 7.2,
+      "slowestAgent": {
+        "label": "策划版 ST-C14（修复单跑）",
+        "durationMs": 429826,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwggr0nl-5.json",
+      "runId": "run-mwggr0nl-5",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 8.8,
+      "durationP90Min": 8.8,
+      "durationMaxMin": 8.8,
+      "slowestAgent": {
+        "label": "补写 22 个漏写原子",
+        "durationMs": 526298,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwi3pffy.json",
+      "runId": "run-mwi3pffy",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 4.9,
+      "durationP90Min": 4.9,
+      "durationMaxMin": 4.9,
+      "slowestAgent": {
+        "label": "策划版 ST-C14 补写",
+        "durationMs": 295115,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwinfnr1-13.json",
+      "runId": "run-mwinfnr1-13",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 0.9,
+      "durationP90Min": 0.9,
+      "durationMaxMin": 0.9,
+      "slowestAgent": {
+        "label": "待确认行服务器补充改写",
+        "durationMs": 53797,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwio0xgs-14.json",
+      "runId": "run-mwio0xgs-14",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 1.7,
+      "durationP90Min": 1.7,
+      "durationMaxMin": 1.7,
+      "slowestAgent": {
+        "label": "陈旧待验证行改写",
+        "durationMs": 99422,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwiodspd-15.json",
+      "runId": "run-mwiodspd-15",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 5,
+      "durationP90Min": 5,
+      "durationMaxMin": 5,
+      "slowestAgent": {
+        "label": "待控行原子映射",
+        "durationMs": 297844,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwiolffe-16.json",
+      "runId": "run-mwiolffe-16",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 1.8,
+      "durationP90Min": 1.8,
+      "durationMaxMin": 1.8,
+      "slowestAgent": {
+        "label": "补充版本待确认行改写",
+        "durationMs": 108634,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwioyvkf-17.json",
+      "runId": "run-mwioyvkf-17",
+      "entries": 1,
+      "agents": 1,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 0,
+      "durationP50Min": 2.3,
+      "durationP90Min": 2.3,
+      "durationMaxMin": 2.3,
+      "slowestAgent": {
+        "label": "策划版交付语言改写",
+        "durationMs": 136304,
+        "inputTokens": 0
+      }
+    },
+    {
+      "file": "run-mwef09g8-1.json",
+      "runId": "run-mwef09g8-1",
+      "entries": 1,
+      "agents": 0,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "failed": 1,
+      "durationP50Min": 0,
+      "durationP90Min": 0,
+      "durationMaxMin": 0
+    }
+  ]
+}

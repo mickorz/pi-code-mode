@@ -11,7 +11,11 @@ import path from "node:path"
 import { parseWorkflowScript } from "../engine/runtime/vm.js"
 import { runWorkflow } from "../engine/runtime/workflow-runtime.js"
 import { loadRegistry, readWorkflowScript } from "../engine/runtime/workflow-registry.js"
+import { resolvePlanContext, toRunConfig } from "../engine/plan/plan-runner.js"
 import { JournalStore } from "../engine/persistence/journal.js"
+import { TaskRegistry } from "../engine/governance/task-registry.js"
+import { buildProfiles, samplesFromCheckpoints } from "../engine/adaptive/adaptive-scheduler.js"
+import { BaselineStore } from "../engine/evaluator/baseline-store.js"
 import { agentAdapterToRunner } from "../adapter/agent-adapter.js"
 import type { AgentAdapter } from "../adapter/types.js"
 import { renderWorkflowRunResult } from "./render-text.js"
@@ -107,6 +111,10 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
         Type.String({ description: "从指定 runId 的 journal 断点续跑：最长未变前缀回放（已完成节点零成本复用），仅变更后的节点真实执行" }),
       ),
       concurrency: Type.Optional(Type.Number({ description: "run 内并发上限（正整数，钳制 16；缺省 CPU 核数-2）" })),
+      planPath: Type.Optional(
+        Type.String({ description: "Plan 文件路径（相对项目根）；提供后按 Plan Profile 注入预算/并发/模型策略" }),
+      ),
+      profile: Type.Optional(Type.String({ description: "Plan Profile 名（fast/balanced/quality）；缺省用 Plan 的默认 Profile" })),
     }),
     async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: any) {
       // 1. 取脚本
@@ -129,8 +137,9 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
       }
 
       // 2. 校验 meta
+      let workflowIdForTasks: string | undefined
       try {
-        parseWorkflowScript(script)
+        workflowIdForTasks = parseWorkflowScript(script).meta.id ?? parseWorkflowScript(script).meta.name
       } catch (e) {
         return toolText(`[workflow 参数错误] 脚本校验失败: ${String((e as Error)?.message ?? e)}`)
       }
@@ -154,18 +163,68 @@ export function makeWorkflowTool(deps: WorkflowToolDeps) {
           }
         : undefined
 
+      // 2.5 Plan 解析（M6 接线）：提供 planPath 时按 Profile 注入预算闸/并发/模型策略
+      //     Plan 过期不阻断执行（只记日志），与 M1"旧 Workflow 兼容"原则一致
+      const planCtx =
+        params.planPath && params.scriptPath
+          ? resolvePlanContext({
+              scriptPath: params.scriptPath,
+              planPath: params.planPath,
+              ...(params.profile ? { profile: params.profile } : {}),
+              cwd,
+              runId,
+            })
+          : null
+      if (planCtx) {
+        for (const note of planCtx.notes) console.warn(`[pi-code-mode] Plan: ${note}`)
+        if (planCtx.budgetGate.policyState) {
+          deps.runManager.attach?.(runId, {
+            label: sourceLabel,
+            planProfile: planCtx.activeProfile,
+            planHash: planCtx.planHash,
+          } as any)
+        }
+      }
+
       const runOpts = () => ({
         args: params.args,
         agent: agentAdapterToRunner(deps.adapterFactory()),
         cwd,
         signal: run.controller.signal,
         runId,
-        concurrency: typeof params.concurrency === "number" ? params.concurrency : undefined,
+        // Plan 的 Profile 并发优先于显式 concurrency 参数（Profile 是策略层，参数是临时覆盖）
+        concurrency:
+          planCtx?.concurrency !== undefined
+            ? planCtx.concurrency
+            : typeof params.concurrency === "number"
+              ? params.concurrency
+              : undefined,
         resolveTier: deps.resolveTier,
         resolveTierPool: deps.resolveTierPool,
         resumeJournal,
         replayPolicy: "explicit" as const,
         confirm,
+        // M6：Plan 预算闸接入真实 run（此前只在测试中传过）
+        ...(planCtx ? { budgetGate: planCtx.budgetGate } : {}),
+        ...(planCtx
+          ? {
+              evaluationPlan: planCtx.plan,
+              baselineStore: new BaselineStore({ cwd }),
+              onEvaluation: (evaluation: any) => deps.runManager.attach(runId, { evaluation } as any),
+            }
+          : {}),
+        ...(params.taskResume
+          ? {
+              taskRegistry: new TaskRegistry({ dir: path.join(cwd, ".pi", "workflows", "tasks"), workflowId: workflowIdForTasks ?? runId }),
+              taskResume: true,
+              adaptiveProfiles: buildProfiles(
+                new TaskRegistry({ dir: path.join(cwd, ".pi", "workflows", "tasks"), workflowId: workflowIdForTasks ?? runId })
+                  .list()
+                  .filter((t) => t.committedAt !== undefined && t.updatedAt !== undefined)
+                  .map((t) => ({ taskKey: t.taskKey, taskType: t.taskKey.split(/[:\/-]/)[0] ?? t.taskKey, durationMs: Math.max(1, t.updatedAt - (t.committedAt ?? t.updatedAt)) })),
+              ),
+            }
+          : {}),
         onAgentJournal: (entry: any) => journal.append(runId, entry.key, entry),
         // 评审修复 M2：失败/中止 attempt 的执行历史（details 面板与 Journal Tab 的数据源）
         onAgentExecution: (payload: any) => journal.recordExecution(runId, payload.key, payload.execution),

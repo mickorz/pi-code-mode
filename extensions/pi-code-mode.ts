@@ -32,6 +32,13 @@ import {
   makeWorkflowControlTool,
   type WorkflowToolDeps,
 } from "../src/tools/workflow-tools.js"
+import {
+  createPlannerAgent,
+  createWorkflowAnalyzeTool,
+  createWorkflowBenchmarkTool,
+  createWorkflowOptimizeTool,
+} from "../src/tools/workflow-analyze-tool.js"
+import { createPlanValidateTool } from "../src/tools/plan-tool.js"
 import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 import { createRenderScheduler } from "../src/manager/render-scheduler.js"
 import { registerWorkflowsCommand } from "./commands/workflows/index.js"
@@ -192,14 +199,55 @@ export default function extension(pi: ExtensionAPI): void {
 
   pi.registerTool(makeWorkflowTool({ ...makeDeps(), deliver }) as any)
   pi.registerTool(makeWorkflowControlTool(makeDeps()) as any)
+  // workflow_analyze：M1 Analyzer（静态分析，不执行脚本）
+  // M6-P1-3：注入真实 Planner（此前 includeSuggestions 静默失效）
+  pi.registerTool(
+    createWorkflowAnalyzeTool({
+      cwd: process.cwd(),
+      plannerAgent: createPlannerAgent({ cwd: process.cwd() }),
+    }) as any,
+  )
+  // plan_validate：M2 Plan 校验（Schema/Profile 边界/指纹/过期）
+  pi.registerTool(createPlanValidateTool({ cwd: process.cwd() }) as any)
+  // workflow_optimize：M5 优化闭环（默认独立工作区 + 授权闸门，不直接改生产）
+  pi.registerTool(createWorkflowOptimizeTool({ cwd: process.cwd(), plannerAgent: createPlannerAgent({ cwd: process.cwd() }) }) as any)
+  // workflow_benchmark：M5 真实 before/after 对照——runOnce 复用 workflow 工具真实执行
+  const benchmarkWorkflowTool = makeWorkflowTool({ ...makeDeps(), deliver })
+  pi.registerTool(
+    createWorkflowBenchmarkTool({
+      cwd: process.cwd(),
+      runOnce: async ({ scriptPath, label, cwd }) => {
+        const started = Date.now()
+        const out: any = await benchmarkWorkflowTool.execute(
+          "bench",
+          { scriptPath, background: false },
+          undefined,
+          undefined,
+          {},
+        )
+        const durationMs = Date.now() - started
+        const text: string = out?.content?.[0]?.text ?? ""
+        const failed = /失败|failed/i.test(text) && !/\[workflow 完成\]/.test(text)
+        return {
+          durationMs,
+          ok: !failed && !out?.isError,
+          ...(failed ? { error: text.slice(0, 200) } : {}),
+        }
+      },
+    }) as any,
+  )
 
   // ---- schedule_* 工具族 ×8 + 调度循环（M4）----
+  const scheduleDeps = makeDeps()
   const scheduleRunner = new PiScheduleRunner({
     runManager,
     deliver,
     cwd: process.cwd(),
     eventBus: getRuntimeEventBus(),
     journal: runJournal,
+    // M6-P0-3： schedule 复用 workflow 的 tier 解析与模型池（此前静默回退默认模型）
+    ...(scheduleDeps.resolveTier ? { resolveTier: scheduleDeps.resolveTier } : {}),
+    ...(scheduleDeps.resolveTierPool ? { resolveTierPool: scheduleDeps.resolveTierPool } : {}),
   })
   const scheduler = new ScheduleRuntime({
     client: undefined, // pi 版实现不直调 client（root session 由 PiScheduleRunner 创建）

@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import process from "node:process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,8 +34,12 @@ function usage() {
   pi-code-mode path       打印插件仓库绝对路径
   pi-code-mode test       干净房间一次性测试：pi -ne -e <repo>
 
+
 装完后在当前项目启动 pi，首次会弹 project trust 确认，授权一次永久生效。
-工具：workflow / workflow_control / schedule_*；命令：/workflows /schedule。
+插件工具：workflow / workflow_control / schedule_*；
+命令：/workflows（含 analyze|anal / plan validate / run / resume / status / cancel）、/schedule。
+
+注：静态分析与 Plan 校验的唯一入口是 pi 会话内的 /workflows analyze 与 /workflows plan validate。
 更新插件：插件仓库改 src → npm run build → 重启本项目的 pi。`);
 }
 

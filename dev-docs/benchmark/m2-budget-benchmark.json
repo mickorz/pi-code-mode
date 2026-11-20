@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-11-18T10:44:33.853Z",
+  "results": [
+    {
+      "name": "硬预算 maxAgents 拦截",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "硬预算 maxDurationMs 拦截",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "硬预算 maxRetries 拦截",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "软预算并发预留不超发",
+      "pass": true,
+      "detail": "成功 3/5"
+    },
+    {
+      "name": "无 Plan 零改动兼容",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "Plan 解析注入 budget/concurrency",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "指标聚合 = 逐条之和",
+      "pass": true,
+      "detail": "60 vs 60"
+    }
+  ],
+  "allPass": true
+}

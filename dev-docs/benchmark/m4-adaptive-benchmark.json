@@ -1,0 +1,61 @@
+{
+  "generatedAt": "2026-11-18T10:53:26.154Z",
+  "results": [
+    {
+      "name": "分片确定性（同输入同分片）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "分片无遗漏无重复",
+      "pass": true,
+      "detail": "原 48 项 → 6 片，缺失 0，重复 0"
+    },
+    {
+      "name": "重复上下文传输显著减少",
+      "pass": true,
+      "detail": "saved 100.0%"
+    },
+    {
+      "name": "证据覆盖率不下降",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "自适应调度：长任务先发",
+      "pass": true,
+      "detail": "a1,b1"
+    },
+    {
+      "name": "仅消费 M2/M3 数据（无 M5 基线也能工作）",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "429 触发并发降档",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "连续成功后缓慢回升",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "三模式 Required Validation 全部执行（质量不降级）",
+      "pass": true,
+      "detail": "fast:3项 balanced:3项 quality:4项"
+    },
+    {
+      "name": "无 Profile 削弱 Required",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "分片可产出任务清单（接通 M3 BatchExecutor）",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "allPass": true
+}

@@ -11,7 +11,7 @@
     "pi-package"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.extensions.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.extensions.json && node -e \"const fs=require('node:fs');fs.cpSync('src/engine/analyzer/dashboard/template.html','dist/engine/analyzer/dashboard/template.html');fs.cpSync('src/engine/analyzer/rules/definitions','dist/engine/analyzer/rules/definitions',{recursive:true})\"",
     "test:engine": "tsx --test tests/engine/*.test.ts",
     "test:contract": "tsx --test tests/contract/*.test.ts"
   },

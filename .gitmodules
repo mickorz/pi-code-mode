@@ -65,3 +65,7 @@
 	path = thirdparties/ak-pi-workflow-roles
 	url = https://github.com/Akagilnc/ak-pi-workflow-roles.git
 	branch = main
+[submodule "thirdparties/PrdGameSkill"]
+	path = thirdparties/PrdGameSkill
+	url = https://github.com/mickorz/PrdGameSkill.git
+	branch = main

@@ -21,7 +21,11 @@ export interface AgentRequest {
   /** worktree 隔离时为 worktree 路径；隔离可达性由 Engine 的 prompt 注入保证 */
   cwd?: string
   tools?: ToolPolicy
-  timeoutMs?: number
+  /**
+   * 取消通道（Engine 的 attempt 超时/run abort 都落到这里）。
+   * 注意：超时语义只有这一条，不再提供 timeoutMs 字段——
+   * 曾存在的 `timeoutMs?: number` 声明未被任何 Adapter 消费（死配置），已移除。
+   */
   signal?: AbortSignal
   /** JSON Schema；P0/M1 仅基础结构化透传（prompt 要求 + 本地解析），修复循环属 M2 */
   outputSchema?: object

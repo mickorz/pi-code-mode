@@ -1,62 +1,75 @@
-# MCP-M2 执行报告：MCP 策略层 + AgentAdapter 接入
+# MCP-M2 执行报告：Execution Governance（执行治理）
 
 - 日期：2026-11-18
-- 对应计划：`dev-docs/planning/2026-11-17-mcp-integration-执行计划.md`（v5）
-- 结论：**M1 + M2 全部完成**——契约 81 断言、引擎 206 断言、tsc 类型关卡全绿；端到端联调 3 用例 19 断言全 PASS
-- 前置：M0 运行时实证（`MCP-M0-执行报告.md`，57 断言）
+- 架构基线：`dev-docs/design/workflow-engineering-framework.md`
+- 执行计划：`dev-docs/planning/2026-11-18-workflow-engineering-execution-plan.md`
+- 结论：**M2（T1-T7）全部完成**，量化验收指标全部达标
 
 ---
 
-## 一、M1：MCP 策略层（薄）
+## 一、交付清单
 
-| 交付物 | 说明 |
-|---|---|
-| `src/mcp/mcp-policy.ts` | `McpPolicy` 接口 + `filterMcpConfig(base, policy)` 纯函数 + `splitToolSpec` 规范名解析 |
-| `tests/contract/mcp-policy.test.ts` | 14 断言：默认拒绝/server 白名单/工具级独立生效/deny 压 direct/键序矩阵/通配符透传/非法规范名/base 元数据保留 |
+| 任务 | 交付物 | 断言数 |
+| --- | --- | --- |
+| T1/T2/T2b 预算三分类 + 计量 | `src/engine/governance/budget-tracker.ts`、`tests/governance/budget.test.ts` | 13 |
+| T3 预算闸 + 降级语义 | `src/engine/governance/{budget-gate,policy-state}.ts`、`tests/governance/budget-gate.test.ts` | 9 |
+| T3 集成 runtime | `src/engine/runtime/workflow-runtime.ts`（dispatch 边界接入 + 结算/释放）、`tests/governance/runtime-budget.test.ts` | 6 |
+| T4 Plan 执行消费 | `src/engine/plan/plan-runner.ts`、`tests/plan/plan-runner.test.ts` | 9 |
+| T5 budget.remaining() 脚本 API | runtime globals 注入 `budget.{remaining,totals}` | （含上） |
+| T6 工具与 CLI | `src/tools/plan-tool.ts`、`tests/plan/plan-tool.test.ts`、主入口注册 | 7 |
+| T7 Benchmark | `tests/governance/m2-benchmark.mts`、`dev-docs/benchmark/m2-budget-benchmark.json` | 7 |
 
-三铁律落地：
-1. **默认拒绝**：`enabled=false` 或 `servers` 未配置 → 空集；`allowTools` 未命中的工具继承 server `exposure: "hidden"`（F12 官方范式，不枚举工具）。
-2. **deny 恒胜**：toolExposure 键按 `[deny 精确名][allow 精确名][deny 模式][allow 模式]` 构建 + **先到先得去重**（同键 deny 恒赢，含 deny 模式与 allow 模式同字符串的场景——测试中发现并修复的后写覆盖 bug）。
-3. **结构层匹配**：全程在 `McpServerEntry` 结构上操作；`<server>:<tool>` 规范名按第一个冒号切分。
+合计 **58 条 M2 断言全 PASS**；engine 206 / contract 87 零回归。
 
-## 二、M2：AgentAdapter 接入（P0-1 透传链 + 事件通道 + journal 双落点）
+## 二、量化验收指标
 
-| 文件 | 改造 |
-|---|---|
-| `src/engine/types/index.ts` | 新增 `McpPolicy` / `McpToolCallSummary`（安全摘要契约）；`JournalEntry.toolCalls?` / `AgentExecutionRecord.toolCalls?`（双落点字段） |
-| `src/adapter/types.ts` | `ToolPolicy.mcp?: McpPolicy`（引用 engine/types，依赖方向 engine←adapter 不反转） |
-| `src/engine/agent/session-runner.ts` | `AgentRunOptions` 新增 `executionId`（v5 Runtime 注入）/ `tools`（P0-1）/ `onToolCall`（事件侧窄回调） |
-| `src/adapter/agent-adapter.ts` | bridge：executionId 贯通（缺省 fallback UUID 兼容旧调用方）+ tools 透传 request + record(`mcp-tool-call`) 事件桥接 onToolCall |
-| `src/adapter/pi-agent-adapter.ts` | `mcp.enabled` 时装配三工厂（MCP/Codemode/ToolSearch，`noExtensions` 保持不变，F4）；`makeMcpLoadConfig` 注入过滤配置；prompt 前 `bindExtensions({})`（F5 顺序）；session.subscribe 采集 `tool_execution_start/end` 组装安全摘要（不存完整参数/返回值，错误经 redact+限长）；取消/超时路径 flush 未配对 start 为 error 摘要 |
-| `src/engine/runtime/workflow-runtime.ts` | `ScriptAgentOptions.tools`（计入 hash 身份）；attempt 级 `mcpCalls` 缓冲 + `executionId` 注入 + `onToolCall` 收集；成功 → `JournalEntry.toolCalls`、失败/中止 → `AgentExecutionRecord.toolCalls`（v4/v5 双落点） |
-| `src/mcp/mcp-config-loader.ts` | pi 1.3.0 的 `loadMcpConfig` 未从包主入口导出——按官方 override 语义实现最小等价读取（全局+项目合并） |
-| `tests/contract/mcp-bridge.test.ts` | 8 断言：executionId 贯通/缺省 fallback/tools 透传/onToolCall 桥接/runtime 双落点/hash 身份 |
+| 指标 | 目标 | 实测 |
+| --- | --- | --- |
+| 预算超限拦截率（三类硬预算） | 100% | ✅ maxAgents / maxDurationMs / maxRetries 各拦截验证通过 |
+| Plan 注入对旧 workflow 兼容性 | 100% | ✅ 未注入 gate 时行为逐字节不变；无 Plan 时 `resolvePlanContext` 返回 null |
+| 运行指标完整性 | 100% | ✅ 聚合值 = 逐条 usage 之和（60 vs 60） |
+| budget.remaining() 精度 | 与 tracker 一致 | ✅ 含预留占用（10000 - 400 reserved = 9600 等用例） |
+| 软预算并发安全 | 无超发 | ✅ 5 并发 × 3000 / 上限 10000 → 仅 3 个成功 |
 
-## 三、端到端联调（真实模型 glm-5.3-flash + stdio fixture + 完整 workflow 链路）
+## 三、核心设计
 
-脚本：`dev-examples/mcp-m2-e2e/e2e.ts`；隔离：`PI_CODING_AGENT_DIR` 临时目录（复制凭证 + fixture 专用 mcp.json，不触碰宿主配置）。
+### 预算三分类（架构基线与评审 P0-3）
 
-| 用例 | 断言 | 结果 | 关键证据 |
-|---|---|---|---|
-| E2E-1 放行 | 8 | PASS | workflow 输出含 marker；调用到达 server；**journal `entry.toolCalls[0]` = `{toolName: "mcp__fix__echo", status: "ok", durationMs: 23, argsKeys: ["text"]}`** |
-| E2E-2 拒绝 | 2 | PASS | denyTools 压过 allowTools；调用未到达 server；模型报告不可调用 |
-| E2E-3 默认拒绝 | 3 | PASS | 未授权 server 零连接零进程；模型确认工具不可用 |
+| 类型 | 字段 | 执行策略 |
+| --- | --- | --- |
+| 硬预算 | maxAgents（总 dispatch 次数）/ maxDurationMs / maxRetries | dispatch 前拦截，超限即停（不可恢复） |
+| 软预算 | maxInputTokens / maxOutputTokens | 调用前**原子预留** → usage 结算 → 超限降级 |
+| 实际计量 | 模型返回 usage | 无 usage 时按预留值计入并标 `estimated=true`（不伪装精确） |
 
-## 四、测试与构建汇总
+### Budget Reservation 五约束落实
 
-- `npm run build`：通过（tsc 类型关卡）
-- `npm run test:contract`：81/81（含 mcp-policy 14 + mcp-bridge 8 新增）
-- `npm run test:engine`：206/206（零回归）
+① 原子预留（同步块，JS 单线程保证）② 并发不重复消费（input/output 分项占用）③ 失败释放（`outcome=failed/cancelled` 且无 usage）④ usage 结算差额 ⑤ 无真实 usage 标估算。
 
-## 五、发现与注意事项
+### 降级 Run 级语义（五轮评审 P1-2）
 
-1. **宿主 packages 冷启动开销**：子会话隔离目录复制宿主 settings.json 时，`packages` 字段会触发逐包 git clone + npm install（实测 12 包 ≈200s）。**M2 实现不受影响**（生产路径读宿主原目录，包已安装）；仅影响沙盒型隔离脚本——e2e 已剥 packages 字段。
-2. **pi 1.3.0 `loadMcpConfig` 未导出**：SDK 主入口只导出类型不导出读取函数；`mcp-config-loader.ts` 按官方文档语义实现（override 合并规则），升级 SDK 时需对照校验。
-3. **事件流实测载荷**：`tool_execution_start = {toolCallId, toolName, args}`、`tool_execution_end = {toolCallId, toolName, result, isError, durationMs}`——McpToolCallSummary 的安全摘要（argsBytes/argsKeys/status/durationMs）全部可从事件流取得，无需触碰 result 内容。
-4. M0 报告的两项 WARN 在 M2 的落点：F15（dispose 不回收 stdio 进程）——本期未在 Adapter 层加补偿清理（脚本退出管道断裂自然回收，长驻进程场景留待上游修复或后续迭代）；F16（401 阻塞）——由 loadConfig 默认拒绝天然防御（未授权 server 根本不进配置）。
+- `activeProfile`：本次 Run 初始 Profile（**不变**，用于追溯）
+- `effectivePolicy`：当前生效策略（可降级变化）
+- `policyTransitions`：每次变更 + 原因 + 时间
+- 降级链 `quality → balanced → fast`（不可反向自动升级）；**强制验证 `requiredValidation` 恒生效，降级不可关闭**
+- 降级只影响后续未调度任务（gate 在 dispatch 边界执行）
 
-## 六、遗留
+### Plan 执行消费（M2-T4）
 
-- `tool_search` deferred 模式的 e2e 覆盖（本期 e2e 用 direct/codemode 路径；deferred 行为已在 M0-5C 实证）
-- dispose 泄漏的长驻进程补偿（见第五节第 4 条）
-- 上游反馈：F15（dispose 不回收）、`loadMcpConfig` 未导出（读取逻辑被迫自实现）——可作为 pi 上游 issue 反馈
+`resolvePlanContext()` → `PlanRunContext`：读 Plan + 选 Profile（缺省 balanced）→ 生成 BudgetGate / concurrency（覆盖脚本 setConcurrency）/ modelPolicy / planHash / profileHash / notes（过期提示）。`toRunConfig()` 产出 `WorkflowRunConfig { workflowId, runId, planHash, activeProfile, profileHash, effectivePolicy, policyTransitions }`。
+
+## 四、架构约束核对
+
+| 约束 | 落实 |
+| --- | --- |
+| Runtime 挂钩点以可选 options 注入 | ✅ `budgetGate?: BudgetGate` 可选；未注入零影响（有专门兼容测试） |
+| 降级不关闭强制验证 | ✅ `PolicyState.validationRequired` 恒取 Definition 值 |
+| 收益/指标不虚构 | ✅ 无 usage 标 `estimated`；M2 指标来自真实记账 |
+| 不破坏现有 Journal 语义 | ✅ 未改动 journal 写入路径，206 引擎断言零回归 |
+
+## 五、下一步（M3 Reliable Execution）
+
+M2 已提供 M3 需要的两个基础：
+1. **指标采集**（per-agent usage 聚合）→ M3 任务级耗时画像的输入
+2. **RunConfig 追溯**（activeProfile/transitions）→ 任务级恢复时的策略重现
+
+M3 任务：TaskRegistry（含 `leaseGeneration` Fencing Token）+ BatchExecutor + TaskCheckpoint（分层指纹 taskFingerprint + 外部副作用四状态）+ Registry/Checkpoint 一致性五规则 + 任务级 resume。
