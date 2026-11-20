@@ -323,8 +323,15 @@ export function renderMarkdown(report: AnalysisReport): string {
   lines.push("")
   lines.push("## 检查清单（全部规则都执行过）")
   lines.push("")
-  lines.push("| 规则 | 严重度 | 结果 | 检查项 |")
-  lines.push("| --- | --- | --- | --- |")
+  // 有 AI 复核时多一列：静态结论不等于全部结论，尤其 ai-only 规则
+  const hasAi = Boolean(report.aiRuleCheck)
+  if (hasAi) {
+    lines.push("| 规则 | 严重度 | 静态 | AI 复核 | 最终 | 检查项 |")
+    lines.push("| --- | --- | --- | --- | --- | --- |")
+  } else {
+    lines.push("| 规则 | 严重度 | 结果 | 检查项 |")
+    lines.push("| --- | --- | --- | --- |")
+  }
   for (const r of report.ruleInventory) {
     const status =
       r.status === "error"
@@ -334,7 +341,53 @@ export function renderMarkdown(report: AnalysisReport): string {
           : r.status === "ai-only"
             ? "静态不判定（由 AI 检查）"
             : "通过"
-    lines.push(`| \`${r.id}\` | ${r.severity} | ${status} | ${r.description} |`)
+    if (!hasAi) {
+      lines.push(`| \`${r.id}\` | ${r.severity} | ${status} | ${r.description} |`)
+      continue
+    }
+    const merged = report.ruleMerge?.find((m) => m.ruleId === r.id)
+    const aiCell = merged?.aiStatus
+      ? `${merged.aiStatus}${merged.aiConfidence !== undefined ? ` (${merged.aiConfidence.toFixed(2)})` : ""}`
+      : "未启用"
+    const finalCell = merged?.finalStatus ?? "-"
+    lines.push(`| \`${r.id}\` | ${r.severity} | ${status} | ${aiCell} | ${finalCell} | ${r.description} |`)
+  }
+
+  // ---- AI Rule Check 详情（默认开启；有结果就展厅，用户要能看到 AI 到底判了什么）----
+  if (report.aiRuleCheck) {
+    const rc = report.aiRuleCheck
+    const hitCount = rc.checks.filter((c) => c.status === "hit").length
+    const uncCount = rc.checks.filter((c) => c.status === "uncertain").length
+    const errCount = rc.checks.filter((c) => c.status === "error").length
+    const passed = rc.checks.filter((c) => c.status === "pass" || c.status === "not-applicable").length
+    lines.push("")
+    lines.push(
+      `## AI 规则检查（${rc.status}${rc.durationMs !== undefined ? ` / ${(rc.durationMs / 1000).toFixed(0)}s` : ""}）`,
+    )
+    lines.push("")
+    lines.push(`- 命中 ${hitCount} / 待确认 ${uncCount} / 通过 ${passed} / 失败 ${errCount}（共 ${rc.checks.length} 条）`)
+    if (rc.diagnostics.length > 0) {
+      lines.push(`- 诊断：${rc.diagnostics.slice(0, 5).join("；")}`)
+    }
+    lines.push("")
+    for (const c of rc.checks) {
+      if (c.status === "pass" || c.status === "not-applicable") continue
+      lines.push(`### ${c.status.toUpperCase()} \`${c.ruleId}\`（置信度 ${c.confidence.toFixed(2)}）`)
+      lines.push("")
+      if (c.error) lines.push(`- 错误：${c.error}`)
+      if (c.reason) lines.push(`- 判定依据：${c.reason}`)
+      if (c.evidence.length > 0) {
+        lines.push("")
+        lines.push("证据：")
+        for (const ev of c.evidence) {
+          lines.push(`- \`${ev.file}:L${ev.startLine}-${ev.endLine}\``)
+          lines.push("  ```")
+          for (const ql of ev.quote.split("\n").slice(0, 6)) lines.push(`  ${ql}`)
+          lines.push("  ```")
+        }
+      }
+      lines.push("")
+    }
   }
 
   // ---- findings 详情（带代码片段） ----
@@ -345,10 +398,17 @@ export function renderMarkdown(report: AnalysisReport): string {
     lines.push("全部规则检查通过，未发现静态风险。")
   }
   for (const f of report.findings) {
-    lines.push(`### ${f.severity.toUpperCase()} \`${f.ruleId}\` @ L${f.location.startLine}-${f.location.endLine}`)
+    // 跨文件分析时必须带文件名：37 条 finding 分布 12 个文件，只给行号无法定位该改哪个文件
+    const loc = f.location.file
+      ? `${f.location.file}:L${f.location.startLine}-${f.location.endLine}`
+      : `L${f.location.startLine}-${f.location.endLine}`
+    lines.push(`### ${f.severity.toUpperCase()} \`${f.ruleId}\` @ ${loc}`)
     lines.push("")
     lines.push(`- 置信度: ${f.confidence.toFixed(2)}${f.confidence < 0.5 ? "（提示性，不计入风险分）" : ""}`)
-    for (const ev of f.evidence) lines.push(`- ${ev}`)
+    // evidence 单条截断：DET-001 会把整段 prompt 拼进一行，不截断会撑爆可读性
+    for (const ev of f.evidence) {
+      lines.push(`- ${ev.length > 300 ? `${ev.slice(0, 300)}…（完整内容见 JSON）` : ev}`)
+    }
     if (f.snippet) {
       lines.push("")
       lines.push("```js")
