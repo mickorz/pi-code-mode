@@ -68,10 +68,10 @@ function viewState(nodeCount: number, running = true): ExplorerViewState {
 
 // ── 配置 ──
 
-test("配置: 缺省（无文件）为关闭 + right-top + width 34 + maxRows 14", () => {
+test("配置: 缺省（无文件）为关闭 + top-right + width 34 + maxRows 14", () => {
   const dir = tmpDir()
   const cfg = readFixedPanelConfig(dir)
-  assert.deepEqual(cfg, { enabled: false, anchor: "right-top", width: 34, maxRows: 14 })
+  assert.deepEqual(cfg, { enabled: false, anchor: "top-right", width: 34, maxRows: 14 })
 })
 
 test("配置: roundtrip 写读一致，保留文件内其他键", () => {
@@ -87,7 +87,20 @@ test("配置: roundtrip 写读一致，保留文件内其他键", () => {
   assert.equal((JSON.parse(fs.readFileSync(file, "utf8")) as any).other, 123)
 })
 
-test("配置: 非法值回退默认（enabled 非 true 一律关、anchor 白名单、width/maxRows 下限）；旧 placement 字段忽略", () => {
+test("配置: 非法值回退默认；旧配置的非法 right-top 自动归位 top-right（无需用户改文件）", () => {
+  const dir = tmpDir()
+  const file = path.join(dir, ".pi", "workflows", "explorer.json")
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  // right-top：pi-tui OverlayAnchor 无此值（初版默认值笔误，NaN 定位致零绘制）
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ fixedPanel: { enabled: true, anchor: "right-top" } }),
+    "utf8",
+  )
+  assert.deepEqual(readFixedPanelConfig(dir), { enabled: true, anchor: "top-right", width: 34, maxRows: 14 })
+})
+
+test("配置: 非法值回退默认（enabled 非 true 一律关、anchor 白名单（right-top 归位 top-right）、width/maxRows 下限）；旧 placement 字段忽略", () => {
   const dir = tmpDir()
   const file = path.join(dir, ".pi", "workflows", "explorer.json")
   fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -96,7 +109,7 @@ test("配置: 非法值回退默认（enabled 非 true 一律关、anchor 白名
     JSON.stringify({ fixedPanel: { enabled: "yes", anchor: "leftDock", width: 5, maxRows: -5, placement: "aboveEditor" } }),
     "utf8",
   )
-  assert.deepEqual(readFixedPanelConfig(dir), { enabled: false, anchor: "right-top", width: 34, maxRows: 14 })
+  assert.deepEqual(readFixedPanelConfig(dir), { enabled: false, anchor: "top-right", width: 34, maxRows: 14 })
 })
 
 // ── 渲染 ──

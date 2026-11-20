@@ -23,8 +23,9 @@ import { depthMapOf, renderTreeRow, type ThemeLike } from "./render.js"
 export interface FixedPanelConfig {
   /** 默认 false——不写配置文件 = 关闭，现有用户零感知 */
   enabled: boolean
-  /** 右侧锚点：right-top（贴顶）| right-center（垂直居中） */
-  anchor: "right-top" | "right-center"
+  /** 右侧锚点：top-right（贴顶，pi-tui 合法值）| right-center（垂直居中）。
+   *  注意：pi-tui OverlayAnchor 没有 right-top——非法值会让定位算出 NaN 导致面板零绘制（2026-11-19 实测坑） */
+  anchor: "top-right" | "right-center"
   /** 面板宽度（终端列数；悬浮面板，宽度多少遮多少） */
   width: number
   /** 树行硬上限（超出折叠），防大树占屏 */
@@ -33,7 +34,7 @@ export interface FixedPanelConfig {
 
 export const FIXED_PANEL_CONFIG_FILE = path.join(".pi", "workflows", "explorer.json")
 
-const DEFAULT_CONFIG: FixedPanelConfig = { enabled: false, anchor: "right-top", width: 34, maxRows: 14 }
+const DEFAULT_CONFIG: FixedPanelConfig = { enabled: false, anchor: "top-right", width: 34, maxRows: 14 }
 
 /** 读固定模式配置；文件缺失/字段缺失/非法值一律回退默认（enabled 缺省 false）。旧版 placement 字段忽略 */
 export function readFixedPanelConfig(cwd: string): FixedPanelConfig {
@@ -43,7 +44,8 @@ export function readFixedPanelConfig(cwd: string): FixedPanelConfig {
     const p = raw.fixedPanel ?? {}
     return {
       enabled: p.enabled === true,
-      anchor: p.anchor === "right-center" ? "right-center" : "right-top",
+      // 兼容：旧配置的非法 right-top（pi-tui 无此锚点，NaN 定位致零绘制）自动归位 top-right
+      anchor: p.anchor === "right-center" ? "right-center" : "top-right",
       width: typeof p.width === "number" && p.width >= 20 ? Math.floor(p.width) : DEFAULT_CONFIG.width,
       maxRows: typeof p.maxRows === "number" && p.maxRows >= 3 ? Math.floor(p.maxRows) : DEFAULT_CONFIG.maxRows,
     }
