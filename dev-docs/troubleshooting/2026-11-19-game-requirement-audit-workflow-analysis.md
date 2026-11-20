@@ -117,38 +117,44 @@ const retryImpactSet = mode === 'retry' ? impact.impactSet : null
 
 ---
 
-### P1-003：主入口和子流程的输入校验存在过度要求
+### ~~P1-003：输入校验过度要求~~ —— **勘误：此项为误判，代码正确**
 
-**位置**：`game-requirement-audit.js` 输入就位检查。
+> **2026-11-19 勘误**：本节原始判断有误。经复核 `effectiveStartIdx` 的实际取值与分支条件，
+> 当前代码的校验范围是**正确的**，不构成缺陷。保留此节是为了记录判断过程与纠正依据。
 
-当前逻辑：
+**实际代码**：
 
 ```js
-if (effectiveStartIdx <= 3) {
+if (effectiveStartIdx <= 3) {          // 只有 S4 及之前才需要客户端输入
   await check(() => fileExists(codeDir), '客户端代码工程不存在')
   await check(() => fileExists(fguiDir), 'FairyGUI 工程不存在')
 }
-if (effectiveStartIdx <= 4) {
+if (effectiveStartIdx <= 4) {          // 只有 S5 及之前才需要服务端输入
   await check(() => fileExists(serverSrcRoot), '服务端源码根不存在')
 }
 ```
 
-当从 S5 开始时，`effectiveStartIdx === 4`，仍会要求客户端 `codeDir` 和 `fguiDir` 存在；当只重跑服务端时，这些输入并不是必需的。
+**纠正依据**：
 
-**影响**：
+`from-stage startStage=S5` 时 `startIdx = STEPS.findIndex(S5) = 4`，故 `effectiveStartIdx = 4`。
+代入条件：
 
-- `from-stage startStage=S5` 或 server retry 可能被无关的客户端目录阻断。
-- 破坏阶段级恢复的独立性。
+- `4 <= 3` → **false** → 客户端目录校验**不执行**（原判断错误地说会执行）
+- `4 <= 4` → **true** → 服务端目录校验执行（正确）
 
-**建议**：
+`retry` 模式下默认 `startStage='S4'` → `effectiveStartIdx = 3`，`3 <= 3` 为 true，客户端与服务端输入都会校验——
+这也是正确的，因为 retry 默认从 S4 起会重新执行双端查证（除非 `retryScope=server`）。
 
-- S4 只校验 `codeDir`/`fguiDir`。
-- S5 只校验 `serverSrcRoot`。
-- `retryScope=client` 与 `retryScope=server` 分别只校验对应输入。
+**仍然存在的真实局限**（弱一点，不是 P1）：
 
-**验收**：
+- `retryScope=server` 时并没有收窄输入校验：仍要求客户端 `codeDir` 存在。
+  这与"只重跑服务端"的语义不完全贴合，但影响面小于原判断（仅 retryScope 分支）。
+- 结论：**降级为 P3 优化建议**，不是 P1 缺陷。
 
-删除客户端目录后，S5 单独重跑仍能启动；删除服务端目录后，S4 单独重跑仍能启动并在正确位置失败。
+**规则侧处理**：
+
+`INPUT-002` 规则在此脚本上正确报 `pass`——这也验证了规则的判定口径
+（`isClientInput && limit > 3` 才命中，而实际 `limit = 3`）。
 
 ---
 

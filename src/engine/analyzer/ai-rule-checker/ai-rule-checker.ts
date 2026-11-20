@@ -88,7 +88,7 @@ export interface RunAIRuleCheckInput {
   sources: SourceFile[]
   staticSummary: string
   plannerAgent: PlannerAgent
-  /** 并发上限（默认 3：单规则 prompt 较小，实测 3 路稳定） */
+  /** 并发上限（默认 4：默认只跑 6 条语义规则，2 轮完成） */
   concurrency?: number
   /** 单组超时（毫秒）；调用方也可从 plannerAgent 侧施加 */
   groupTimeoutMs?: number
@@ -172,7 +172,7 @@ export async function runAIRuleCheck(input: RunAIRuleCheckInput): Promise<AIRule
     }
   })
 
-  const results = await runWithConcurrency(tasks, input.concurrency ?? 3)
+  const results = await runWithConcurrency(tasks, input.concurrency ?? 4)
   const checks = results.flat()
   const errorCount = checks.filter((c) => c.status === "error").length
   const status: AIRuleCheckResult["status"] =

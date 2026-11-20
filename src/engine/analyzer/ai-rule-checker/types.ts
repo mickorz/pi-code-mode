@@ -64,7 +64,7 @@ export interface MergedRuleResult {
   ruleId: string
   severity: Severity
   description: string
-  staticStatus: "hit" | "pass" | "error"
+  staticStatus: "hit" | "pass" | "error" | "ai-only"
   staticHits: number
   staticError?: string
   aiStatus?: AIRuleStatus

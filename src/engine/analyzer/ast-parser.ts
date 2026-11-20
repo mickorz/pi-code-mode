@@ -156,11 +156,43 @@ function staticArrayLength(node: AnyNode): number | undefined {
 }
 
 /** 字面量字符串（模板字符串仅当无表达式时） */
+/**
+ * 尽力提取静态可得的字符串内容。
+ *
+ * 支持三种真实代码里的常见形态：
+ *  1. 字符串字面量
+ *  2. 无插值模板字符串
+ *  3. `['a', '', 'b' + var, 'c'].join('
+')` —— 数组字面量 join（workflow 里最常见的多行 prompt 写法）
+ *  4. `'a' + var + 'b'` 二元拼接（只保留能静态确定的部分）
+ *
+ * 必要性：IO-001 / DET-001 需要从 prompt 文本里找"用 read 工具读取"这类指令。
+ * 此前只支持 1/2，导致 `readBack()`（`[...].join('
+')`）完全提取不到，
+ * 真实脚本上的 IO-001 恒为 pass。
+ */
 function literalString(node: AnyNode): string | undefined {
   if (!node) return undefined
   if (node.type === "Literal" && typeof node.value === "string") return node.value
-  if (node.type === "TemplateLiteral" && (node.expressions?.length ?? 0) === 0) {
-    return (node.quasis ?? []).map((q: AnyNode) => q.value?.cooked ?? "").join("")
+  if (node.type === "TemplateLiteral") {
+    const quasis = (node.quasis ?? []).map((q: AnyNode) => q.value?.cooked ?? "")
+    return quasis.join("") || undefined
+  }
+  if (
+    node.type === "CallExpression" &&
+    node.callee?.type === "MemberExpression" &&
+    node.callee.property?.name === "join" &&
+    node.callee.object?.type === "ArrayExpression"
+  ) {
+    const parts = (node.callee.object.elements ?? [])
+      .map((el: AnyNode) => literalString(el) ?? "")
+      .filter((t: string) => t.length > 0)
+    return parts.length > 0 ? parts.join(" ") : undefined
+  }
+  if (node.type === "BinaryExpression" && node.operator === "+") {
+    const l = literalString(node.left) ?? ""
+    const r = literalString(node.right) ?? ""
+    return l + r || undefined
   }
   return undefined
 }
@@ -269,7 +301,7 @@ export function analyzeAst(source: string): AstAnalysis {
           if (p) node.scriptPath = p
         } else if (kind === "agent") {
           const p = literalString(firstArg)
-          if (p) node.promptPreview = p.slice(0, 80)
+          if (p) node.promptPreview = p.slice(0, 400)
         }
         nodes.push(node)
 

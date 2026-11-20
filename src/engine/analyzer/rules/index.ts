@@ -300,8 +300,13 @@ export const deterministicCandidate: AnalyzerRule = {
       { re: /agent\s*\(\s*[`'"][^`'"]*(校验|核对格式|字段是否齐全)/, hint: "结构化字段校验可用 JS 完成" },
     ]
     const findings: AnalyzerFinding[] = []
+    // 与 IO-001 互斥：回读器/转写器的 prompt 里出现"统计"是名词（"注册表统计回读器"），
+    // 不是"统计任务"。这类由 IO-001 负责，DET-001 不能再报（否则同一调用两个 finding）。
+    const IO_PROMPT_RE = /只做读取与转写|只做读取|回读器|读取器|逐字写入|逐字复制|read\s*工具读取|write\s*工具写入/
     for (const { re, hint } of patterns) {
-      const node = ctx.ast.nodes.find((n) => n.kind === "agent" && n.promptPreview && re.test(`agent(\`${n.promptPreview}`))
+      const node = ctx.ast.nodes.find(
+        (n) => n.kind === "agent" && n.promptPreview && !IO_PROMPT_RE.test(n.promptPreview) && re.test(`agent(\`${n.promptPreview}`),
+      )
       if (node) {
         findings.push({
           ruleId: "DET-001",
@@ -347,6 +352,186 @@ export const recoveryRisk: AnalyzerRule = {
 }
 
 /** 内置规则集（顺序即报告顺序） */
+/**
+ * REC-002：恢复模式读取的收窄集合没有沿调用链传入
+ *
+ * aiOnly：需要追踪变量在函数参数/对象属性间的流动（impact.impactSet → runStage 参数），
+ * 单文件局部 AST 无法可靠判定。强行写正则近似会误报（同名参数语义可能不同）。
+ * 判定完全交给 AI Rule Check（依据 definitions/10-REC-002-rule.md）。
+ */
+export const recoveryNarrowing: AnalyzerRule = {
+  id: "REC-002",
+  version: "1.0",
+  severity: "high",
+  description: "恢复模式（retry/resume/from-stage）读取的收窄集合没有沿调用链传给下游 workflow → 恢复退化为全量重跑",
+  aiOnly: true,
+  analyze() {
+    // 静态不判定：见 aiOnly 注释。返回空数组，报告里状态显示「静态不判定（由 AI 检查）」
+    return []
+  },
+}
+
+
+/** IO-001：确定性文件 IO 交给 agent（readBack / echoWrite 模式） */
+export const deterministicIo: AnalyzerRule = {
+  id: "IO-001",
+  version: "1.0",
+  severity: "medium",
+  description: "agent prompt 要求用 read/write 工具处理文件 → 确定性 IO 走了模型往返",
+  analyze(ctx) {
+    // prompt 里出现这些指令说明本质是确定性文件读写，交给模型纯属浪费且有改写风险
+    const PATTERNS: Array<{ re: RegExp; hint: string }> = [
+      { re: /(?:使用|用)\s*(?:read|write)\s*工具/, hint: "读写工具指令" },
+      { re: /read\s*工具读取|write\s*工具写入/, hint: "读写工具指令" },
+      { re: /只做读取与转写|只做读取/, hint: "回读器自述" },
+      { re: /逐字写入文件|逐字复制|逐字转写/, hint: "写盘器自述" },
+      { re: /原样返回[^。]{0,20}文件|原样返回其中字段/, hint: "原样回读" },
+    ]
+    const hits: Array<{ line: number; hint: string; preview: string }> = []
+    for (const node of ctx.ast.nodes) {
+      if (node.kind !== "agent") continue
+      const preview = node.promptPreview ?? ""
+      if (!preview) continue
+      for (const { re, hint } of PATTERNS) {
+        if (re.test(preview)) {
+          hits.push({ line: node.startLine, hint, preview: preview.slice(0, 60) })
+          break
+        }
+      }
+    }
+    if (hits.length === 0) return []
+    return [
+      {
+        ruleId: "IO-001",
+        severity: hits.length >= 3 ? ("medium" as const) : ("low" as const),
+        confidence: 0.8,
+        location: { startLine: Math.min(...hits.map((h) => h.line)), endLine: Math.max(...hits.map((h) => h.line)) },
+        evidence: [
+          `${hits.length} 处 agent 调用把确定性文件 IO 交给模型（行 ${hits.map((h) => h.line).join(", ")}）`,
+          `首处：${hits[0]!.hint} —— ${hits[0]!.preview}`,
+        ],
+        suggestion:
+          "优先改用受治理的 readFile/writeFileAtomic（带路径白名单、原子写、hash 校验）；无法迁移时至少给写盘加写后回读 hash 校验",
+      },
+    ]
+  },
+}
+
+/** INPUT-002：阶段输入校验范围超出目标阶段 */
+export const inputScopeMismatch: AnalyzerRule = {
+  id: "INPUT-002",
+  version: "1.0",
+  severity: "medium",
+  description: "阶段起点分支要求了该阶段并不需要的输入 → 阶段级恢复被无关输入阻断",
+  analyze(ctx) {
+    const src = ctx.source
+    // 只识别 effectiveStartIdx <= N 这类字面量分支
+    const branchRe = /if\s*\(\s*(?:effectiveStartIdx|startIdx)\s*<=\s*(\d+)\s*\)\s*\{/g
+    const checkRe = /check\s*\(\s*\(\)\s*=>\s*fileExists\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/g
+    const findings: AnalyzerFinding[] = []
+    const seen = new Set<string>()
+
+    for (const m of src.matchAll(branchRe)) {
+      const limit = Number(m[1])
+      // 取该 if 块区间（简单花括号配对）
+      const startIdx = m.index ?? 0
+      const openBrace = src.indexOf("{", startIdx)
+      let depth = 0
+      let end = openBrace
+      for (let i = openBrace; i < src.length; i++) {
+        if (src[i] === "{") depth++
+        else if (src[i] === "}") {
+          depth--
+          if (depth === 0) {
+            end = i
+            break
+          }
+        }
+      }
+      const block = src.slice(openBrace, end)
+      for (const c of block.matchAll(checkRe)) {
+        const pathVar = c[1]!
+        const key = `${pathVar}@${limit}`
+        if (seen.has(key)) continue
+        // 该变量在其他地方的首次使用行：若都出现在更大的起始索引块里，说明当前分支过度要求
+        const otherUse = new RegExp(`\b${pathVar}\b`, "g")
+        const uses = [...src.matchAll(otherUse)].map((u) => u.index ?? 0).filter((i) => i < openBrace || i > end)
+        // 语义对立命名（client vs server）是最强信号
+        const isClientInput = /^(codeDir|fguiDir|clientCodeDir|clientDir)$/i.test(pathVar)
+        const isServerInput = /^(serverSrcRoot|serverDir|serverCodeDir)$/i.test(pathVar)
+        // S4 需要 client 输入（起点 <= 3）；S5 需要 server 输入（起点 <= 4）
+        if (isClientInput && limit > 3) {
+          seen.add(key)
+          findings.push({
+            ruleId: "INPUT-002",
+            severity: "medium",
+            confidence: 0.85,
+            location: { startLine: lineOf(src, openBrace), endLine: lineOf(src, end) },
+            evidence: [
+              `起点 <= ${limit} 的分支要求客户端输入 \`${pathVar}\`（该输入只在 S4 需要）`,
+              `受影响：from-stage startStage=S5 / retryScope=server 会被无关客户端目录阻断`,
+            ],
+            suggestion: "把客户端输入校验收窄到 effectiveStartIdx <= 3；服务端输入放在 <= 4 的独立分支",
+          })
+        }
+        if (isServerInput && limit > 4) {
+          seen.add(key)
+          findings.push({
+            ruleId: "INPUT-002",
+            severity: "medium",
+            confidence: 0.85,
+            location: { startLine: lineOf(src, openBrace), endLine: lineOf(src, end) },
+            evidence: [
+              `起点 <= ${limit} 的分支要求服务端输入 \`${pathVar}\`（该输入只在 S5 需要）`,
+              `受影响：from-stage startStage=S6+ 会被无关服务端目录阻断`,
+            ],
+            suggestion: "服务端输入校验收窄到 effectiveStartIdx <= 4",
+          })
+        }
+        void uses
+      }
+    }
+    return findings
+  },
+}
+
+/** 源码偏移 → 行号 */
+function lineOf(src: string, offset: number): number {
+  let line = 1
+  for (let i = 0; i < offset && i < src.length; i++) if (src[i] === "\n") line++
+  return line
+}
+
+/**
+ * BUDGET-001：嵌套 workflow 并发预算未显式切分
+ * aiOnly：需要入口 + 子流程的嵌套并发结构，单文件 AST 不够。
+ */
+export const nestedBudget: AnalyzerRule = {
+  id: "BUDGET-001",
+  version: "1.0",
+  severity: "high",
+  description: "入口并行调度子 workflow，子流程内部又动态并行，但并发预算未显式切分 → 实际在途数可能翻倍",
+  aiOnly: true,
+  analyze() {
+    return []
+  },
+}
+
+/**
+ * SIDEFX-001：并行候选共享文件/状态副作用
+ * aiOnly：需要判断两次调用的写/读路径是否重合或存在写后读。
+ */
+export const parallelSideEffects: AnalyzerRule = {
+  id: "SIDEFX-001",
+  version: "1.0",
+  severity: "high",
+  description: "SERIAL-002 报出的并行候选实际通过文件路径或共享状态存在隐式依赖 → 不能并行化",
+  aiOnly: true,
+  analyze() {
+    return []
+  },
+}
+
 export const BUILTIN_RULES: AnalyzerRule[] = [
   inputRepeat,
   concWaves,
@@ -357,4 +542,9 @@ export const BUILTIN_RULES: AnalyzerRule[] = [
   retryCost,
   deterministicCandidate,
   recoveryRisk,
+  recoveryNarrowing,
+  deterministicIo,
+  inputScopeMismatch,
+  nestedBudget,
+  parallelSideEffects,
 ]

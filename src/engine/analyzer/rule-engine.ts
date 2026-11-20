@@ -39,6 +39,8 @@ export interface RuleRun {
   hits: number
   /** 执行的规则抛错（hits 记 0 但并不代表通过） */
   error?: string
+  /** 该规则只由 AI 判定，静态层不产出结论（不要显示成"通过"） */
+  aiOnly?: boolean
 }
 
 export function runRules(source: string, opts: RunRulesOptions = {}): {
@@ -58,6 +60,7 @@ export function runRules(source: string, opts: RunRulesOptions = {}): {
         severity: rule.severity,
         description: rule.description,
         hits: produced.length,
+        ...(rule.aiOnly ? { aiOnly: true } : {}),
       })
       for (const f of produced) {
         findings.push({ ...f, location: { ...f.location, ...(opts.file ? { file: opts.file } : {}) } })

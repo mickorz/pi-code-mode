@@ -14,7 +14,8 @@ export interface StaticRuleItem {
   severity: string
   description: string
   hits: number
-  status: "hit" | "pass" | "error"
+  /** ai-only = 静态不判定（该规则完全由 AI 负责） */
+  status: "hit" | "pass" | "error" | "ai-only"
   error?: string
 }
 
@@ -33,6 +34,15 @@ export function mergeRuleResults(staticRules: StaticRuleItem[], aiChecks: AIRule
     if (sr.status === "error") {
       finalStatus = "error"
       note = sr.error ?? "静态规则执行失败"
+    } else if (sr.status === "ai-only") {
+      // 静态不判定：最终状态完全由 AI 决定，不能因为静态空结果就显示"通过"
+      if (!ai) finalStatus = "uncertain"
+      else if (ai.status === "hit") finalStatus = "ai-hit"
+      else if (ai.status === "uncertain") finalStatus = "uncertain"
+      else if (ai.status === "error") finalStatus = "error"
+      else finalStatus = ai.status === "not-applicable" ? "pass" : "pass"
+      if (!ai) note = "该规则由 AI 判定，但本次 AI 未执行"
+      else if (ai.status === "error") note = `AI 检查失败：${ai.error ?? "unknown"}`
     } else if (!ai || ai.status === "error") {
       finalStatus = sr.status === "hit" ? "static-hit" : "pass"
       if (ai?.status === "error") note = `AI 检查失败：${ai.error ?? "unknown"}`

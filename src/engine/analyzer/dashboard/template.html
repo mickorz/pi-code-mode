@@ -184,18 +184,21 @@
 
   // ---------- 规则检查（核心：全量规则 + 是否命中 + 检查说明） ----------
   (function () {
-    var byStatus = { hit: [], pass: [], error: [] };
+    var byStatus = { hit: [], pass: [], error: [], 'ai-only': [] };
     D.rules.forEach(function (r) { byStatus[r.status].push(r); });
     var h = '<div class="card"><h2>规则检查清单</h2>' +
-      '<div class="note">共 ' + D.rules.length + ' 条规则全部执行：命中 ' + byStatus.hit.length +
-      ' 条、通过 ' + byStatus.pass.length + ' 条、执行失败 ' + byStatus.error.length + ' 条。' +
+      '<div class="note">共 ' + D.rules.length + ' 条规则：命中 ' + byStatus.hit.length +
+      ' 条、通过 ' + byStatus.pass.length + ' 条、静态不判定（AI 负责）' + byStatus['ai-only'].length +
+      ' 条、执行失败 ' + byStatus.error.length + ' 条。' +
       '「通过」表示该规则检查过且未发现问题，不是没检查。静态列为程序规则结果，AI 复核列为模型按规则文档独立判定。</div>' +
       '<table><thead><tr><th>规则</th><th>严重度</th><th>静态</th><th>AI 复核</th><th>最终</th><th>检查项</th></tr></thead><tbody>';
     var AI_LABEL = { hit: 'hit', pass: 'pass', 'uncertain': '待确认', 'not-applicable': '不适用', error: '失败' };
-    var FINAL_CLASS = { pass: 'pass', 'static-hit': 'hit', 'ai-hit': 'ai', both: 'ai', conflict: 'err', uncertain: 'hit', error: 'err' };
+    var FINAL_CLASS = { pass: 'pass', 'static-hit': 'hit', 'ai-hit': 'ai', both: 'ai', conflict: 'err', uncertain: 'hit', error: 'err', 'ai-only': 'ai' };
     D.rules.forEach(function (r) {
       var res = r.status === 'error' ? tag('err', '执行失败')
-        : r.hits > 0 ? tag('hit', '命中 ' + r.hits) : tag('pass', '通过');
+        : r.hits > 0 ? tag('hit', '命中 ' + r.hits)
+        : r.status === 'ai-only' ? tag('static', '静态不判定')
+        : tag('pass', '通过');
       var ai = r.aiStatus
         ? tag(r.aiStatus === 'hit' ? 'ai' : (r.aiStatus === 'pass' ? 'pass' : (r.aiStatus === 'error' ? 'err' : 'hit')),
               AI_LABEL[r.aiStatus] || r.aiStatus) + (r.aiConfidence !== undefined ? ' <span class="muted">' + r.aiConfidence.toFixed(2) + '</span>' : '')

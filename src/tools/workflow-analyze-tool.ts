@@ -58,6 +58,14 @@ export interface AnalyzeInput {
   ruleCheckAgent?: (prompt: string) => Promise<string>
   /** 显式关闭 AI Rule Check（缺省按 ruleCheckAgent 是否存在决定） */
   includeRuleCheck?: boolean
+  /**
+   * AI 参与哪些规则（缺省 "semantic"）。
+   *  - "semantic"：只查静态判定不可靠的规则（结构事实类如 RETRY-001/TIMEOUT-001 静态已足够确定）
+   *  - "all"：全部规则都让 AI 复核（实测 14 条 × 并发 3 需 790s，仅适合按需开启）
+   *
+   * 默认值来源：实测 14 条全跑 13 分钟且有超时；6 条语义规则约 3~5 分钟，是体验与覆盖的折中。
+   */
+  aiRules?: "all" | "semantic"
 }
 
 export interface AnalyzeResult {
@@ -174,7 +182,19 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
     try {
       const loaded = loadRuleDocs()
       for (const p of loaded.problems) report.diagnostics.push(`规则文档：${p}`)
-      if (loaded.rules.length > 0) {
+      // 默认只让 AI 复核「静态判定不可靠」的规则：结构事实类（retries 几、有无 timeoutMs）
+      // 静态 100% 准确，交给模型只会变慢且可能数错。--ai-rules all 可全量复核。
+      const SEMANTIC_AI_RULES = new Set([
+        "CONC-002",
+        "SERIAL-002",
+        "DET-001",
+        "REC-002",
+        "BUDGET-001",
+        "SIDEFX-001",
+      ])
+      const aiRules =
+        input.aiRules === "all" ? loaded.rules : loaded.rules.filter((r) => SEMANTIC_AI_RULES.has(r.id))
+      if (aiRules.length > 0) {
         const staticSummary = [
           `风险分 ${report.summary.riskScore}/100，聚合 ${report.summary.totalFindings} 条 finding，${report.subtree?.files ?? 1} 个文件。`,
           "静态规则结果：" +
@@ -186,7 +206,7 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
           ),
         ].join("\n")
         const aiResult = await runAIRuleCheck({
-          rules: loaded.rules,
+          rules: aiRules,
           sources: toSourceFiles(checkSources),
           staticSummary,
           plannerAgent: input.ruleCheckAgent,

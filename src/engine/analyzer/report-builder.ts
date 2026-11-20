@@ -92,7 +92,8 @@ export interface AnalysisReport {
     severity: string
     description: string
     hits: number
-    status: "hit" | "pass" | "error"
+    /** ai-only = 该规则由 AI Rule Check 判定，静态层不产出结论 */
+    status: "hit" | "pass" | "error" | "ai-only"
     error?: string
   }>
   findings: AnalysisFindingWithSnippet[]
@@ -117,7 +118,7 @@ export interface AnalysisReport {
     ruleId: string
     severity: string
     description: string
-    staticStatus: "hit" | "pass" | "error"
+    staticStatus: "hit" | "pass" | "error" | "ai-only"
     staticHits: number
     staticError?: string
     aiStatus?: string
@@ -247,7 +248,13 @@ export function buildReport(input: {
       severity: r.severity,
       description: r.description,
       hits: r.hits,
-      status: r.error ? ("error" as const) : r.hits > 0 ? ("hit" as const) : ("pass" as const),
+      status: r.error
+        ? ("error" as const)
+        : r.hits > 0
+          ? ("hit" as const)
+          : r.aiOnly
+            ? ("ai-only" as const)
+            : ("pass" as const),
       ...(r.error ? { error: r.error } : {}),
     })),
     analyzerVersion: ANALYZER_VERSION,
@@ -319,7 +326,14 @@ export function renderMarkdown(report: AnalysisReport): string {
   lines.push("| 规则 | 严重度 | 结果 | 检查项 |")
   lines.push("| --- | --- | --- | --- |")
   for (const r of report.ruleInventory) {
-    const status = r.status === "error" ? "**执行失败**" : r.hits > 0 ? `命中 ${r.hits}` : "通过"
+    const status =
+      r.status === "error"
+        ? "**执行失败**"
+        : r.hits > 0
+          ? `命中 ${r.hits}`
+          : r.status === "ai-only"
+            ? "静态不判定（由 AI 检查）"
+            : "通过"
     lines.push(`| \`${r.id}\` | ${r.severity} | ${status} | ${r.description} |`)
   }
 

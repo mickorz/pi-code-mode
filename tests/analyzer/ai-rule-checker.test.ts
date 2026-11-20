@@ -14,6 +14,7 @@ import path from "node:path"
 import { test } from "node:test"
 
 import { loadRuleDocs } from "../../src/engine/analyzer/ai-rule-checker/rule-doc-loader.js"
+import { BUILTIN_RULES } from "../../src/engine/analyzer/rules/index.js"
 import { parseChecks, runAIRuleCheck } from "../../src/engine/analyzer/ai-rule-checker/ai-rule-checker.js"
 import { validateCheck } from "../../src/engine/analyzer/ai-rule-checker/evidence-validator.js"
 import { buildSourceContext, toSourceFiles } from "../../src/engine/analyzer/ai-rule-checker/prompt-builder.js"
@@ -40,10 +41,11 @@ function check(partial: Partial<AIRuleCheck>): AIRuleCheck {
   }
 }
 
-test("loadRuleDocs：9 条规则全部有文档", () => {
+test("loadRuleDocs：每条内置规则都有文档（数量随 BUILTIN_RULES 增长）", () => {
   const { rules, problems } = loadRuleDocs()
   assert.deepEqual(problems, [], `规则文档问题：${problems.join("; ")}`)
-  assert.equal(rules.length, 9)
+  assert.equal(rules.length, BUILTIN_RULES.length, "规则数与文档数必须一致")
+  assert.ok(rules.length >= 10, `至少 10 条（含 REC-002），实际 ${rules.length}`)
   for (const r of rules) assert.ok(r.doc.length > 100, `${r.id} 文档过短`)
 })
 

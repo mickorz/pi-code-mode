@@ -52,7 +52,8 @@ export interface DashboardView {
     severity: string
     description: string
     hits: number
-    status: "hit" | "pass" | "error"
+    /** ai-only = 该规则由 AI 判定，静态层不产出结论 */
+    status: "hit" | "pass" | "error" | "ai-only"
     error?: string
     /** AI 复核结论（未启用时缺省） */
     aiStatus?: string
@@ -224,7 +225,7 @@ export function validateView(view: DashboardView): string[] {
   for (const [i, r] of (view.rules ?? []).entries()) {
     if (!r.id) errors.push(`rules[${i}].id 缺失`)
     if (!r.description) errors.push(`rules[${i}].description 缺失`)
-    if (!["hit", "pass", "error"].includes(r.status)) errors.push(`rules[${i}].status 非法：${r.status}`)
+    if (!["hit", "pass", "error", "ai-only"].includes(r.status)) errors.push(`rules[${i}].status 非法：${r.status}`)
   }
   for (const [i, f] of (view.findings ?? []).entries()) {
     if (!f.ruleId) errors.push(`findings[${i}].ruleId 缺失`)

@@ -16,6 +16,8 @@ import path from "node:path"
 import { test } from "node:test"
 
 import { BUILTIN_RULES } from "../../src/engine/analyzer/rules/index.js"
+import { runRules } from "../../src/engine/analyzer/rule-engine.js"
+import { buildReport } from "../../src/engine/analyzer/report-builder.js"
 
 const DEF_DIR = path.join(import.meta.dirname, "../../src/engine/analyzer/rules/definitions")
 const FILE_RE = /^(\d{2})-([A-Z]+-\d{3})-rule\.md$/
@@ -86,6 +88,42 @@ test("文档「检查什么」与代码 description 逐字一致", () => {
     }
   }
   assert.deepEqual(mismatches, [], `以下规则 description 与文档不一致：\n${mismatches.join("\n")}`)
+})
+
+test("aiOnly 规则：文档必须声明由 AI 判定，且静态层不得产出结论", () => {
+  const aiOnly = BUILTIN_RULES.filter((r) => r.aiOnly)
+  const docs = new Map(readDocs().map((d) => [d.id, d]))
+  for (const rule of aiOnly) {
+    const doc = docs.get(rule.id)
+    assert.ok(doc, `aiOnly 规则 ${rule.id} 缺少文档`)
+    // 必须让读者知道这条规则不看静态结论——否则会误以为「没报 = 通过」
+    assert.match(
+      doc.content,
+      /AI 规则检查|由 AI 判定|aiOnly/i,
+      `aiOnly 规则 ${rule.id} 的文档必须说明由 AI 判定`,
+    )
+  }
+  // 静态层必须真的不产出结论（analyze 返回空）
+  for (const rule of aiOnly) {
+    const ctx = { source: "", ast: { nodes: [], diagnostics: [] }, graph: { edges: [], counts: {} }, deps: { serialChains: [], candidates: [], unknowns: [] } }
+    assert.deepEqual(
+      rule.analyze(ctx as never),
+      [],
+      `aiOnly 规则 ${rule.id} 的静态 analyze 必须返回空数组（否则会出现未经校验的静态结论）`,
+    )
+  }
+})
+
+test("ruleRuns：aiOnly 规则状态记 ai-only 而不是 pass", () => {
+  const src = "const a = await agent('x')\nreturn a"
+  const { ruleRuns } = runRules(src)
+  const rec2 = ruleRuns.find((r) => r.id === "REC-002")
+  assert.ok(rec2, "REC-002 必须出现在检查清单里")
+  assert.equal(rec2.aiOnly, true)
+  // report 层映射为 ai-only，绝不能是 pass
+  const report = buildReport({ source: src, file: "t.js", generatedAt: "T" })
+  const item = report.ruleInventory.find((r) => r.id === "REC-002")!
+  assert.equal(item.status, "ai-only", "静态不判定必须显示 ai-only，不能显示通过")
 })
 
 test("每份文档都声明了元信息与关键段落", () => {

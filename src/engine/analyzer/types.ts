@@ -33,5 +33,14 @@ export interface AnalyzerRule {
   severity: Severity
   /** 一句话说明这条规则检查什么（报告里作为"检查项"展示，让用户知道覆盖范围） */
   description: string
+  /**
+   * true = 该规则**只由 AI Rule Check 判定**，静态 analyze 不产出结论。
+   *
+   * 为什么需要：有些规则（如 REC-002 跨函数参数传递完整性）需要追踪变量在函数参数、
+   * 对象属性间的流动，单文件局部 AST 无法可靠判定；强行写正则近似会产生大量误报。
+   * 这类规则静态层声明 aiOnly，报告里状态记 "ai-only" 而不是 "pass"
+   * —— 绝不能把"静态没检查"显示成"通过"。
+   */
+  aiOnly?: boolean
   analyze(context: AnalyzerContext): AnalyzerFinding[]
 }

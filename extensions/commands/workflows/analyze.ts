@@ -98,7 +98,7 @@ function renderSummary(input: {
 }
 
 export const analyzeSubcommand: Subcommand = {
-  usage: "analyze <路径|名> [--no-suggest] [--no-rule-check] [--no-open]  静态+AI规则检查+AI建议+Dashboard（别名 anal）",
+  usage: "analyze <路径|名> [--no-suggest] [--no-rule-check] [--ai-rules-all] [--no-open]  静态+AI规则检查+AI建议+Dashboard（别名 anal）",
   async run(argv, ctx, deps) {
     try {
       await runAnalyze(argv, ctx, deps)
@@ -202,6 +202,7 @@ ${ref}`, "info")
           ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd }) } : {}),
           includeRuleCheck: withRuleCheck,
           ...(withRuleCheck ? { ruleCheckAgent: createPlannerAgent({ cwd }) } : {}),
+          ...(flags.has("--ai-rules-all") ? { aiRules: "all" as const } : {}),
           format: "md",
         })
         const rc = ai.report?.aiRuleCheck

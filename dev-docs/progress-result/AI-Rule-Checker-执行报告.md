@@ -145,19 +145,98 @@ AI 检查在真实脚本上经过 5 轮调优：
 
 ---
 
-## 五、P2 未实施的原因
+## 五、P2 实施情况
 
-计划中 P2 包含 `REC-002`（retry 影响集合传递）、`IO-001`（确定性 IO 代理）、`BUDGET-001`、`INPUT-002`、`SIDEFX-001`。
+计划原列 5 条跨文件规则。截至本报告更新（2026-11-19 晚）：
 
-未实施原因：
+### 5.1 REC-002：已完成并验证（aiOnly 路线）
 
-1. **本次升级的核心目标已达成**：`anal` 现在默认执行真正的 AI 规则检查，且能在报告中区分静态/AI/冲突/待确认。
-2. **P2 是新增静态规则，需要跨函数数据流追踪**（如 `impact.impactSet` → `runStage()` 参数），当前 `runRules()` 只做单文件局部 AST。这属于独立的引擎能力，不适合塞进本次 P1 收尾。
-3. **优先验证已有能力**：SERIAL-002 的 AI 分析已证明模型能做跨文件语义推断；先把这条路径跑稳，比再加 5 条静态规则更有价值。
+引入 `AnalyzerRule.aiOnly` 契约：该规则**只由 AI Rule Check 判定**，静态 `analyze()` 返回空数组，报告状态记 `ai-only`（绝不显示成"通过"）。
 
-建议下一步：把 `REC-002` 作为**首个 AI 规则**实现——它的判定依据是 rule.md + 源码，不需要新增 AST 数据流分析，正好验证 AI Rule Checker 能否发现人工审计级别的跨文件缺陷。
+**验收结果（真实脚本，单条规则 97s）**：
 
----
+```
+REC-002 hit conf=0.90 evidence=3
+
+reason: mode=retry 分支（417 行）内 readBack 读取 impact-set.json 得到 impact（419-421 行），
+并在 448 行校验 impact.impactSet 非空、450-451 行仅用于日志输出；该收窄集合从未赋值给
+stageResults.impactSet（全文件 stageResults 仅 S1~S11 键被赋值，impactSet 键恒为 undefined），
+且 impact 是分支内块级 const，runStage 无法引用。因此 runStage（479 行）与 S4/S5 并行调度
+（582 行）传给 workflow 的 impactSet 恒为 null 兜底值
+
+impact: mode=retry 端级补证重跑时子流程收到的 impactSet 恒为 null，按全量处理，
+恢复退化为重新跑一遍，墙钟与 token 成本按全量计
+
+suggestion: 把读取值固化成块外可见的不可变常量并显式传递：
+const retryImpactSet = mode === 'retry' ? impact.impactSet : null
+
+证据: game-requirement-audit.js L419-421 / L476-479 / L581-582（均逐字校验通过）
+```
+
+**结论：AI 达到并可超过人工审计水平**——人工文档指出"影响集合没传"，AI 多给出了「impact 是分支内块级 const，runStage 无法引用」「stageResults 仅 S1~S11 键被赋值」这两个作用域级证据。
+
+实测（默认 6 条语义规则，420s，status=partial）：
+
+```
+CONC-002    hit   0.85  → both   （指出 S4/S5 partFiles 由 agent 回读循环 push、S10 structure 来自 :58 的 agent）
+SERIAL-002  hit   0.70  → both
+REC-002     hit   0.95  → ai-hit （完全由 AI 发现，静态不判定）
+BUDGET-001  通过  0.80  → pass   （AI 确认并发语义无问题）
+DET-001     error       → static-hit（静态已命中 3 处）
+SIDEFX-001  error       → error
+```
+
+### 5.2 剩余 4 条规则：已完成
+
+| 规则 | 实现 | 真实脚本结果 |
+| --- | --- | --- |
+| `IO-001` | 静态（prompt 指令匹配） | **hit(12)**，覆盖 10 个文件的 readBack/echoWrite |
+| `INPUT-002` | 静态（`effectiveStartIdx` × `fileExists` 交叉） | **pass**（正确：见下方勘误） |
+| `BUDGET-001` | aiOnly | AI 判 **pass**（确认并发语义无问题） |
+| `SIDEFX-001` | aiOnly | AI 超时（error），静态 SERIAL-002 结果仍有效 |
+
+**顺带修好一个真实能力缺口**：`literalString()` 此前只支持字符串字面量与无插值模板，
+真实 workflow 里最常见的 `['a', '', 'b' + var].join('
+')` 形态**完全提取不到**，
+导致 `IO-001`/`DET-001` 在真实脚本上恒为 pass。扩展后：
+
+- `IO-001`：0 → **12 处命中**
+- `DET-001`：0 → **3 处命中**（真实价值：`4-client-verify.js:339` / `5-server-verify.js:319` 让模型"提取 evidence[] 的 file 字段并去重"——纯 JSON 处理交给模型）
+
+同时给 `DET-001` 加了与 `IO-001` 的互斥（"注册表统计回读器"里的"统计"是名词不是任务），避免同一调用双报。
+
+### 5.3 勘误：人工审计文档的 P1-003 是误判
+
+人工审计曾判断"从 S5 开始时仍会校验客户端目录"。复核实际取值：
+
+```
+startStage=S5 → startIdx = findIndex(S5) = 4 → effectiveStartIdx = 4
+4 <= 3  → false  → 客户端目录校验不执行   ← 原判断错误
+4 <= 4  → true   → 服务端目录校验执行     ← 正确
+```
+
+已在 `dev-docs/troubleshooting/2026-11-19-game-requirement-audit-workflow-analysis.md`
+写入勘误并降级为 P3（仅 `retryScope=server` 时未收窄校验）。
+
+`INPUT-002` 规则在此脚本上正确报 pass，反向验证了规则口径。
+
+### 5.4 实测性能与规则范围控制（新增）
+
+14 条规则全量 AI 复核实测：
+
+| 范围 | 规则数 | 耗时 | 结果 |
+| --- | --- | --- | --- |
+| `--ai-rules-all` | 14 | **790s** | 10 成功 / 4 超时 |
+| 默认（semantic） | 6 | **420s** | 4 成功 / 2 超时 |
+
+结论：结构事实类规则（`RETRY-001` 数 retries、`TIMEOUT-001` 查 timeoutMs）静态 100% 准确，
+交给模型只会变慢且可能数错。因此默认只让 AI 复核**静态判定不可靠**的 6 条：
+
+```
+CONC-002  SERIAL-002  DET-001  REC-002  BUDGET-001  SIDEFX-001
+```
+
+需要全量复核时用 `--ai-rules-all`。
 
 ## 六、测试
 
