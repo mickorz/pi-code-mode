@@ -7,13 +7,6 @@
       "description": "结构化结果详情展示验收（脱敏/截断/空态）",
       "file": "dev-examples/sample-project-acceptance/G-ui/schema-result-view-test.js",
       "registeredAt": "2026-11-20T02:53:17.615Z"
-    },
-    {
-      "id": "smoke_test",
-      "name": "smoke_test",
-      "description": "最小冒烟：2 个 agent 并行",
-      "file": "dev-examples/sample-project-acceptance/A-basic/smoke-test.js",
-      "registeredAt": "2026-11-16T12:25:36.574Z"
     }
   ]
 }
