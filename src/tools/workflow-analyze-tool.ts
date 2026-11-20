@@ -23,6 +23,7 @@ import {
   type PlannerOutput,
 } from "../engine/analyzer/optimization-planner.js"
 import { loadPlan } from "../engine/plan/plan-loader.js"
+import { loadModelTiers } from "../engine/agent/model-tiers.js"
 import { analyzeWorkflowTree } from "../engine/analyzer/tree-analyzer.js"
 import { loadRuleDocs } from "../engine/analyzer/ai-rule-checker/rule-doc-loader.js"
 import { runAIRuleCheck } from "../engine/analyzer/ai-rule-checker/ai-rule-checker.js"
@@ -284,13 +285,43 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
 }
 
 /**
- * 构造真实 Planner agent（M6-P1-3 接线）：用 PiAgentAdapter 跑一次性分析调用。
- * 审计发现此前 includeSuggestions:true 静默无效（未注入 plannerAgent）。
+ * 从 `<cwd>/.pi/workflows/model-tiers.json` 解析 tier 对应的模型串。
  *
- * 默认超时 240s：2026-11-19 实测瘦身后 prompt 需 63~145s（模型输出长度波动），
- * 原 60s 默认必然失败（给 1.6 倍余量覆盖实测最坏值）。
+ * 为什么需要：analyzer 此前完全不读 model-tiers，`PiAgentAdapter` 直接落到宿主
+ * settings.json 的 defaultModel。实测该默认是 reasoning 模型（glm-5.3-flash），
+ * 单条规则要 90~97s；而 tiers.fast（deepseek-v4.1-flash，reasoning=false）只要 14s，
+ * 结论质量相当。这是"AI 规则检查慢/超时"的真正根因。
  */
-export function createPlannerAgent(options: { cwd?: string; agentDir?: string; model?: string; timeoutMs?: number } = {}) {
+export function resolveTierModel(tier: string, cwd?: string): string | undefined {
+  try {
+    const tiers = loadModelTiers({ projectDir: cwd ?? process.cwd() })
+    const entry = tiers[tier]
+    if (typeof entry === "string") return entry
+    if (Array.isArray(entry) && entry[0]?.model) return entry[0].model
+    // 用户决策（2026-11-19）：解析不到档位时告警 + 回退会话默认，不阻断分析。
+    // 必须告警——静默回退会让人以为在用 fast，实际可能在用很慢的 reasoning 模型。
+    console.warn(
+      `[pi-code-mode] 档位 "${tier}" 未在 model-tiers.json 中配置（查找路径：${cwd ?? process.cwd()}/.pi/workflows/model-tiers.json），已回退会话默认模型`,
+    )
+  } catch (e) {
+    console.warn(`[pi-code-mode] 读取 model-tiers.json 失败，已回退会话默认模型：${String((e as Error)?.message ?? e)}`)
+  }
+  return undefined
+}
+
+/**
+ * 构造真实 Planner agent（M6-P1-3 接线）：用 PiAgentAdapter 跑一次性分析调用。
+ *
+ * 模型优先级：显式 `model` > `tier`（默认 "fast"，从 model-tiers.json 解析）> 会话默认。
+ * 实测（REC-002，prompt 20k 字符）：fast tier 14.1s / big tier 89.6s / 会话默认 glm 97s。
+ *
+ * 默认超时 240s：覆盖慢模型的尾部波动；fast tier 下通常 15~40s。
+ */
+export function createPlannerAgent(
+  options: { cwd?: string; agentDir?: string; model?: string; tier?: string; timeoutMs?: number } = {},
+) {
+  // 解析一次（避免每次调用都读配置文件）
+  const resolvedModel = options.model ?? resolveTierModel(options.tier ?? "fast", options.cwd)
   return async (prompt: string): Promise<string> => {
     // 与项目其他模块一致用静态 import：jiti 直载 TS 源码时，动态 import "*.js" 可能解析失败
 
@@ -320,7 +351,7 @@ export function createPlannerAgent(options: { cwd?: string; agentDir?: string; m
       const execution = adapter.execute(
         {
           prompt,
-          ...(options.model ? { model: options.model } : {}),
+          ...(resolvedModel ? { model: resolvedModel } : {}),
           signal: controller.signal,
         },
         { executionId, runId: "", phase: "analyzer" },

@@ -98,7 +98,7 @@ function renderSummary(input: {
 }
 
 export const analyzeSubcommand: Subcommand = {
-  usage: "analyze <路径|名> [--no-suggest] [--no-rule-check] [--ai-rules-all] [--no-open]  静态+AI规则检查+AI建议+Dashboard（别名 anal）",
+  usage: "analyze <路径|名> [--tier fast] [--model 供应商/模型] [--no-suggest] [--no-rule-check] [--ai-rules-all] [--no-open]  静态+AI规则检查+Dashboard（别名 anal）",
   async run(argv, ctx, deps) {
     try {
       await runAnalyze(argv, ctx, deps)
@@ -135,6 +135,16 @@ ${ref}`, "info")
     // AI Rule Check / AI 建议都在第二阶段执行：静态结果先出（百毫秒级），
     // 否则用户要等 4~6 分钟才看到任何东西（实测 9 条规则 AI 复核约 5 分钟）。
     const withRuleCheck = !flags.has("--no-rule-check")
+    // 模型选择：--model 显式指定 > --tier 档位 > model-tiers 的 fast 档 > 会话默认
+    // 实测：fast 档（非 reasoning）比会话默认的 reasoning 模型快 7 倍且结论相当
+    const argOf = (name: string): string | undefined => {
+      const i = argv.indexOf(name)
+      return i >= 0 ? argv[i + 1] : undefined
+    }
+    const modelOpts = {
+      ...(argOf("--model") ? { model: argOf("--model")! } : {}),
+      ...(argOf("--tier") ? { tier: argOf("--tier")! } : {}),
+    }
     let result = await analyzeWorkflow({
       source: resolved.source,
       ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
@@ -199,9 +209,9 @@ ${ref}`, "info")
           ...(ref.startsWith("registry:") ? {} : { scriptPath: ref }),
           cwd,
           includeSuggestions: withSuggestions,
-          ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd }) } : {}),
+          ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd, ...modelOpts }) } : {}),
           includeRuleCheck: withRuleCheck,
-          ...(withRuleCheck ? { ruleCheckAgent: createPlannerAgent({ cwd }) } : {}),
+          ...(withRuleCheck ? { ruleCheckAgent: createPlannerAgent({ cwd, ...modelOpts }) } : {}),
           ...(flags.has("--ai-rules-all") ? { aiRules: "all" as const } : {}),
           format: "md",
         })

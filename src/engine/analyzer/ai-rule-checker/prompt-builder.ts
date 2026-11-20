@@ -115,9 +115,38 @@ export const RULE_CHECK_OUTPUT_EXAMPLE = JSON.stringify(
   0,
 )
 
+/**
+ * 裁剪规则文档：只保留 AI 判定需要的段落。
+ *
+ * 实测：完整文档（含正例/反例代码块、"报出的证据"、"建议怎么改"、"验收口径"、"关联"）
+ * 会让 prompt 膨胀 3 倍，且规则文档里的代码块会被模型误当成待检代码。
+ * AI 只需要「检查什么 / 为什么是问题 / 命中判定」——报告模板段落与它无关。
+ */
+export function condenseRuleDoc(doc: string): string {
+  const KEEP = ["## 检查什么", "## 为什么是问题", "## 命中判定"]
+  const lines = doc.split("\n")
+  const out: string[] = []
+  let keeping = false
+  for (const line of lines) {
+    if (/^## /.test(line)) {
+      keeping = KEEP.some((k) => line.startsWith(k))
+      if (keeping) out.push(line)
+      continue
+    }
+    if (keeping) out.push(line)
+  }
+  const body = out
+    .join("\n")
+    // 去掉围栏代码块：AI 已拿到真实源码上下文，规则文档里的示例代码只会撑大 prompt 并干扰判断
+    .replace(/```[\s\S]*?```/g, "（示例代码略，判定口径见上文）")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+  return body.length > 0 ? body : doc.trim()
+}
+
 export function buildRuleCheckPrompt(input: AIRuleCheckPromptInput): string {
   const ruleDocs = input.rules
-    .map((r) => `### 规则 ${r.id}（${r.severity}）\n${r.doc.trim()}`)
+    .map((r) => `### 规则 ${r.id}（${r.severity}）\n${condenseRuleDoc(r.doc)}`)
     .join("\n\n")
 
   return `你是 Workflow 代码规则检查器。任务：严格按下面给出的规则文档，检查 workflow 源码是否命中这些规则。
