@@ -24,6 +24,7 @@
 | REF-016 | PrdGameSkill | https://github.com/mickorz/PrdGameSkill.git | thirdparties/PrdGameSkill | d28ed0a16cad8d9c23dde925e591ef326b81874d | 未发现 LICENSE 文件（作者自有仓库，仅本机测试用） | 真实场景验收样本：13 个生产 workflow（game-prd-check / game-requirement-audit / output-spec-generate / server-rule-verify 等）+ 历史 journal，用作 Workflow Engineering Framework（Plan/Analyzer/恢复/自适应/评估）的端到端实测数据源 | 2026-11-19 引入。M1-T0 基线与 M6 真实联调均以此仓库为样本 |
 | REF-017 | pi-context-view | https://github.com/dimk90/pi-context-view.git | thirdparties/pi-context-view | 3cded3f7a202239c66e29111db1de013b2bd79e8 | MIT | 方法论参考：pi 上下文占用可视化扩展（base prompt/tools defs/extension injections 的隐藏上下文检视）；只读研究，集成前再评估 | 2026-11-19 引入。上下文用量可视化与隐藏注入检视，与本包 workflow 观测/上下文展示方向对照（合并时原 HEAD 侧 REF-016/017 重编号，避免与 main 侧 REF-016 冲突） |
 | REF-018 | ak-pi-workflow-roles | https://github.com/Akagilnc/ak-pi-workflow-roles.git | thirdparties/ak-pi-workflow-roles | fbe6c7c15b4e5acb34d09796af7af9bbf9080c3f | Apache-2.0 | 方法论参考：AI 编码治理层（七个带门禁角色、类型化提交、独立审计席位、无 runner 的组合式设计）；只读研究，集成前再评估 | 2026-11-19 引入。多角色门禁治理形态与本包 workflow 编排/审计方向对照 |
+| REF-019 | open-vibecoding | https://github.com/mileson/open-vibecoding.git | thirdparties/open-vibecoding | 0468ec937386e0fdccb093c8a81bf50f63fb4a57 | MIT | 方法论参考：编码 Agent 能力编排框架（按任务组合产品/设计/研发/测试 Skill、项目指引与资料绑定、交付验证闭环）；只读研究，集成前再评估 | 2026-11-19 引入。Skill 选用与任务交付验证的组织形态与本包 workflow 编排/能力画册方向对照 |
 
 ## Submodule 引入与登记流程
 
