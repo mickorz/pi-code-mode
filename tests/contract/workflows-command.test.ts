@@ -136,6 +136,7 @@ test("register: 校验+manifest 记录原位路径(不复制), unregister 按 id
 
   await unregisterSubcommand.run(["demo_wf"], ctx, deps); // 按 id 移除
   assert.match(notifications.at(-1)!.text, /已注销/);
+  assert.match(notifications.at(-1)!.text, /重启会话后从补全列表消失/); // 运行中不可注销，需提示宿主限制
   assert.match(notifications.at(-1)!.text, /保留不动/);
   assert.equal(loadRegistry(projectDir).size, 0);
   assert.ok(fs.existsSync(src)); // 源文件保留

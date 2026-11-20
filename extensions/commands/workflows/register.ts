@@ -106,7 +106,11 @@ export const unregisterSubcommand: Subcommand = {
         return
       }
       removeFromManifest(cwd, entry.id)
-      ctx.ui.notify(`已注销 workflow "${entry.id}"（已从 register.json 移除，原位脚本 ${path.resolve(cwd, entry.file)} 保留不动）`, "info")
+      ctx.ui.notify(
+        `已注销 workflow "${entry.id}"（已从 register.json 移除，原位脚本 ${path.resolve(cwd, entry.file)} 保留不动）。` +
+          `/${entry.id} 顶层命令无法在会话内移除（宿主限制）：本会话再输入只会提示已注销，重启会话后从补全列表消失`,
+        "info",
+      )
       return
     }
 
