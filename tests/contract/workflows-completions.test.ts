@@ -39,6 +39,19 @@ test("子命令补全: 空前缀给全部, 前缀过滤, 未知不猜", () => {
   assert.deepEqual(completeWorkflowsArgs("xyz", deps), []);
 });
 
+test("子命令补全: 敲完整子命令但无空格时不返回 workflowId（防宿主替换掉参数）", () => {
+  const deps = { runManager: new RunManager(2), cwd: makeProject({ manifest: [{ id: "smoke_test" }] }) };
+  // 回归：曾经 "unreg" 恰好命中已知子命令会跳到位置 2，返回 workflowId，
+  // 宿主接受补全后输入变成 /workflows smoke_test（unreg 被“吃掉”）
+  for (const typed of ["unreg", "unregister", "run", "reg", "cancel"]) {
+    const items = completeWorkflowsArgs(typed, deps).map((i) => i.value);
+    assert.ok(items.includes(typed), `${typed} 应补全自身，实际 ${JSON.stringify(items)}`);
+    assert.ok(!items.includes("smoke_test"), `${typed} 不应返回 workflowId，实际 ${JSON.stringify(items)}`);
+  }
+  // 空格后才进入位置 2
+  assert.deepEqual(completeWorkflowsArgs("unreg ", deps).map((i) => i.value), ["smoke_test"]);
+});
+
 test("run/register 后补全注册表 workflowId, unreg 同理", () => {
   const rm = new RunManager(2);
   const deps = { runManager: rm, cwd: makeProject({ manifest: [{ id: "smoke_test" }, { id: "daily_review" }] }) };

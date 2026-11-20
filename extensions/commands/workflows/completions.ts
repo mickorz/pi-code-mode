@@ -40,8 +40,10 @@ export function completeWorkflowsArgs(prefix: string, deps: CompletionDeps): Aut
   const endsWithSpace = /\s$/.test(prefix)
   const head = tokens[0] ?? ""
 
-  // 位置 1：子命令名补全（还没敲完，或敲的不是已知子命令）
-  if (!endsWithSpace && tokens.length <= 1 && !KNOWN_SUBCOMMANDS.includes(head)) {
+  // 位置 1：还没敲空格 → 仍在输入子命令名。
+  // 注意不能以「是否等于已知子命令」判定：否则敲完 unreg/run 但没空格时，补全会直接
+  // 跳到位置 2 返回 workflowId，宿主接受补全项时把整段参数替换掉（表现为 unreg 被“吃掉”）。
+  if (!endsWithSpace && tokens.length <= 1) {
     return KNOWN_SUBCOMMANDS.filter((k) => k.startsWith(head)).map((k) => ({
       value: k,
       label: k,
