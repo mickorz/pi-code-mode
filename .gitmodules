@@ -81,3 +81,7 @@
 	path = thirdparties/pi-percy
 	url = https://github.com/ghoseb/pi-percy.git
 	branch = main
+[submodule "thirdparties/linger"]
+	path = thirdparties/linger
+	url = https://github.com/simplexai-labs/linger.git
+	branch = main
