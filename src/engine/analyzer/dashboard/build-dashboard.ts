@@ -15,7 +15,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import type { AnalysisReport } from "../report-builder.js"
+import { clusterFindings, type AnalysisReport } from "../report-builder.js"
 
 /** Dashboard 视图模型：模板 __REPORT_JSON__ 的唯一内容 */
 export interface DashboardView {
@@ -85,6 +85,20 @@ export interface DashboardView {
     evidence: string[]
     snippet?: string
     suggestion?: string
+  }>
+  /** 问题簇：与 Markdown 共用同一份合并结果（避免两处漂移） */
+  clusters: Array<{
+    key: string
+    ruleId: string
+    severity: string
+    count: number
+    files: string[]
+    locations: string[]
+    moreLocations: number
+    evidence: string[]
+    confidence: number
+    suggestion?: string
+    snippet?: string
   }>
   recommendations: Array<{
     id: string
@@ -176,6 +190,19 @@ export function buildDashboardView(
       qualityRisk: r.qualityRisk,
       validation: r.validation,
       ...(r.source ? { source: r.source } : {}),
+    })),
+    clusters: (report.clusters ?? clusterFindings(report.findings)).map((c) => ({
+      key: c.key,
+      ruleId: c.ruleId,
+      severity: c.severity,
+      count: c.count,
+      files: c.files,
+      locations: c.locations,
+      moreLocations: c.moreLocations,
+      evidence: c.evidence,
+      confidence: c.confidence,
+      ...(c.suggestion ? { suggestion: c.suggestion } : {}),
+      ...(c.snippet ? { snippet: c.snippet } : {}),
     })),
     unknowns: report.dependencies.unknowns.map((u) => ({ line: u.line, id: u.id, reason: u.reason })),
     diagnostics: report.diagnostics,

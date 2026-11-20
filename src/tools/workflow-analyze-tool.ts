@@ -12,6 +12,7 @@ import { Type } from "typebox"
 
 import {
   buildReport,
+  clusterFindings,
   renderMarkdown,
   type AnalysisFindingWithSnippet,
   type AnalysisReport,
@@ -183,6 +184,8 @@ async function analyzeDirectory(input: AnalyzeInput): Promise<AnalyzeResult> {
     },
     summary: { riskScore: first.summary.riskScore, counts, totalFindings: aggregated.length },
     findings: aggregated,
+    // 必须重算：从 first 继承来的 clusters 只含第一个文件，会把 37 条显示成 3 个簇
+    clusters: clusterFindings(aggregated),
     aggregateRiskScore: maxRisk,
     // 目录模式没有"入口"概念：entry 记第一个文件，报告头部靠 subtree 展示全量
     entry: { findings: first.findings, ruleInventory: first.ruleInventory, totalFindings: first.findings.length },
@@ -368,6 +371,8 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
         report = {
           ...report,
           findings: aggregated,
+          // 同 analyzeDirectory：聚合后必须重算，否则簇只覆盖入口自身
+          clusters: clusterFindings(aggregated),
           summary: { riskScore: entrySummary.riskScore, counts, totalFindings: aggregated.length },
           entry: { findings: entryFindings, ruleInventory: entryRuleInventory, totalFindings: entryFindings.length },
           aggregateRiskScore: tree.aggregate.maxRisk,

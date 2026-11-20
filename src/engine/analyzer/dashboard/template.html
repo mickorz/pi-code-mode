@@ -246,7 +246,11 @@
     var list = D.findings.filter(function (f) {
       return (!state.sev || f.severity === state.sev) && (!state.rule || f.ruleId === state.rule);
     });
-    var h = '<div class="card"><h2>问题列表（' + list.length + ' / ' + D.findings.length + '）</h2>';
+    var clusters = (D.clusters || []).filter(function (c) {
+      return (!state.sev || c.severity === state.sev) && (!state.rule || c.ruleId === state.rule);
+    });
+    var h = '<div class="card"><h2>问题列表（' + list.length + ' 条 → ' + clusters.length + ' 个问题簇）</h2>';
+    h += '<div class="note">同类问题已合并展示：一个簇 = 一件要改的事，点开可看簇内每处位置。原始 ' + D.findings.length + ' 条明细见报告 JSON。</div>';
     h += '<div class="filters"><span class="muted">严重度：</span>';
     h += '<button data-sev="" class="' + (state.sev ? '' : 'on') + '">全部</button>';
     SEV.forEach(function (s) {
@@ -258,18 +262,35 @@
       h += '<span class="muted" style="margin-left:8px">规则：</span><button data-rule="">' + esc(state.rule) + ' ×</button>';
     }
     h += '</div>';
-    if (!list.length) {
-      h += '<div class="empty">没有匹配的问题。</div>';
+    if (!clusters.length) {
+      h += '<div class="empty">没有匹配的问题簇。</div>';
     }
-    list.forEach(function (f, i) {
-      h += '<details' + (i < 3 ? ' open' : '') + '><summary>' + sevTag(f.severity) + ' <code>' + esc(f.ruleId) +
-        '</code> ' + (f.file ? esc(f.file) + ' ' : '') + 'L' + f.startLine + '-' + f.endLine +
-        ' <span class="muted">置信度 ' + f.confidence.toFixed(2) +
-        (f.confidence < 0.5 ? '（提示性，不计入风险分）' : '') + '</span></summary>' +
-        '<ul>' + f.evidence.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>' +
-        (f.snippet ? '<pre>' + esc(f.snippet) + '</pre>' : '') +
-        (f.suggestion ? '<div><b>建议：</b>' + esc(f.suggestion) + '</div>' : '') +
-        '</details>';
+    // 按簇渲染：标题行给规则/严重度/处数/文件数，展开看位置与证据
+    clusters.forEach(function (c, i) {
+      var inCluster = list.filter(function (f) { return f.ruleId === c.ruleId; });
+      var title = c.ruleId + (c.count > 1 ? ' · ' + c.count + ' 处同类问题' : '');
+      h += '<details' + (i < 3 ? ' open' : '') + '><summary>' + sevTag(c.severity) + ' <code>' + esc(c.ruleId) + '</code> ' +
+        '<b>' + esc(title) + '</b> <span class="muted">置信度 ' + c.confidence.toFixed(2) +
+        (c.confidence < 0.5 ? '（提示性，不计入风险分）' : '') +
+        ' · ' + c.files.length + ' 个文件</span></summary>';
+      h += '<div style="margin:8px 0 4px"><b>位置：</b>' + c.locations.map(function (l) {
+        return '<code>' + esc(l) + '</code>';
+      }).join(' ') + (c.moreLocations > 0 ? ' <span class="muted">（另有 ' + c.moreLocations + ' 处）</span>' : '') + '</div>';
+      if (c.evidence.length) {
+        h += '<ul>' + c.evidence.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>';
+      }
+      if (c.snippet) h += '<pre>' + esc(c.snippet) + '</pre>';
+      if (c.suggestion) h += '<div><b>建议：</b>' + esc(c.suggestion) + '</div>';
+      // 簇内明细（折叠）
+      if (inCluster.length > 1) {
+        h += '<details style="margin-left:12px"><summary class="muted">展开簇内 ' + inCluster.length + ' 条明细</summary>';
+        inCluster.forEach(function (f) {
+          h += '<div style="margin:6px 0"><code>' + esc(f.file || '') + ':L' + f.startLine + '-' + f.endLine + '</code>' +
+            (f.evidence[0] ? '<div class="muted">' + esc(f.evidence[0].slice(0, 160)) + '</div>' : '') + '</div>';
+        });
+        h += '</details>';
+      }
+      h += '</details>';
     });
     h += '</div>';
     el('v-issues').innerHTML = h;

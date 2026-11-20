@@ -35,6 +35,93 @@ export interface AnalysisFindingWithSnippet extends AnalyzerFinding {
   snippet?: string
 }
 
+/**
+ * 问题簇：同一类问题的多条 finding 合并成一条。
+ *
+ * 为什么需要：真实目录分析 37 条 finding 里，RETRY-001×12、IO-001×11、SERIAL-002×9
+ * 本质各是同一个问题（同一处设计模式在多文件重复）。逐条平铺导致信息密度极低，
+ * 用户要自己归纳——报告的价值从「告诉他改什么」退化成「给他一堆行号」。
+ *
+ * 合并键：
+ *  - 默认 ruleId（同规则的多条命中视为同一问题簇）
+ *  - INPUT-001 例外：不同标识符是不同的重复注入对象，键含标识符
+ */
+export interface FindingCluster {
+  /** 合并键（ruleId 或 ruleId:ident） */
+  key: string
+  ruleId: string
+  severity: Severity
+  /** 簇内 finding 条数 */
+  count: number
+  /** 涉及文件（去重、排序） */
+  files: string[]
+  /** 位置串（file:Lx-y，最多 10 条，其余计数） */
+  locations: string[]
+  /** 超出 10 条的位置数 */
+  moreLocations: number
+  /** 合并去重后的证据（最多 6 条） */
+  evidence: string[]
+  confidence: number
+  suggestion?: string
+  /** 代表性代码片段（取簇内首条有 snippet 的） */
+  snippet?: string
+}
+
+/** 簇键：默认按规则合并；INPUT-001 按标识符拆分（不同对象是不同问题） */
+export function clusterKeyOf(f: AnalysisFindingWithSnippet): string {
+  if (f.ruleId === "INPUT-001") {
+    const m = /`([^`]+)`/.exec(f.evidence[0] ?? "")
+    return m?.[1] ? `${f.ruleId}:${m[1]}` : f.ruleId
+  }
+  return f.ruleId
+}
+
+const SEVERITY_WEIGHT: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+
+/**
+ * 把 findings 按问题簇合并。纯函数，Markdown 与 Dashboard 共用同一结果，
+ * 保证「报告说 8 个问题簇」与「Dashboard 显示 8 个簇」永不漂移。
+ */
+export function clusterFindings(findings: AnalysisFindingWithSnippet[]): FindingCluster[] {
+  const byKey = new Map<string, FindingCluster>()
+  for (const f of findings) {
+    const key = clusterKeyOf(f)
+    const loc = f.location.file
+      ? `${f.location.file}:L${f.location.startLine}-${f.location.endLine}`
+      : `L${f.location.startLine}-${f.location.endLine}`
+    const cur = byKey.get(key)
+    if (!cur) {
+      byKey.set(key, {
+        key,
+        ruleId: f.ruleId,
+        severity: f.severity,
+        count: 1,
+        files: f.location.file ? [f.location.file] : [],
+        locations: [loc],
+        moreLocations: 0,
+        evidence: [...f.evidence],
+        confidence: f.confidence,
+        ...(f.suggestion ? { suggestion: f.suggestion } : {}),
+        ...(f.snippet ? { snippet: f.snippet } : {}),
+      })
+      continue
+    }
+    cur.count += 1
+    if (f.location.file && !cur.files.includes(f.location.file)) cur.files.push(f.location.file)
+    if (cur.locations.length < 10) cur.locations.push(loc)
+    else cur.moreLocations += 1
+    for (const ev of f.evidence) if (!cur.evidence.includes(ev) && cur.evidence.length < 6) cur.evidence.push(ev)
+    // 取最高置信度代表该簇
+    if (f.confidence > cur.confidence) cur.confidence = f.confidence
+    if (!cur.snippet && f.snippet) cur.snippet = f.snippet
+    // 严重度取最重
+    if (SEVERITY_WEIGHT[f.severity] < SEVERITY_WEIGHT[cur.severity]) cur.severity = f.severity
+  }
+  return [...byKey.values()].sort(
+    (a, b) => SEVERITY_WEIGHT[a.severity] - SEVERITY_WEIGHT[b.severity] || b.count - a.count || a.ruleId.localeCompare(b.ruleId),
+  )
+}
+
 export interface Recommendation {
   id: string
   title: string
@@ -97,6 +184,11 @@ export interface AnalysisReport {
     error?: string
   }>
   findings: AnalysisFindingWithSnippet[]
+  /**
+   * 问题簇（同一类问题合并）：Markdown 与 Dashboard 都按簇展示。
+   * 37 条 finding → 约 8 个簇，用户看到的是「要改哪几件事」而不是「37 个行号」。
+   */
+  clusters?: FindingCluster[]
   recommendations: Recommendation[]
   diagnostics: string[]
   /** AI Rule Check 结果（默认开启；未启用或为空时缺省） */
@@ -281,6 +373,7 @@ export function buildReport(input: {
       unknowns: context.deps.unknowns.map((u) => ({ id: u.id, line: u.line, reason: u.reason })),
     },
     findings: findingsWithSnippet,
+    clusters: clusterFindings(findingsWithSnippet),
     recommendations: recommend(findings),
     diagnostics: context.ast.diagnostics,
   }
@@ -392,32 +485,39 @@ export function renderMarkdown(report: AnalysisReport): string {
 
   // ---- findings 详情（带代码片段） ----
   lines.push("")
-  lines.push(`## 发现的问题（${report.findings.length}）`)
+  const clusters = report.clusters ?? clusterFindings(report.findings)
+  lines.push(`## 发现的问题（${report.findings.length} 条 → ${clusters.length} 个问题簇）`)
   lines.push("")
-  if (report.findings.length === 0) {
+  if (clusters.length === 0) {
     lines.push("全部规则检查通过，未发现静态风险。")
-  }
-  for (const f of report.findings) {
-    // 跨文件分析时必须带文件名：37 条 finding 分布 12 个文件，只给行号无法定位该改哪个文件
-    const loc = f.location.file
-      ? `${f.location.file}:L${f.location.startLine}-${f.location.endLine}`
-      : `L${f.location.startLine}-${f.location.endLine}`
-    lines.push(`### ${f.severity.toUpperCase()} \`${f.ruleId}\` @ ${loc}`)
     lines.push("")
-    lines.push(`- 置信度: ${f.confidence.toFixed(2)}${f.confidence < 0.5 ? "（提示性，不计入风险分）" : ""}`)
-    // evidence 单条截断：DET-001 会把整段 prompt 拼进一行，不截断会撑爆可读性
-    for (const ev of f.evidence) {
-      lines.push(`- ${ev.length > 300 ? `${ev.slice(0, 300)}…（完整内容见 JSON）` : ev}`)
+  }
+  // 按簇展示：一个簇 = 一件事，位置与文件都在簇里，不再平铺 37 段
+  for (const [i, c] of clusters.entries()) {
+    const title = c.count > 1 ? `${c.ruleId} · ${c.count} 处同类问题` : c.ruleId
+    lines.push(`### ${i + 1}. ${title}`)
+    lines.push("")
+    lines.push(`- 严重度: ${c.severity} / 置信度: ${c.confidence.toFixed(2)}${c.confidence < 0.5 ? "（提示性，不计入风险分）" : ""}`)
+    if (c.files.length > 0) {
+      lines.push(`- 涉及文件: ${c.files.slice(0, 8).join(", ")}${c.files.length > 8 ? ` 等 ${c.files.length} 个` : ""}`)
     }
-    if (f.snippet) {
+    lines.push(`- 位置: ${c.locations.join("；")}${c.moreLocations > 0 ? `（另有 ${c.moreLocations} 处，见 JSON）` : ""}`)
+    if (c.evidence.length > 0) {
       lines.push("")
+      for (const ev of c.evidence) {
+        lines.push(`- ${ev.length > 300 ? `${ev.slice(0, 300)}…（完整内容见 JSON）` : ev}`)
+      }
+    }
+    if (c.snippet) {
+      lines.push("")
+      lines.push("代表代码：")
       lines.push("```js")
-      lines.push(f.snippet)
+      lines.push(c.snippet)
       lines.push("```")
     }
-    if (f.suggestion) {
+    if (c.suggestion) {
       lines.push("")
-      lines.push(`**建议**：${f.suggestion}`)
+      lines.push(`**建议**：${c.suggestion}`)
     }
     lines.push("")
   }
