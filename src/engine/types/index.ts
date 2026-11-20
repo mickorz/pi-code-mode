@@ -137,6 +137,11 @@ export interface AgentRecord {
   timeoutMs?: number | null
   /** 本次尝试的起始时间戳（每次 attempt 重置；运行计时按此显示 1s/8s 而非累计 9s/8s，#33 修正） */
   attemptStartedAt?: number
+  /**
+   * 运行中的流式输出尾部（方案 B；仅展示，**绝不进 journal、绝不参与 hash**）。
+   * 有界（8KB 尾部），终态后由 journal 的完整 result 取代。
+   */
+  partialOutput?: string
 }
 
 /** Composite 组合节点执行记录（P2-3 观测；与 AgentRecord 同源的展示元数据，不进 journal key） */
@@ -152,6 +157,40 @@ export interface CompositeRecord {
   compositePath: string[]
   startedAt?: number
   durationMs?: number
+}
+
+/** 阶段执行记录（Explorer 执行树源；阶段切换时创建/关闭）
+ *  phaseId 是稳定身份：`<scopePath.join("/")>#<display phase title>`——
+ *  display title 已含 child 前缀，同名阶段在同一 scope 内本就是同一阶段，跨 scope 靠 scopePath 区分 */
+export interface PhaseExecutionRecord {
+  /** 稳定身份（见上） */
+  phaseId: string
+  /** 展示名（含 child 前缀，如 "▸ 子流程 / 结算分析"） */
+  title: string
+  /** 所在 workflow scope 身份链（对齐 WorkflowExecutionRecord.scopePath） */
+  scopePath: string[]
+  status: "running" | "ok" | "failed" | "aborted"
+  startedAt: number
+  endedAt?: number
+  durationMs?: number
+}
+
+/** 确定性工具节点执行记录（runTool / MCP 直调；P4.1 语义：不计 agent 配额） */
+export interface ToolExecutionRecord {
+  /** 稳定身份：`<scopePath.join("/")>#<kind>:<name>#<seq>`（同 scope 内同名工具多次调用不碰撞） */
+  toolId: string
+  /** 工具名（runTool 为脚本相对路径；MCP 为 mcp__server__tool） */
+  name: string
+  kind: "mcp" | "runtime"
+  /** 所在 workflow scope 身份链 */
+  scopePath: string[]
+  /** 调用时所处阶段展示名（无阶段时省略） */
+  phase?: string
+  status: "running" | "ok" | "error"
+  startedAt: number
+  endedAt?: number
+  durationMs?: number
+  error?: string
 }
 
 /** workflow 脚本 meta 信封 */

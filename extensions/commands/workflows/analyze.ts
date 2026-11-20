@@ -36,7 +36,8 @@ const SUMMARY_FINDINGS = 6
  * 此前直接 `readFileSync(目录)` 抛 EISDIR，堆栈完全无法理解。
  */
 interface ResolvedScript {
-  source: string
+  /** 入口文件内容；目录模式无入口，为 undefined（走 dirPath 由 analyzeWorkflow 读目录下全部 js） */
+  source?: string
   label: string
   /** 解析后的实际文件路径（单文件模式），供 analyzeWorkflow 的 tree 聚合使用 */
   filePath?: string

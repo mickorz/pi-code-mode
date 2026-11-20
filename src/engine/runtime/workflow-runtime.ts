@@ -41,9 +41,11 @@ import type {
   JournalEntry,
   McpPolicy,
   McpToolCallSummary,
+  PhaseExecutionRecord,
   WorkflowExecutionRecord,
   WorkflowRunResult,
 } from "../types/index.js"
+import type { WorkflowEventInput } from "../events/workflow-events.js"
 import { McpClientPool, makeMcpInvoker, type McpInvoker } from "../../mcp/mcp-client-pool.js"
 import { planSchedule, buildProfiles, type TaskProfile } from "../adaptive/adaptive-scheduler.js"
 import { evaluate, type EvaluationReport } from "../evaluator/evaluator.js"
@@ -135,8 +137,15 @@ export interface WorkflowRunOptions {
   onCompositeUpdate?: (record: CompositeRecord) => void
   /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
-  /** M4：workflow 直调 MCP 的审计回调（每条调用实时发）；宿主决定持久化（journal 文件或日志） */
-  onMcpCall?: (record: McpToolCallSummary) => void
+  /** M4：workflow 直调 MCP 的审计回调（每条调用实时发）；宿主决定持久化（journal 文件或日志）；
+   *  scope 为调用点所在 workflow scope（评审修复 M1：child 内 MCP 不再被误报为 root） */
+  onMcpCall?: (record: McpToolCallSummary, scope?: { scopePath: string[]; phase?: string }) => void
+  /**
+   * 统一 Runtime 事件出口（Explorer / Web Dashboard 共用；Workflow Explorer 架构 M1）：
+   * sequence / eventId / timestamp 由 RuntimeEventBus 在 publish 时补齐。
+   * 原有 onAgentUpdate / onCompositeUpdate 等回调保留为兼容层，两者可同时接。
+   */
+  onRuntimeEvent?: (event: WorkflowEventInput) => void
   /** M4：宿主全局配置目录（直调池读 mcp.json 用；缺省 ~/.pi/agent） */
   agentDir?: string
   /** M2：预算闸（可选注入——旧脚本零改动；未注入时不限预算） */
@@ -246,8 +255,9 @@ interface SharedRunContext {
   mcpPool?: McpClientPool,
   /** M4：root meta.mcp 声明（child 可达面 = root 白名单 ∩ 自身声明） */
   mcpPoolPolicy?: McpPolicy,
-  /** M4：MCP 直调审计回调（每条调用实时发，宿主决定持久化） */
-  onMcpCall?: (record: McpToolCallSummary) => void
+  /** M4：MCP 直调审计回调（每条调用实时发，宿主决定持久化）；
+   *  scope 为调用点所在的 workflow scope（评审修复 M1：child 内 MCP 不再被误报为 root） */
+  onMcpCall?: (record: McpToolCallSummary, scope?: { scopePath: string[]; phase?: string }) => void
   /** M4：宿主全局配置目录（池读 mcp.json 用） */
   agentDir?: string
   /** M2：预算闸（run 级；未注入时不限预算） */
@@ -276,6 +286,13 @@ interface SharedRunContext {
   phaseFailed: Array<{ label: string; phase?: string; error: string }>
   /** 逃生口透传 */
   continueOnAgentFailure: boolean
+  /** 统一事件出口（已存在的回调包装后仍会先调原回调） */
+  onRuntimeEvent?: (event: WorkflowEventInput) => void
+  /** 已发过 started 的 agent / composite（决定 started 与 updated 的区分；不进业务语义） */
+  emittedAgents: Set<string>
+  emittedComposites: Set<string>
+  /** 工具节点序号（tool.started 前分配；toolId 生成用） */
+  toolSeq: number
 }
 
 /** 单个 workflow invocation 的私有身份与游标 */
@@ -306,9 +323,14 @@ interface WorkflowScope {
   pathLabels?: string[]
   /** 稳定身份链（keySegment 数组；root 为 ["root"]） */
   pathKeys?: string[]
+  /** 当前未结束的 phase 记录（stage 切换时由下一 phase 关闭） */
+  currentPhaseRecord?: PhaseExecutionRecord
 }
 
 function createSharedRunContext(options: WorkflowRunOptions, runId: string): SharedRunContext {
+  // 统一事件出口的包装层（M1）：所有既有回调点照旧只需调 onAgentUpdate / onCompositeUpdate /
+  // onMcpCall，事件在同一个入口派生——避免在 10+ 个调用点重复埋点，也避免两套出口语义漂移。
+  const emit = options.onRuntimeEvent
   const shared: SharedRunContext = {
     runId,
     scheduler: undefined as never, // 下一行装配（闭包需要 shared.log）
@@ -332,11 +354,58 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     replayPolicy: options.replayPolicy,
     onAgentJournal: options.onAgentJournal,
     onAgentExecution: options.onAgentExecution,
-    onAgentUpdate: options.onAgentUpdate,
-    onCompositeUpdate: options.onCompositeUpdate,
+    onAgentUpdate: (record) => {
+      options.onAgentUpdate?.(record)
+      if (!emit) return
+      const scopePath = record.workflowScopePath ?? ["root"]
+      const finished = record.status !== "running"
+      const key = finished ? "agent.finished" : shared.emittedAgents.has(record.id) ? "agent.updated" : "agent.started"
+      shared.emittedAgents.add(record.id)
+      emit({ runId, type: key, nodeKey: `agent:${scopePath.join("/")}#${record.id}`, scopePath, payload: record })
+    },
+    onCompositeUpdate: (record) => {
+      options.onCompositeUpdate?.(record)
+      if (!emit) return
+      const type = record.status === "running" ? "composite.started" : "composite.finished"
+      shared.emittedComposites.add(record.id)
+      emit({
+        runId,
+        type,
+        nodeKey: `composite:${record.scopePath.join("/")}#${record.compositePath.join(".") || record.id}`,
+        scopePath: record.scopePath,
+        payload: record,
+      })
+    },
     composites: [],
     cwd: options.cwd ?? process.cwd(),
-    onMcpCall: options.onMcpCall,
+    onMcpCall: (record, mcpScope) => {
+      options.onMcpCall?.(record, mcpScope)
+      if (!emit) return
+      const scopePath = mcpScope?.scopePath?.length ? mcpScope.scopePath : ["root"]
+      const toolId = `mcp:${record.toolName}#${record.toolCallId ?? `${++shared.toolSeq}`}`
+      emit({
+        runId,
+        type: "tool.finished",
+        nodeKey: `tool:${scopePath.join("/")}#${toolId}`,
+        scopePath,
+        payload: {
+          toolId,
+          name: record.toolName,
+          kind: "mcp" as const,
+          scopePath,
+          phase: mcpScope?.phase,
+          status: record.status === "ok" ? ("ok" as const) : ("error" as const),
+          startedAt: Date.now() - (record.durationMs ?? 0),
+          endedAt: Date.now(),
+          durationMs: record.durationMs,
+          error: record.error,
+        },
+      })
+    },
+    emittedAgents: new Set(),
+    emittedComposites: new Set(),
+    toolSeq: 0,
+    onRuntimeEvent: options.onRuntimeEvent,
     agentDir: options.agentDir,
     budgetGate: options.budgetGate,
     taskRegistry: options.taskRegistry,
@@ -502,7 +571,7 @@ async function executeWorkflow(
         shared.toolCount++
       },
       onCall: (record) => {
-        shared.onMcpCall?.(record)
+        shared.onMcpCall?.(record, { scopePath: scope.pathKeys ?? ["root"], phase: eventPhase() })
         shared.toolCount++ // M4：MCP 直调计入确定性工具节点（纯 MCP workflow 合法，同 P4.1 runTool 语义）
         shared.logs.push(`mcp: ${record.server}/${record.toolName} ${record.status} ${record.durationMs ?? "-"}ms`)
       },
@@ -526,15 +595,16 @@ async function executeWorkflow(
     status: "running",
   }
   shared.workflows.push(wfRecord)
-
+  // M1：workflow 生命周期的统一事件起点（终态在下方 ok/failed 收尾处，保证 failed/aborted 不被混同）
+  shared.onRuntimeEvent?.({ runId: shared.runId, type: "workflow.started", nodeKey: `workflow:${wfRecord.scopePath.join("/")}`, scopePath: wfRecord.scopePath, payload: wfRecord })
   // 初始 phase（声明 meta.phases 时，首个 phase 之前的 agent 归入第一个声明的 phase）
   const initialPhase = meta.phases?.[0]?.title
   if (initialPhase) {
     scope.currentPhase = initialPhase
     const display = scope.phasePrefix + initialPhase
     if (!shared.phases.includes(display)) shared.phases.push(display)
+    emitPhase("phase.started", initialPhase)
   }
-
   const log = (message: string) => {
     shared.logs.push(String(message))
   }
@@ -554,6 +624,51 @@ async function executeWorkflow(
     scope.currentPhase = title
     const display = scope.phasePrefix + title
     if (!shared.phases.includes(display)) shared.phases.push(display)
+    emitPhase("phase.started", title)
+  }
+
+  /**
+   * 事件用的展示阶段名：与 agent() 的 displayPhase 完全同构（child 带 "▸ label / " 前缀）。
+   * 评审修复 M1：tool/MCP 事件若用裸标题，会挂到树里不存在的 phase 节点（永久 pending、节点不可见）。
+   */
+  function eventPhase(): string | undefined {
+    if (!scope.phasePrefix) return scope.currentPhase
+    return scope.currentPhase ? scope.phasePrefix + scope.currentPhase : scope.phasePrefix.replace(/ \/$/, "")
+  }
+
+  /** 阶段记录与事件（M1：scope 内同一 display 标题即同一个阶段；切换时关闭上一个未结束阶段） */
+  function emitPhase(type: "phase.started" | "phase.finished", title: string): void {
+    if (!shared.onRuntimeEvent) return
+    // 无在途阶段时 finished 事件无意义（脚本从未声明阶段，或已收敛）
+    if (type === "phase.finished" && !scope.currentPhaseRecord) return
+    const display = scope.phasePrefix + title
+    const scopePath = scope.pathKeys ?? ["root"]
+    const prev = scope.currentPhaseRecord
+    if (type === "phase.started" && prev && prev.status === "running" && prev.title !== display) {
+      prev.status = "ok"
+      prev.endedAt = Date.now()
+      prev.durationMs = prev.endedAt - prev.startedAt
+      shared.onRuntimeEvent({ runId: shared.runId, type: "phase.finished", nodeKey: prev.phaseId, scopePath: prev.scopePath, payload: prev })
+      scope.currentPhaseRecord = undefined
+    }
+    let record: PhaseExecutionRecord
+    if (type === "phase.started" || !scope.currentPhaseRecord || scope.currentPhaseRecord.title !== display) {
+      record = {
+        phaseId: `${scopePath.join("/")}#${display}`,
+        title: display,
+        scopePath,
+        status: "running",
+        startedAt: Date.now(),
+      }
+      scope.currentPhaseRecord = record
+    } else {
+      record = scope.currentPhaseRecord
+      record.status = "ok"
+      record.endedAt = Date.now()
+      record.durationMs = record.endedAt - record.startedAt
+      scope.currentPhaseRecord = undefined
+    }
+    shared.onRuntimeEvent({ runId: shared.runId, type, nodeKey: record.phaseId, scopePath, payload: record })
   }
 
   const ensureAgentCapacity = () => {
@@ -731,6 +846,8 @@ async function executeWorkflow(
           record.maxAttempts = maxAttempts
           // 计时基准按本次尝试重置（#33 修正：重试后显示 1s/8s 而非累计 9s/8s 越界）
           record.attemptStartedAt = Date.now()
+          // 流式尾部清零：否则重试时详情会先显示上一次 attempt 的旧文本（评审修复）
+          record.partialOutput = undefined
           if (attempt > 1) shared.onAgentUpdate?.(record)
           throwIfAborted()
           // 每次 attempt 一个独立 controller：超时只取消本次，run 级 abort 取消所有
@@ -825,6 +942,12 @@ async function executeWorkflow(
                 record.sessionId = sessionId
                 shared.onAgentUpdate?.(record)
               },
+              // 方案 B：流式尾部只挂到 record（展示用），经 onAgentUpdate 走既有 agent.updated 通道
+              // （RunManager 侧 progress 500ms 节流；绝不写 journal/hash）
+              onPartial: (tail: string) => {
+                record.partialOutput = tail
+                shared.onAgentUpdate?.(record)
+              },
             }
             const execution = await withTimeout(shared.agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
               attemptController.abort(),
@@ -852,6 +975,8 @@ async function executeWorkflow(
             record.sessionId = execution.sessionId
             record.outputType = execution.type
             record.outputPreview = buildOutputPreview(execution.value)
+            // 终态清空流式尾部：详情改由 journal 结果呈现，同时释放那 8KB 内存
+            record.partialOutput = undefined
             shared.onAgentUpdate?.(record)
             // 成功且非空结果写入 journal 回放缓存；失败/null/空文本不进（与 Pi 一致）。
             // 载荷为整条 JournalEntry（展示元数据随扩展字段直通落盘）；prompt 用原始脚本入参（非 worktree 拼接版）
@@ -1341,6 +1466,25 @@ async function executeWorkflow(
         },
       })
       log(`runTool ${scriptPath} -> ${outcome.aborted ? "aborted" : outcome.ok ? "ok" : `failed(exit ${outcome.exitCode})`} (${outcome.durationMs}ms)`)
+      // M1：确定性工具节点终态（journalKey 即 toolId：同一 run 内唯一）
+      shared.onRuntimeEvent?.({
+        runId: shared.runId,
+        type: "tool.finished",
+        nodeKey: `tool:${(scope.pathKeys ?? ["root"]).join("/")}#${journalKey}`,
+        scopePath: scope.pathKeys ?? ["root"],
+        payload: {
+          toolId: journalKey,
+          name: String(scriptPath),
+          kind: "runtime" as const,
+          scopePath: scope.pathKeys ?? ["root"],
+          phase: eventPhase(),
+          status: outcome.aborted ? ("error" as const) : outcome.ok ? ("ok" as const) : ("error" as const),
+          startedAt,
+          endedAt: Date.now(),
+          durationMs: outcome.durationMs,
+          ...(outcome.ok || outcome.aborted ? {} : { error: `exit ${outcome.exitCode}: ${outcome.stderr.slice(0, 200)}` }),
+        },
+      })
       if (outcome.aborted) {
         throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true })
       }
@@ -1383,6 +1527,22 @@ async function executeWorkflow(
     const key = scopedKey(shared, scope, callIndex)
     const toolArgs = (args as string[] | undefined) ?? []
     const startedAt = Date.now()
+    // M1：工具节点开始（finished 在 finishTool 统一发，失败/中止同样收敛到同一节点）
+    shared.onRuntimeEvent?.({
+      runId: shared.runId,
+      type: "tool.started",
+      nodeKey: `tool:${(scope.pathKeys ?? ["root"]).join("/")}#${key}`,
+      scopePath: scope.pathKeys ?? ["root"],
+      payload: {
+        toolId: key,
+        name: String(scriptPath),
+        kind: "runtime" as const,
+        scopePath: scope.pathKeys ?? ["root"],
+        phase: eventPhase(),
+        status: "running" as const,
+        startedAt,
+      },
+    })
 
     // Abort 面（P0 修复）：run 级 signal + Composite 局部取消（race 败者，经 AsyncLocalStorage
     // 传播）任一触发即终止子进程；中止后统一记 aborted 并抛 WORKFLOW_ABORTED（非 TOOL_FAILED）
@@ -1877,6 +2037,9 @@ globalThis.tools = new Proxy({}, {
     wfRecord.endedAt = Date.now()
     wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
     wfRecord.status = "ok"
+    // M1：阶段与 workflow 终态事件（阶段先关，树模型父节点状态才能正确收敛）
+    emitPhase("phase.finished", scope.currentPhase ?? "")
+    shared.onRuntimeEvent?.({ runId: shared.runId, type: "workflow.finished", nodeKey: `workflow:${wfRecord.scopePath.join("/")}`, scopePath: wfRecord.scopePath, payload: wfRecord })
     return { meta, result }
   } catch (error) {
     // 中止态先于置位判定：脚本自身错误记 failed，仅真中止记 aborted
@@ -1889,6 +2052,16 @@ globalThis.tools = new Proxy({}, {
     wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
     wfRecord.status = wasAborted ? "aborted" : "failed"
     wfRecord.error = error instanceof Error ? error.message : String(error)
+    // M1：失败/中止保留各自终态（不能统一映射成 failed）；阶段同步收敛
+    const prevPhase = scope.currentPhaseRecord
+    if (prevPhase && prevPhase.status === "running") {
+      prevPhase.status = wasAborted ? "aborted" : "failed"
+      prevPhase.endedAt = Date.now()
+      prevPhase.durationMs = prevPhase.endedAt - prevPhase.startedAt
+      shared.onRuntimeEvent?.({ runId: shared.runId, type: "phase.finished", nodeKey: prevPhase.phaseId, scopePath: prevPhase.scopePath, payload: prevPhase })
+      scope.currentPhaseRecord = undefined
+    }
+    shared.onRuntimeEvent?.({ runId: shared.runId, type: "workflow.finished", nodeKey: `workflow:${wfRecord.scopePath.join("/")}`, scopePath: wfRecord.scopePath, payload: wfRecord })
     throw error
   }
 }

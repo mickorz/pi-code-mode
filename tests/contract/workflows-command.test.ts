@@ -191,3 +191,46 @@ test("双模式: manifest 存在即排他, 无 manifest 回退目录扫描", asy
   await unregisterSubcommand.run(["broken.js"], ctx2, deps);
   assert.match(n2.at(-1)!.text, /已注销/);
 });
+
+// ---- 命令装配契约：注册进宿主的闭包必须在真实调用路径上可执行 ----
+// 教训（2026-11-18 线上崩溃）：getArgumentCompletions 引用了作用域外的裸 runManager，
+// 按 Tab 补全即抛 ReferenceError 打死宿主 TUI。单测只测纯函数 completeWorkflowsArgs 时漏掉了这层。
+test("命令装配: /workflows 的 getArgumentCompletions 可真实调用（不抛 ReferenceError）", async () => {
+  const { registerWorkflowsCommand } = await import("../../extensions/commands/workflows/index.js");
+  const rm = new RunManager(4);
+  rm.register("run-abc", { label: "smoke" });
+  const registered = new Map<string, any>();
+  const pi = { registerCommand: (name: string, opts: any) => registered.set(name, opts) } as any;
+
+  registerWorkflowsCommand(pi, {
+    runManager: rm,
+    makeDeps: () => ({}) as any,
+    deliver: async () => {},
+  });
+
+  const cmd = registered.get("workflows");
+  assert.ok(cmd?.getArgumentCompletions, "getArgumentCompletions 已注册");
+
+  // 空前缀：应能拿到子命令候选（证明闭包内的依赖可达）
+  const all = cmd.getArgumentCompletions("");
+  assert.ok(Array.isArray(all) && all.length > 0, "空前缀返回候选列表");
+  assert.ok(all.some((c: any) => String(c.value ?? c.label ?? "").includes("status")));
+
+  // 带 runId 前缀：走到 runManager 分支，不得抛错
+  const runs = cmd.getArgumentCompletions("status ");
+  assert.ok(Array.isArray(runs), "runId 补全分支可执行");
+});
+
+test("命令装配: /explorer 的 getArgumentCompletions 可真实调用", async () => {
+  const { registerExplorerCommand } = await import("../../extensions/commands/explorer.js");
+  const { RuntimeEventBus } = await import("../../src/engine/events/runtime-event-bus.js");
+  const { ExplorerController } = await import("../../src/explorer/controller/explorer-controller.js");
+  const bus = new RuntimeEventBus();
+  const explorer = new ExplorerController({ runManager: new RunManager(2, bus), eventBus: bus, journalDir: "/tmp/none" });
+  const registered = new Map<string, any>();
+  const pi = { registerCommand: (name: string, opts: any) => registered.set(name, opts) } as any;
+  registerExplorerCommand(pi, { explorer });
+  const cmd = registered.get("explorer");
+  assert.doesNotThrow(() => cmd.getArgumentCompletions("run-"));
+  explorer.dispose();
+});

@@ -7,6 +7,9 @@
  *   - SettingsManager.create 继承用户 provider/model 认证
  * usage 直接取 pi 规范化单值（message.usage）；cancel 走 session.abort（M0 实测 13ms 生效）
  *
+ * 流式输出（方案 B）：订阅 `message_update` 的 `text_delta`，经有界尾部缓冲 + 500ms 节流后
+ * 以 `partial` 事件上抛给 Runtime（仅展示用；不进 journal、不参与 hash）。
+ *
  * M0 实证依据：dev-docs/progress-result/M0-执行报告.md；spike：dev-examples/m0-spike/spike.ts
  */
 
@@ -23,6 +26,7 @@ import type { Model } from "@earendil-works/pi-ai"
 import type { AgentAdapter, AgentEvent, AgentRequest, AgentResult, ExecutionContext } from "./types.js"
 import { validateStructured } from "./structured.js"
 import { resolveModelSpec } from "./model-spec.js"
+import { createPartialBuffer } from "./partial-buffer.js"
 
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent")
 
@@ -103,6 +107,18 @@ export class PiAgentAdapter implements AgentAdapter {
       else request.signal.addEventListener("abort", onAbort, { once: true })
     }
 
+    // 流式尾部缓冲：在 try 之外声明，finally 里要 flush/dispose
+    const partialBuffer = createPartialBuffer({
+      maxBytes: 8 * 1024,
+      throttleMs: 500,
+      onFlush: (tail) => {
+        if (cancelled || request.signal?.aborted) return
+        emit({ type: "partial", executionId: ctx.executionId, text: tail })
+      },
+    })
+
+    // 订阅句柄在 try 外声明：异常路径也要退订（否则 session 上的监听残留到会话回收）
+    let unsubSession: (() => void) | undefined
     try {
       // schema 路径（R3 M2）：JSON 输出要求 + typebox 校验 + 修复循环（校验失败把错误清单附回 prompt，最多 2 轮）
       const MAX_FIX_ROUNDS = 2
@@ -114,6 +130,12 @@ export class PiAgentAdapter implements AgentAdapter {
       let text = ""
       let usage: { inputTokens: number; outputTokens: number } | undefined
       const unsub = session.subscribe((e: any) => {
+        // 只取助手文本增量（thinking/toolcall 分片不上抛，避免噪声）
+        if (e.type === "message_update") {
+          const ev = e.assistantMessageEvent
+          if (ev?.type === "text_delta" && typeof ev.delta === "string") partialBuffer.push(ev.delta)
+          return
+        }
         if (e.type === "message_end" && e.message?.role === "assistant") {
           for (const c of e.message.content ?? []) {
             if (c.type === "text") text += c.text
@@ -126,6 +148,7 @@ export class PiAgentAdapter implements AgentAdapter {
       })
 
       const t0 = Date.now()
+      unsubSession = unsub
       await session.prompt(finalPrompt)
 
       // 修复循环：校验失败时把错误清单附回 prompt 重试（订阅保持开启以收集修复轮文本）
@@ -135,6 +158,8 @@ export class PiAgentAdapter implements AgentAdapter {
         while (!validation.ok && round < MAX_FIX_ROUNDS && !cancelled && !request.signal?.aborted) {
           round += 1
           text = ""
+          // 新一轮输出：清掉上一轮的流式尾部，避免详情把错误 JSON 与修复 JSON 拼在一起
+          partialBuffer.reset()
           const fixPrompt =
             `你上次的输出不符合 schema 要求，错误清单:\n${(validation.errors ?? []).map((m: string, i: number) => `${i + 1}. ${m}`).join("\n")}\n\n请只输出修正后的 JSON 对象，不要任何解释文字。`
           await session.prompt(fixPrompt)
@@ -185,6 +210,11 @@ export class PiAgentAdapter implements AgentAdapter {
       }
       return fail("unknown", String((e as Error)?.message ?? e), session.sessionId)
     } finally {
+      // 无条件退订（成功/异常/取消都释放 session 监听）
+      unsubSession?.()
+      // 终态前把最后一段增量冲出去（节流窗口内的残余），随后停表
+      partialBuffer.flush()
+      partialBuffer.dispose()
       this.inflight.delete(ctx.executionId)
     }
   }

@@ -1,0 +1,48 @@
+{
+  "name": "pi-sidebar",
+  "version": "0.1.1",
+  "description": "Floating right sidebar for pi with git diff/status and session metadata.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "sidebar",
+    "git",
+    "tui"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/sidebar.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/jrimmer/pi-sidebar/main/assets/sidebar-screenshot.png"
+  },
+  "files": [
+    "LICENSE",
+    "assets",
+    "README.md",
+    "SECURITY.md",
+    "docs",
+    "extensions",
+    "tsconfig.json"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.7"
+  },
+  "scripts": {
+    "test": "vitest --run",
+    "typecheck": "tsc --noEmit",
+    "pack:dry": "npm pack --dry-run",
+    "verify": "npm run typecheck && npm test && npm run pack:dry"
+  }
+}

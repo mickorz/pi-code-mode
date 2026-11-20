@@ -10,7 +10,8 @@
  *   - workflow / workflow_control 工具（编排执行与控制）
  *   - schedule_* 工具族 ×8 + ScheduleRuntime 调度循环（M4）
  *   - /workflows、/schedule 斜杠命令
- *   - workflow-tasks TUI widget（在途 runs 实时摘要，M4）
+ *   - workflow-tasks TUI widget（在途 runs 实时摘要，M4）与 Explorer 固定面板 widget 互斥
+ *     （/explorer fixed on 切固定面板；默认 off 保持 workflow-tasks，见 explorer/fixed-panel.ts）
  *   - 全局并发闸 + 模型 tier 解析（model-tiers.json -> resolveTier）
  *
  * RunManager 模块级单例：同进程多会话共享，workflow_control 可跨会话查询/取消。
@@ -19,6 +20,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import path from "node:path"
 import { RunManager, withGlobalGate } from "../src/manager/run-manager.js"
+import { getRuntimeEventBus } from "../src/engine/events/runtime-event-bus.js"
 import { ModelPool } from "../src/engine/agent/model-pool.js"
 import { ensureModelTiersTemplate } from "../src/engine/agent/model-tiers.js"
 import { PiScheduleRunner } from "../src/manager/pi-schedule-runner.js"
@@ -41,8 +43,29 @@ import { makeScheduleTools } from "../src/tools/schedule-tools.js"
 import { createRenderScheduler } from "../src/manager/render-scheduler.js"
 import { registerWorkflowsCommand } from "./commands/workflows/index.js"
 import { registerScheduleCommand } from "./commands/schedule.js"
+import { registerExplorerCommand } from "./commands/explorer.js"
+import { toggleExplorer } from "./explorer/index.js"
+import { installExplorerStatusLine } from "./explorer/status-line.js"
+import {
+  createFixedPanel,
+  createWidgetCoordinator,
+  type WidgetSide,
+} from "./explorer/fixed-panel.js"
+import { ExplorerController } from "../src/explorer/controller/explorer-controller.js"
+import { createRunJournal } from "../src/manager/run-journal.js"
 
-const runManager = new RunManager(16)
+const runManager = new RunManager(16, getRuntimeEventBus())
+// run journal 单实例：写入方（workflow 工具 / schedule runner）与读取方（Explorer 详情）共用同一实例，
+// 否则读侧会命中陈旧内存缓存（评审修复 H1）
+const runJournal = createRunJournal(process.cwd())
+// Workflow Explorer 单实例（模块级常驻：Controller/树模型/导航状态与会话同寿，
+// Overlay 视图按需创建销毁——关闭面板不丢选中节点）
+const explorer = new ExplorerController({
+  runManager,
+  eventBus: getRuntimeEventBus(),
+  cwd: process.cwd(),
+  journal: runJournal,
+})
 // tier 配置引导（可发现性）：工程 .pi/workflows/model-tiers.json 不存在时创建带中文说明的空模板
 // （tiers 留空 = 行为与未配置等价，零语义副作用；用户照 __ 说明字段填写即可）。
 // 创建结果通过 session_start 的 ui.notify 通知（TUI 吞掉扩展 console.log，工厂期无 ctx.ui 可用）
@@ -67,6 +90,8 @@ for (const [tier, entry] of Object.entries(tiers)) {
 function makeDeps(cwd?: string): WorkflowToolDeps {
   return {
     runManager,
+    eventBus: getRuntimeEventBus(),
+    journal: runJournal,
     adapterFactory: () => withGlobalGate(new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd() }), runManager.gate),
     cwd,
     // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）；
@@ -81,10 +106,9 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
 }
 
 /** workflow-tasks widget：在途 runs 实时摘要（事件驱动，idle 零开销）
- *  数据源：RunManager.onEvent（lifecycle 微任务即时刷、progress 500ms 节流合并，替换原 2s 轮询）
- *  宿主 API：widget 挂在 ctx.ui（session_start 事件上下文），工厂期不可直接调用；
- *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 跳过注册 */
-function installTaskWidget(pi: ExtensionAPI): void {
+ *  数据源：RunManager.onEvent（lifecycle 微任务即时刷、progress 500ms 节流合并）
+ *  非 TUI 模式（print/JSON/RPC 无 UI）ctx.hasUI=false 时 install 由协调器跳过 */
+function taskWidgetSide(): WidgetSide {
   // render 运行在宿主 TUI 渲染循环内，任何异常都会击穿宿主进程（2026-11-15 实测：
   // 曾因 list() 快照的 agents 是 number 而非数组，r.agents.filter 抛 TypeError 直接
   // 杀死整个 pi 宿主）——因此整个 render 必须自防御，异常时返回空行集。
@@ -108,21 +132,40 @@ function installTaskWidget(pi: ExtensionAPI): void {
     }
   }
 
-  pi.on("session_start", (_event, ctx) => {
-    if (!ctx.hasUI) return
-    ctx.ui.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
-      // 事件驱动刷新：lifecycle 事件（started/finished/stopped）微任务即时，progress（attach）500ms 节流合并
-      const scheduler = createRenderScheduler(() => tui.requestRender())
-      const unsubscribe = runManager.onEvent((e) => scheduler.schedule(e.type === "progress" ? "progress" : "lifecycle"))
-      return {
-        render,
-        dispose: () => {
-          unsubscribe()
-          scheduler.dispose()
-        },
-      }
-    })
+  return {
+    install(ctx: any) {
+      ctx.ui.setWidget("workflow-tasks", (tui: any, _theme: unknown) => {
+        // 事件驱动刷新：lifecycle 事件（started/finished/stopped）微任务即时，progress（attach）500ms 节流合并
+        const scheduler = createRenderScheduler(() => tui.requestRender())
+        const unsubscribe = runManager.onEvent((e: any) => scheduler.schedule(e.type === "progress" ? "progress" : "lifecycle"))
+        return {
+          // 宿主 Component 契约要求；本组件按需渲染，无需缓存失效
+          invalidate: () => {},
+          render,
+          dispose: () => {
+            unsubscribe()
+            scheduler.dispose()
+          },
+        }
+      })
+    },
+    uninstall(ctx: any) {
+      ctx.ui.setWidget("workflow-tasks", undefined)
+    },
+  }
+}
+
+/** 固定面板一侧：右侧 nonCapturing overlay（不抢焦点、常驻、悬浮遮主区右侧） */
+function fixedPanelSide(): WidgetSide {
+  const panel = createFixedPanel({
+    getView: () => explorer.view(),
+    hasRunning: () => explorer.hasRunningNodes(),
+    cwd: process.cwd(),
   })
+  return {
+    install: (ctx) => panel.install(ctx),
+    uninstall: (ctx) => panel.uninstall(ctx),
+  }
 }
 
 export default function extension(pi: ExtensionAPI): void {
@@ -200,6 +243,8 @@ export default function extension(pi: ExtensionAPI): void {
     runManager,
     deliver,
     cwd: process.cwd(),
+    eventBus: getRuntimeEventBus(),
+    journal: runJournal,
     // M6-P0-3： schedule 复用 workflow 的 tier 解析与模型池（此前静默回退默认模型）
     ...(scheduleDeps.resolveTier ? { resolveTier: scheduleDeps.resolveTier } : {}),
     ...(scheduleDeps.resolveTierPool ? { resolveTierPool: scheduleDeps.resolveTierPool } : {}),
@@ -215,10 +260,42 @@ export default function extension(pi: ExtensionAPI): void {
     pi.registerTool(tool as any)
   }
 
+  // ---- A1: 全局快捷键 ctrl+b 开关 Explorer（免记命令；对齐 opencode 的 keybind 入口）----
+  // ctrl+b 在 pi 内置 keybind 中未被占用；再按一次关闭（toggle），不弹提示保持 IDE 手感
+  pi.registerShortcut("ctrl+b", {
+    description: "打开/关闭 Workflow Explorer（工作流执行观察器）",
+    handler: async (ctx: any) => {
+      if (!ctx.hasUI) return
+      try {
+        await toggleExplorer(explorer, ctx.ui)
+      } catch (e) {
+        // 快捷键回调无宿主编排兜底：异常必须自己兜住，否则打死 TUI
+        ctx.ui.notify(`Explorer 打开失败: ${String((e as Error)?.message ?? e)}`, "error")
+      }
+    },
+  })
+
+  // ---- A2: 常驻状态行（在途 run 单行进度；无在途时自动清空）----
+  let disposeStatusLine: (() => void) | undefined
+  pi.on("session_start", (_event, ctx) => {
+    if (!ctx.hasUI) return
+    disposeStatusLine?.()
+    disposeStatusLine = installExplorerStatusLine(runManager, ctx.ui)
+  })
+  pi.on("session_shutdown", () => {
+    disposeStatusLine?.()
+    disposeStatusLine = undefined
+  })
+
   // ---- 斜杠命令（实现见 extensions/commands/，一命令一文件）----
   registerWorkflowsCommand(pi, { runManager, makeDeps, deliver })
   registerScheduleCommand(pi, { scheduler })
 
-  // workflow-tasks widget（M4）：在途 runs 实时摘要
-  installTaskWidget(pi)
+  // ---- widget 互斥协调器：固定模式 on → Explorer 常驻面板；off（默认）→ workflow-tasks ----
+  const widgets = createWidgetCoordinator({ cwd: process.cwd(), taskWidget: taskWidgetSide(), fixedPanel: fixedPanelSide() })
+  pi.on("session_start", (_event, ctx) => {
+    if (!ctx.hasUI) return
+    widgets.apply(ctx)
+  })
+  registerExplorerCommand(pi, { explorer, widgets })
 }

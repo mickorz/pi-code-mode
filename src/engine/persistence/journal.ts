@@ -28,9 +28,33 @@ const SAFE_RUN_ID = /^[a-zA-Z0-9_-]+$/
 const EXECUTIONS_CAP = 10
 
 interface JournalFile {
-  version: 1
+  version: 1 | 2
   runId: string
+  /** V2：run 级元数据（全部可选；老文件无此字段） */
+  metadata?: JournalRunMetadata
+  /** V2：执行观测快照（Explorer 历史回看用；不参与回放判定） */
+  observability?: JournalObservability
   entries: Record<string, JournalEntry>
+}
+
+/** V2 run 元数据（展示层；绝不参与 agent hash 与回放策略） */
+export interface JournalRunMetadata {
+  workflowId?: string
+  workflowName?: string
+  label?: string
+  startedAt?: number
+  endedAt?: number
+  status?: string
+}
+
+/** V2 执行观测快照：run 终态时一次性写入（不写高频事件，避免热路径磁盘开销） */
+export interface JournalObservability {
+  lastSequence?: number
+  workflows?: unknown[]
+  phases?: unknown[]
+  composites?: unknown[]
+  agents?: unknown[]
+  tools?: unknown[]
 }
 
 export class JournalStore {
@@ -46,6 +70,38 @@ export class JournalStore {
   /** 加载某次 run 的 journal 为回放用的 Map；不存在返回空 Map */
   load(runId: string): Map<string, JournalEntry> {
     return new Map(Object.entries(this.read(runId).entries))
+  }
+
+  /** 只读：某条 entry（详情面板用；不改内存态、不写盘） */
+  getEntry(runId: string, key: string): JournalEntry | undefined {
+    return this.read(runId).entries[key]
+  }
+
+  /** 只读：run 级元数据（V1 文件返回 undefined） */
+  getRunMetadata(runId: string): JournalRunMetadata | undefined {
+    return this.read(runId).metadata
+  }
+
+  /** 只读：执行观测快照（V1 文件返回 undefined） */
+  getObservability(runId: string): JournalObservability | undefined {
+    return this.read(runId).observability
+  }
+
+  /**
+   * run 终态时一次性写入元数据 + 观测快照（V2；不写高频事件）。
+   * 只改 metadata/observability 两个字段，entries 原样保留（回放语义不变）。
+   */
+  recordRunSummary(runId: string, summary: { metadata?: JournalRunMetadata; observability?: JournalObservability }): void {
+    this.assertSafeRunId(runId)
+    const parsed = this.read(runId)
+    const next: JournalFile = {
+      ...parsed,
+      version: 2,
+      metadata: { ...parsed.metadata, ...summary.metadata },
+      observability: { ...parsed.observability, ...summary.observability },
+    }
+    this.cache.set(runId, next)
+    this.writeAtomic(runId, next)
   }
 
   /**
@@ -123,7 +179,14 @@ export class JournalStore {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file(runId), "utf8")) as Partial<JournalFile>
       if (raw && typeof raw === "object" && raw.entries && typeof raw.entries === "object") {
-        parsed = { version: 1, runId, entries: raw.entries }
+        // V1/V2 均读：新区块全部可选，缺失即 undefined（老文件零迁移）
+        parsed = {
+          version: raw.version === 2 ? 2 : 1,
+          runId,
+          entries: raw.entries,
+          ...(raw.metadata ? { metadata: raw.metadata } : {}),
+          ...(raw.observability ? { observability: raw.observability } : {}),
+        }
       }
     } catch {
       // 文件不存在或损坏：从空 journal 开始，不阻断运行

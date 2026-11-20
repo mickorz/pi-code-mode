@@ -37,6 +37,11 @@ interface CaseDef {
   assert: (r: WorkflowRunResult) => { ok: boolean; note: string }
 }
 
+/** structured 结果判定：schema 路径返回对象（而非字符串） */
+function structuredLike(value: unknown): boolean {
+  return typeof value === "object" && value !== null
+}
+
 function allOk(r: WorkflowRunResult): boolean {
   return r.agents.length > 0 && r.agents.every((a) => a.status === "ok")
 }
@@ -198,8 +203,32 @@ const P0B_CASES: CaseDef[] = [
   },
 ]
 
-interface CaseDef2Placeholder {}
+const G_UI = path.join(HERE, "G-ui")
+
 const CASES: CaseDef[] = [
+  {
+    // 结构化（JSON schema）结果展示验收：structured 输出落 journal + 详情渲染语义
+    key: "schema-result-view",
+    scriptPath: path.join(G_UI, "schema-result-view-test.js"),
+    cwd: REPO_ROOT, // 脚本内 runTool 用仓库根相对路径
+    assert: (r) => {
+      const res = r.result as any
+      const structuredOk =
+        structuredLike(res?.structured) &&
+        typeof res?.structured?.apiKey === "string" &&
+        Array.isArray(res?.structured?.items)
+      const bigAgent = r.agents.find((a) => a.label === "BigTextAgent")
+      const bigOk = bigAgent?.outputType === "text" && (bigAgent?.outputPreview?.length ?? 0) > 0
+      const failedTool = r.agents.find((a) => a.label?.startsWith("tool "))
+      const bigBytes = res?.bigBytes ?? 0
+      // 模型输出长度不可控：>20KB 时才真正走到渲染截断路径；不足时由单测确定性覆盖
+      const truncation = bigBytes >= 20 * 1024 ? "截断路径已触发" : "大文本未达 20KB（截断由单测覆盖）"
+      return {
+        ok: structuredOk && bigOk && res?.failedOk === false,
+        note: `structured=${structuredLike(res?.structured)} bigText=${bigBytes}B(${truncation}) toolFailure=${res?.failedOk === false}${failedTool ? "" : ""}`,
+      }
+    },
+  },
   {
     key: "smoke",
     scriptPath: path.join(HERE, "A-basic/smoke-test.js"),

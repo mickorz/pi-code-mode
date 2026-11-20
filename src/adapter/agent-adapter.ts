@@ -76,6 +76,15 @@ export function agentAdapterToRunner(adapter: AgentAdapter): AgentSessionRunner 
           if (event.type === "session-created") cb(event.sessionId)
         }
       }
+      // 方案 B：流式尾部快照透传给 Runtime（仅展示；不落盘、不进 hash）
+      if (options?.onPartial) {
+        const cb = options.onPartial
+        const prev = ctx.onEvent
+        ctx.onEvent = (event) => {
+          prev?.(event)
+          if (event.type === "partial") cb(event.text)
+        }
+      }
 
       const result = await adapter.execute(request, ctx)
 

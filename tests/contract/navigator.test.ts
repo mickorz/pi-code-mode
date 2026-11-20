@@ -39,7 +39,8 @@ test("mapKey: 方向键/回车/esc/退格归一化", () => {
   assert.equal(mapKey("\x7f"), "backspace");
   assert.equal(mapKey("x"), "x");
   assert.equal(mapKey("过"), "过");
-  assert.equal(mapKey("\x1b[Z"), "unknown");
+  assert.equal(mapKey("\x1b[Z"), "shiftTab");
+  assert.equal(mapKey("\x1b[1;5A"), "unknown");
 });
 
 // ---- 状态机：导航 ----

@@ -57,13 +57,15 @@
 	path = thirdparties/pi-web
 	url = https://github.com/jmfederico/pi-web.git
 	branch = main
+[submodule "thirdparties/pi-context-view"]
+	path = thirdparties/pi-context-view
+	url = https://github.com/dimk90/pi-context-view.git
+	branch = develop
+[submodule "thirdparties/ak-pi-workflow-roles"]
+	path = thirdparties/ak-pi-workflow-roles
+	url = https://github.com/Akagilnc/ak-pi-workflow-roles.git
+	branch = main
 [submodule "thirdparties/PrdGameSkill"]
 	path = thirdparties/PrdGameSkill
 	url = https://github.com/mickorz/PrdGameSkill.git
 	branch = main
-[submodule "thirdparties/pi-background-tasks"]
-	path = thirdparties/PrdGameSkill
-	url = https://github.com/ismailsaleekh/pi-background-tasks
-	branch = main
-
-

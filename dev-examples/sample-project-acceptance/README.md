@@ -16,7 +16,7 @@
 | `D-resume/` | D 持久化恢复（1） | journal、`resumeFromRunId`、Replay Policy | M2 |
 | `E-isolation-background/` | E 隔离与后台（2） | worktree 隔离、background、结果回传 | M3 |
 | `F-schedule/` | F 定时调度（1） | 注册表按名寻址、schedule_* 工具族 | M4 |
-| `G-ui/` | G UI 观测（14） | pi-tui widget、节点详情、checkpoint 确认 | M4 |
+| `G-ui/` | G UI 观测（16） | pi-tui widget、节点详情、checkpoint 确认、结构化结果展示（脱敏/截断/空态） | M4 |
 | `H-tiers/` | H 模型分层（1） | tier 映射与回退 | M4 |
 
 > 原仓库 `benchmarks/`（fff 搜索基准 + ps1）依赖 opencode 专用命令，不纳入验收，未复制。
@@ -37,5 +37,43 @@ npx tsx dev-examples/sample-project-acceptance/run-acceptance.ts <目录或脚�
 ```
 
 验收 runner（`run-acceptance.ts`）职责：读取脚本 → `runWorkflow`（PiAgentAdapter 真实模型）→ 按脚本类型断言 → 输出验收表。**注意**：脚本内 `agent()` 读 `docs/*.mdx` 等相对路径，runner 以 sample-project 为 cwd 执行（chain 适配版除外，自包含）。
+
+## 新增登记：subworkflow-tree-view（子 workflow 嵌套树显示）
+
+```bash
+# workflow 工具 scriptPath 后台跑（run-acceptance 接入待定，嵌套链需项目根相对路径）
+scriptPath: ./dev-examples/sample-project-acceptance/G-ui/subworkflow-tree-test.js
+```
+
+父 + 子双文件（`workflow()` 原语嵌套，scriptPath 相对项目根解析）：
+
+| 验收点 | 数据来源 |
+| --- | --- |
+| 树层级：父下挂 3 个子 workflow 节点（# 图标，缩进递增） | 串行 1 + 并行 2 |
+| 同脚本多实例不合并（label 并行A/并行B 区分） | `parallel` 双实例 |
+| 子内 phase 前缀「▸ label / 子层任务」 | 子脚本 `phase('子层任务')` |
+| childSeq 按调用序领号（wf0/wf1/wf2，不按完成序） | journal 键结构 |
+
+## 新增登记：schema-result-view（结构化结果详情展示）
+
+```bash
+npx tsx dev-examples/sample-project-acceptance/run-acceptance.ts schema-result-view
+```
+
+覆盖 Explorer 详情面板的四项结果语义（对齐 REF-001 `result-view.ts`）：
+
+| 验收点 | 数据来源 |
+| --- | --- |
+| structured pretty-print + `输出 structured` 标注 | `SchemaAgent`（`schema` 参数） |
+| 渲染期脱敏（`apiKey`/`authToken`/`dbPassword` → `[REDACTED]`） | 同上 |
+| 大文本正文换行/滚动（**截断提示不靠它触发**，见下） | `BigTextAgent` |
+| 失败节点显示 `错误: ...`（不是空白） | `runTool(probe-fail.js, timeoutMs:1)` |
+
+截断/脱敏的**确定性**断言在 `tests/contract/explorer-result-view.test.ts`（单元层），
+本脚本负责真实模型 + 真实 journal 的端到端串联。
+
+> **为什么截断不在这里验**：2026-11-19 三次实测（120/240 行两种要求），模型只照抄模板行
+> （每行 ≈ 107 字节），实产 10.9~12.8KB，稳定低于 20KB；模型也不遵守"每行接近 200 字符"。
+> 因此 `BigTextAgent` 只用于验证大文本换行与 PgUp/PgDn 滚动，截断语义交给单测。
 
 不做的事：不修改 submodule 内任何文件（只读约定见 `thirdparties/REFERENCES.md`）。

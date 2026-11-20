@@ -11,12 +11,21 @@
  */
 
 import { createLimiter, type Limiter } from "../engine/runtime/semaphore.js"
-import type { AgentRecord } from "../engine/types/index.js"
+import type {
+  AgentRecord,
+  CompositeRecord,
+  PhaseExecutionRecord,
+  ToolExecutionRecord,
+  WorkflowExecutionRecord,
+} from "../engine/types/index.js"
+import type { RuntimeEventBus } from "../engine/events/runtime-event-bus.js"
+import type { WorkflowRuntimeEvent } from "../engine/events/workflow-events.js"
 
 export type RunStatus = "running" | "completed" | "failed" | "cancelled"
 
-/** run 事件类型：started=注册、progress=节点更新（attach）、finished=终态、stopped=手动取消 */
-export type RunEventType = "started" | "progress" | "finished" | "stopped"
+/** run 事件类型：started=注册、progress=节点高频更新（attach/agent.updated）、
+ *  lifecycle=结构性变化（agent 起止、workflow/phaze/composite/tool 起止）、finished=终态、stopped=手动取消 */
+export type RunEventType = "started" | "progress" | "lifecycle" | "finished" | "stopped"
 
 export interface RunEvent {
   runId: string
@@ -35,10 +44,23 @@ export interface ManagedRun {
   controller: AbortController
   /** onAgentUpdate 收集的节点快照（终态保留供 status 查询） */
   agents: AgentRecord[]
+  /** 以下为 Explorer 观测层（M2 扩展；全部由 attachEvent 增量维护） */
+  workflows: WorkflowExecutionRecord[]
+  composites: CompositeRecord[]
+  tools: ToolExecutionRecord[]
+  phases: PhaseExecutionRecord[]
+  /** 已接收的最大 Runtime 事件 sequence（0 = 无事件；用于旧事件丢弄） */
+  lastSequence: number
   finishedAt?: number
   error?: string
   resultPreview?: string
 }
+
+/** 实时快照（Explorer 的唯一数据源；渲染不重放历史事件） */
+export type RunSnapshot = Pick<
+  ManagedRun,
+  "runId" | "status" | "label" | "startedAt" | "finishedAt" | "lastSequence" | "agents" | "workflows" | "composites" | "tools" | "phases"
+>
 
 /** 终态 run 的保留上限（防内存无界；只留摘要） */
 const RECENT_KEEP = 20
@@ -50,8 +72,14 @@ export class RunManager {
   /** 全局 Agent 并发闸：wrap(adapter) 后所有 dispatch 过闸排队 */
   readonly gate: Limiter
 
-  constructor(maxConcurrent = 16) {
+  constructor(
+    maxConcurrent = 16,
+    /** 可选事件总线：传入后 run 生命周期的 started/finished 会作为 Runtime 事件下发（M1/M2 接线） */
+    private readonly eventBus?: RuntimeEventBus,
+  ) {
     this.gate = createLimiter(maxConcurrent)
+    // 总线 → 快照的唯一入口（构造期订阅，保证同进程恰好一份订阅；旧事件由 attachEvent 内 sequence 去重）
+    this.eventBus?.subscribe((event) => this.attachEvent(event))
   }
 
   /**
@@ -84,6 +112,11 @@ export class RunManager {
       status: "running",
       controller,
       agents: [],
+      workflows: [],
+      composites: [],
+      tools: [],
+      phases: [],
+      lastSequence: 0,
     }
     if (options?.externalSignal) {
       if (options.externalSignal.aborted) controller.abort()
@@ -91,7 +124,69 @@ export class RunManager {
     }
     this.runs.set(runId, run)
     this.emit("started", runId)
+    this.eventBus?.publish({ runId, type: "run.started", payload: { label: run.label, startedAt: run.startedAt } })
     return run
+  }
+
+  /**
+   * Runtime 统一事件入口（M2）：按 sequence 去重 → 更新对应节点 → 更新编号快照 → 通知订阅者。
+   *
+   * 语义：
+   *   - 旧事件（sequence <= lastSequence）直接丢弃，避免晚到事件回退节点状态
+   *   - 节点按稳定身份 upsert（不按数组下标，不受并发完成顺序影响）
+   *   - 仅 agent.updated 被归为 progress（高频节流）；其余为 lifecycle（即时渲染）
+   *   - 未知 run / 已终态 run 的事件静默丢弃（UI 不得反向影响 Runtime）
+   */
+  attachEvent(event: WorkflowRuntimeEvent): void {
+    const run = this.runs.get(event.runId)
+    if (!run) return
+    if (event.sequence <= run.lastSequence) return
+    run.lastSequence = event.sequence
+    switch (event.type) {
+      case "workflow.started":
+      case "workflow.finished":
+        upsert(run.workflows, event.payload as WorkflowExecutionRecord, (w) => w.scopePath.join("/"))
+        break
+      case "phase.started":
+      case "phase.finished":
+        upsert(run.phases, event.payload as PhaseExecutionRecord, (p) => p.phaseId)
+        break
+      case "agent.started":
+      case "agent.updated":
+      case "agent.finished":
+        upsert(run.agents, event.payload as AgentRecord, (a) => a.id)
+        break
+      case "composite.started":
+      case "composite.finished":
+        upsert(run.composites, event.payload as CompositeRecord, (c) => `${c.scopePath.join("/")}#${c.id}`)
+        break
+      case "tool.started":
+      case "tool.finished":
+        upsert(run.tools, event.payload as ToolExecutionRecord, (t) => t.toolId)
+        break
+      default:
+        break
+    }
+    this.emit(event.type === "agent.updated" ? "progress" : "lifecycle", event.runId)
+  }
+
+  /** 实时快照（含全部节点数组的浅拷贝；不存在返回 null） */
+  getSnapshot(runId: string): RunSnapshot | null {
+    const run = this.status(runId)
+    if (!run) return null
+    return {
+      runId: run.runId,
+      status: run.status,
+      label: run.label,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      lastSequence: run.lastSequence,
+      agents: [...run.agents],
+      workflows: [...run.workflows],
+      composites: [...run.composites],
+      tools: [...run.tools],
+      phases: [...run.phases],
+    }
   }
 
   /** onAgentUpdate 透传：进度快照（供 status 查询） */
@@ -116,6 +211,11 @@ export class RunManager {
     this.recent.unshift(run)
     if (this.recent.length > RECENT_KEEP) this.recent.length = RECENT_KEEP
     this.emit("finished", runId, run.status)
+    this.eventBus?.publish({
+      runId,
+      type: "run.finished",
+      payload: { status: run.status, error: run.error, finishedAt: run.finishedAt },
+    })
   }
 
   /** 全部 run（在途优先 + 终态 recent）摘要 */
@@ -145,6 +245,14 @@ export class RunManager {
     this.emit("stopped", runId)
     return true
   }
+}
+
+/** 按稳定身份 upsert（同 id 后到者覆盖；不按数组下标，不受完成顺序影响） */
+function upsert<T>(list: T[], item: T, identity: (value: T) => string): void {
+  const key = identity(item)
+  const idx = list.findIndex((v) => identity(v) === key)
+  if (idx >= 0) list[idx] = item
+  else list.push(item)
 }
 
 /** 全局闸包装：所有 Agent dispatch 过 limiter 排队（cancel 等其余方法原样保留） */
