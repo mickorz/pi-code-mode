@@ -7,6 +7,12 @@
  *   - unregister|unreg 后：注册表 workflowId
  *   - watch/status/cancel|stop 后：RunManager 里的 runId（在途 + 最近终态，带状态描述）
  *
+ * 契约（宿主 CombinedAutocompleteProvider）：prefix 是**整段参数文本**（不含命令名本身），
+ * 选中补全项时宿主用 item.value **整段替换** prefix（beforePrefix + value + afterCursor），
+ * 只把 item.label 当展示文本。因此 value 必须是完整参数串（如 "unreg smoke_test"），
+ * 返回裸 token（"smoke_test"）会把已输入的 unreg/run 一起顶掉——这是 2026-11-20 的线上 bug。
+ * 子命令项 value 带尾随空格，便于 Tab 后继续补第二个参数（与宿主内置 /mcp 补全同款）。
+ *
  * 纯函数，可测；注册表读取失败时返回空表（补全是输入辅助，不因坏脚本阻塞打字）。
  */
 
@@ -35,20 +41,23 @@ export interface CompletionDeps {
   cwd: string
 }
 
+/** 带位置前缀的补全项：value 为完整参数串（宿主整段替换用），label 仅展示 */
+function argItem(value: string, label: string, description: string): AutocompleteItem {
+  return { value, label, description }
+}
+
 export function completeWorkflowsArgs(prefix: string, deps: CompletionDeps): AutocompleteItem[] {
   const tokens = prefix.split(/\s+/).filter(Boolean)
   const endsWithSpace = /\s$/.test(prefix)
   const head = tokens[0] ?? ""
 
   // 位置 1：还没敲空格 → 仍在输入子命令名。
-  // 注意不能以「是否等于已知子命令」判定：否则敲完 unreg/run 但没空格时，补全会直接
-  // 跳到位置 2 返回 workflowId，宿主接受补全项时把整段参数替换掉（表现为 unreg 被“吃掉”）。
+  // 判定只看「是否已敲空格 / 是否只有首 token」，不能以「是否等于已知子命令」判定，
+  // 否则敲完 unreg/run 但没空格时会提前跳到位置 2 返回 workflowId。
   if (!endsWithSpace && tokens.length <= 1) {
-    return KNOWN_SUBCOMMANDS.filter((k) => k.startsWith(head)).map((k) => ({
-      value: k,
-      label: k,
-      description: SUB_DESCRIPTIONS[k],
-    }))
+    return KNOWN_SUBCOMMANDS.filter((k) => k.startsWith(head)).map((k) =>
+      argItem(`${k} `, k, SUB_DESCRIPTIONS[k]),
+    )
   }
 
   const partial = endsWithSpace ? "" : (tokens[1] ?? "")
@@ -62,7 +71,7 @@ export function completeWorkflowsArgs(prefix: string, deps: CompletionDeps): Aut
         const verb = head === "unreg" || head === "unregister" ? "注销" : "执行/注册"
         return Array.from(loadRegistry(deps.cwd).keys())
           .filter((id) => id.startsWith(partial))
-          .map((id) => ({ value: id, label: id, description: `注册表工作流（${verb}）` }))
+          .map((id) => argItem(`${head} ${id}`, id, `注册表工作流（${verb}）`))
       }
       case "watch":
       case "status":
@@ -71,11 +80,13 @@ export function completeWorkflowsArgs(prefix: string, deps: CompletionDeps): Aut
         return deps.runManager
           .list()
           .filter((r) => r.runId.startsWith(partial))
-          .map((r) => ({
-            value: r.runId,
-            label: r.runId,
-            description: `${r.status}${r.label ? ` ${r.label}` : ""} agents=${r.agents}`,
-          }))
+          .map((r) =>
+            argItem(
+              `${head} ${r.runId}`,
+              r.runId,
+              `${r.status}${r.label ? ` ${r.label}` : ""} agents=${r.agents}`,
+            ),
+          )
       }
     }
   } catch {
