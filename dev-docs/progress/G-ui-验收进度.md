@@ -29,6 +29,14 @@
 - contract `explorer-result-view.test.ts` 升至 **11/11**（上次 9/9，其间补 2 个真实数据回归：失败节点 error 状态、工具节点显示错误而非「无结果返回」），本 run 数据下全部通过。
 - 保留点 3 不变：模型输出仍 5.4KB 未触发实机截断，contract 用例兜底。
 
+### 2026-11-20 schema-result-view 复跑（run `run-1795143288997-5ssy9q`）：✅ 通过（保留点同上）
+
+第三次后台 run：2 agent + 1 tool 节点，53.0s。结果形态与前两次一致：`structured` schema 合规 + `bigBytes=5411`（120 行固定格式，与上次完全相同）+ `failedOk=false`（`onFailure: 'return'` 预期）。journal 落盘 `.pi/workflows/journal/run-1795143288997-5ssy9q.json`。增量核验：
+
+- journal `entries` 原值保留（`demo-key-123`/`token-abc`/`pwd-000`），entries 中零 REDACTED；`[REDACTED]` 全文恰好出现 3 次（三个敏感字段各一次），全部位于 `observability` 预览层，验收点 2/5 第三次复验一致。
+- contract `explorer-result-view.test.ts` 11/11 通过（含 E2E pretty-print+脱敏、工具失败节点显示错误原因两条真实数据回归）。
+- 保留点 3 不变：模型输出仍 5.4KB 未触发实机 20KB 截断，contract 用例兜底。
+
 ### 2026-11-19 subworkflow-tree-view（run `run-1795076191834-w6opf2`）：✅ 通过（目视部分待人工）
 
 新增脚本 `G-ui/subworkflow-tree-test.js` + `subworkflow-child.js`（父 + 子双文件，workflow() 原语嵌套，scriptPath 相对项目根解析）。后台 run 7s：父 RootAgent + 串行子流程 + 并行 A/B（同脚本双实例）。
