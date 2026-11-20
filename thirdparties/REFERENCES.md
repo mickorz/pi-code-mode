@@ -26,6 +26,7 @@
 | REF-018 | ak-pi-workflow-roles | https://github.com/Akagilnc/ak-pi-workflow-roles.git | thirdparties/ak-pi-workflow-roles | fbe6c7c15b4e5acb34d09796af7af9bbf9080c3f | Apache-2.0 | 方法论参考：AI 编码治理层（七个带门禁角色、类型化提交、独立审计席位、无 runner 的组合式设计）；只读研究，集成前再评估 | 2026-11-19 引入。多角色门禁治理形态与本包 workflow 编排/审计方向对照 |
 | REF-019 | open-vibecoding | https://github.com/mileson/open-vibecoding.git | thirdparties/open-vibecoding | 0468ec937386e0fdccb093c8a81bf50f63fb4a57 | MIT | 方法论参考：编码 Agent 能力编排框架（按任务组合产品/设计/研发/测试 Skill、项目指引与资料绑定、交付验证闭环）；只读研究，集成前再评估 | 2026-11-19 引入。Skill 选用与任务交付验证的组织形态与本包 workflow 编排/能力画册方向对照 |
 | REF-020 | pi-superagent | https://github.com/aicodewith-team/pi-superagent.git | thirdparties/pi-superagent | fd939379f728cb203bc04a098b59d0309d119ea6 | MIT | 方法论参考：DeepSeek dsh-superagent-prototype 的 pi 扩展移植（主动式单仓库编码 agent + 独立 subagent 模式、最小人工注意力原则）；只读研究，集成前再评估 | 2026-11-19 引入。主动式 agent 触发/发言策略与 subagent 会话形态与本包 workflow 编排/子代理方向对照 |
+| REF-021 | pi-percy | https://github.com/ghoseb/pi-percy.git | thirdparties/pi-percy | a67c3a2340e3e19a46322f4127cf89ef2bd4dee8 | MIT | 方法论参考：pi 上下文自压缩扩展（旧 tool output 替换为指针、旧消息段替换为摘要、recall 检索回读，永久 session 条目）；只读研究，集成前再评估 | 2026-11-19 引入。长会话上下文治理（compaction/recall）与本包 workflow 观测/上下文管理方向对照 |
 
 ## Submodule 引入与登记流程
 

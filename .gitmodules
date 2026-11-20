@@ -77,3 +77,7 @@
 	path = thirdparties/pi-superagent
 	url = https://github.com/aicodewith-team/pi-superagent.git
 	branch = main
+[submodule "thirdparties/pi-percy"]
+	path = thirdparties/pi-percy
+	url = https://github.com/ghoseb/pi-percy.git
+	branch = main
