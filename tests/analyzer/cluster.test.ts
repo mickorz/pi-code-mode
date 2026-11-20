@@ -99,3 +99,23 @@ test("clusterFindings：保留建议与代表代码片段", () => {
 test("clusterFindings：空输入返回空数组", () => {
   assert.deepEqual(clusterFindings([]), [])
 })
+
+// ---- 置信度的人话解释（用户反馈「置信度很难理解」）----
+import { confidenceText, describeConfidence } from "../../src/engine/analyzer/report-builder.js"
+
+test("describeConfidence：四档语义与应用指引", () => {
+  assert.equal(describeConfidence(0.95).label, "确定")
+  assert.equal(describeConfidence(0.85).label, "确定")
+  assert.equal(describeConfidence(0.84).label, "很可能")
+  assert.equal(describeConfidence(0.7).label, "很可能")
+  assert.equal(describeConfidence(0.69).label, "待确认")
+  assert.equal(describeConfidence(0.5).label, "待确认")
+  assert.equal(describeConfidence(0.49).label, "仅提示")
+  // 阈值 0.5 必须与 riskScore() 的计分门槛一致，否则「仅提示」会被计入风险分
+  assert.match(describeConfidence(0.49).hint, /不计入风险分/)
+})
+
+test("confidenceText：数字 + 中文标签，便于非专业读者理解", () => {
+  assert.equal(confidenceText(0.8), "0.80（很可能）")
+  assert.equal(confidenceText(0.4), "0.40（仅提示）")
+})

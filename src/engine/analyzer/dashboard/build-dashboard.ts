@@ -15,7 +15,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { clusterFindings, type AnalysisReport } from "../report-builder.js"
+import { clusterFindings, describeConfidence, type AnalysisReport } from "../report-builder.js"
 
 /** Dashboard 视图模型：模板 __REPORT_JSON__ 的唯一内容 */
 export interface DashboardView {
@@ -60,6 +60,8 @@ export interface DashboardView {
     /** AI 复核结论（未启用时缺省） */
     aiStatus?: string
     aiConfidence?: number
+    /** AI 置信度的人话标签 */
+    aiConfLabel?: string
     finalStatus?: string
     note?: string
   }>
@@ -99,6 +101,9 @@ export interface DashboardView {
     moreLocations: number
     evidence: string[]
     confidence: number
+    /** 人话标签：确定 / 很可能 / 待确认 / 仅提示 */
+    confLabel: string
+    confHint: string
     suggestion?: string
     snippet?: string
   }>
@@ -168,7 +173,9 @@ export function buildDashboardView(
         status: r.status,
         ...(r.error ? { error: r.error } : {}),
         ...(merged?.aiStatus ? { aiStatus: merged.aiStatus } : {}),
-        ...(merged?.aiConfidence !== undefined ? { aiConfidence: merged.aiConfidence } : {}),
+        ...(merged?.aiConfidence !== undefined
+          ? { aiConfidence: merged.aiConfidence, aiConfLabel: describeConfidence(merged.aiConfidence).label }
+          : {}),
         ...(merged?.finalStatus ? { finalStatus: merged.finalStatus } : {}),
         ...(merged?.note ? { note: merged.note } : {}),
       }
@@ -204,6 +211,8 @@ export function buildDashboardView(
       moreLocations: c.moreLocations,
       evidence: c.evidence,
       confidence: c.confidence,
+      confLabel: describeConfidence(c.confidence).label,
+      confHint: describeConfidence(c.confidence).hint,
       ...(c.suggestion ? { suggestion: c.suggestion } : {}),
       ...(c.snippet ? { snippet: c.snippet } : {}),
     })),

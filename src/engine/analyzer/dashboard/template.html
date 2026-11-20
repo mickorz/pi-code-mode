@@ -262,6 +262,8 @@
         '<span class="track"><span class="fill" style="width:' + pct + '%;background:' + SEV_COLOR[s] + '"></span></span>' +
         '<span class="val">' + n + ' · ' + pct.toFixed(1) + '%</span></div>';
     }).join('');
+    h += '<div class="note"><b>关于「置信度」</b>：表示这条判断有多可信（0~1，越大越可信）。' +
+      '≥0.85 确定、≥0.7 很可能、≥0.5 待确认（需人工判断）、<b>&lt;0.5 仅提示</b>（不计入风险分，只作检查线索）。</div>';
     h += '<div class="card"><h2>严重度分布（点击筛选问题列表）</h2>' + (rows || '<div class="empty">无问题</div>') + '</div>';
 
     // 规则命中分布
@@ -334,6 +336,7 @@
         h += '<details' + (c.status === 'hit' ? ' open' : '') + '><summary>' +
           tag(c.status === 'hit' ? 'ai' : (c.status === 'error' ? 'err' : 'hit'), c.status) +
           ' <code>' + esc(c.ruleId) + '</code> <span class="muted">置信度 ' + c.confidence.toFixed(2) +
+          (c.confLabel ? '（' + esc(c.confLabel) + '）' : '') +
           ' · 证据 ' + c.evidence.length + ' 条</span></summary>' +
           (c.reason ? '<div>' + esc(c.reason) + '</div>' : '') +
           (c.error ? '<div class="muted">' + esc(c.error) + '</div>' : '') +
@@ -377,8 +380,9 @@
       var title = c.ruleId + (c.count > 1 ? ' · ' + c.count + ' 处同类问题' : '');
       h += '<details' + (i < 3 ? ' open' : '') + '><summary>' + sevTag(c.severity) + ' <code>' + esc(c.ruleId) + '</code> ' +
         '<b>' + esc(title) + '</b> <span class="muted">置信度 ' + c.confidence.toFixed(2) +
-        (c.confidence < 0.5 ? '（提示性，不计入风险分）' : '') +
-        ' · ' + c.files.length + ' 个文件</span></summary>';
+        '（' + esc(c.confLabel || '') + '）' +
+        ' · ' + c.files.length + ' 个文件</span></summary>' +
+        (c.confHint ? '<div class="muted" style="margin-top:4px">' + esc(c.confHint) + '</div>' : '');
       h += '<div style="margin:8px 0 4px"><b>位置：</b>' + c.locations.map(function (l) {
         return '<code>' + esc(l) + '</code>';
       }).join(' ') + (c.moreLocations > 0 ? ' <span class="muted">（另有 ' + c.moreLocations + ' 处）</span>' : '') + '</div>';

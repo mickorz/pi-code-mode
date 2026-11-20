@@ -76,6 +76,29 @@ export function clusterKeyOf(f: AnalysisFindingWithSnippet): string {
   return f.ruleId
 }
 
+/**
+ * 置信度的**人话解释**（用户反馈「置信度很难理解是什么东西」）。
+ *
+ * 0.70 这种数字对读者没有决策含义。这里把它翻译成「这条判断有多可信」+「该怎么用」：
+ *  - 确定：依据充分，可直接按建议改
+ *  - 很可能：依据较强，建议核对一眼后改
+ *  - 待确认：依据一般，必须人工判断（可能误报）
+ *  - 仅提示：依据不足，只作检查线索，**不计入风险分**
+ *
+ * 阈值 0.5 与 riskScore() 的计分门槛一致（<0.5 不计分），不要改单边。
+ */
+export function describeConfidence(c: number): { label: string; hint: string } {
+  if (c >= 0.85) return { label: "确定", hint: "依据充分，可直接按建议改" }
+  if (c >= 0.7) return { label: "很可能", hint: "依据较强，核对一眼后改" }
+  if (c >= 0.5) return { label: "待确认", hint: "依据一般，需人工判断（可能误报）" }
+  return { label: "仅提示", hint: "依据不足，仅作检查线索，不计入风险分" }
+}
+
+/** 报告/Dashboard 通用的一行式描述：0.70（很可能） */
+export function confidenceText(c: number): string {
+  return `${c.toFixed(2)}（${describeConfidence(c).label}）`
+}
+
 const SEVERITY_WEIGHT: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 }
 
 /**
@@ -403,6 +426,13 @@ export function renderMarkdown(report: AnalysisReport): string {
       `- **问题口径: 入口 ${entryCount} 条 + 子 workflow ${subOnly} 条 = 聚合 ${report.summary.totalFindings} 条**`,
     )
   }
+
+  // 置信度是全文出现频率最高的数字，首次出现前必须先解释清楚它是什么
+  lines.push("")
+  lines.push(
+    "> **关于「置信度」**：表示这条判断有多可信（0~1 之间，越大越可信）。" +
+      "≥0.85 确定、≥0.7 很可能、≥0.5 待确认（需人工判断）、**<0.5 仅提示（不计入风险分，只作检查线索）**。",
+  )
   lines.push("")
   lines.push("## 调用结构")
   lines.push("")
@@ -440,7 +470,7 @@ export function renderMarkdown(report: AnalysisReport): string {
     }
     const merged = report.ruleMerge?.find((m) => m.ruleId === r.id)
     const aiCell = merged?.aiStatus
-      ? `${merged.aiStatus}${merged.aiConfidence !== undefined ? ` (${merged.aiConfidence.toFixed(2)})` : ""}`
+      ? `${merged.aiStatus}${merged.aiConfidence !== undefined ? `（${describeConfidence(merged.aiConfidence).label}）` : ""}`
       : "未启用"
     const finalCell = merged?.finalStatus ?? "-"
     lines.push(`| \`${r.id}\` | ${r.severity} | ${status} | ${aiCell} | ${finalCell} | ${r.description} |`)
@@ -465,7 +495,7 @@ export function renderMarkdown(report: AnalysisReport): string {
     lines.push("")
     for (const c of rc.checks) {
       if (c.status === "pass" || c.status === "not-applicable") continue
-      lines.push(`### ${c.status.toUpperCase()} \`${c.ruleId}\`（置信度 ${c.confidence.toFixed(2)}）`)
+      lines.push(`### ${c.status.toUpperCase()} \`${c.ruleId}\`（置信度 ${confidenceText(c.confidence)}）`)
       lines.push("")
       if (c.error) lines.push(`- 错误：${c.error}`)
       if (c.reason) lines.push(`- 判定依据：${c.reason}`)
@@ -497,7 +527,8 @@ export function renderMarkdown(report: AnalysisReport): string {
     const title = c.count > 1 ? `${c.ruleId} · ${c.count} 处同类问题` : c.ruleId
     lines.push(`### ${i + 1}. ${title}`)
     lines.push("")
-    lines.push(`- 严重度: ${c.severity} / 置信度: ${c.confidence.toFixed(2)}${c.confidence < 0.5 ? "（提示性，不计入风险分）" : ""}`)
+    const conf = describeConfidence(c.confidence)
+    lines.push(`- 严重度: ${c.severity} / 置信度: ${confidenceText(c.confidence)} — ${conf.hint}`)
     if (c.files.length > 0) {
       lines.push(`- 涉及文件: ${c.files.slice(0, 8).join(", ")}${c.files.length > 8 ? ` 等 ${c.files.length} 个` : ""}`)
     }
