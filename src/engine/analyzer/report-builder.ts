@@ -387,9 +387,9 @@ export function renderMarkdown(report: AnalysisReport): string {
   lines.push("")
   lines.push(`- analyzer ${report.analyzerVersion} / ruleSet ${report.ruleSetVersion}`)
   lines.push(`- sourceHash: \`${report.sourceHash.slice(0, 23)}…\``)
-  lines.push(`- **入口风险分: ${report.summary.riskScore}/100**`)
+  lines.push(`- 入口风险: **${report.summary.riskScore}%**`)
   if (report.aggregateRiskScore !== undefined) {
-    lines.push(`- **聚合风险分: ${report.aggregateRiskScore}/100**（取最危险单文件，不求和）`)
+    lines.push(`- 最高单文件风险: **${report.aggregateRiskScore}%**（聚合口径，不求和）`)
   }
   if (report.subtree && report.subtree.files > 1) {
     const entryCount = report.entry?.totalFindings ?? report.summary.totalFindings

@@ -22,12 +22,17 @@
     --radius: 12px;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* 竖屏 / 移动端：显式声明最小高度与可滚动，避免某些浏览器把内容底部裁在视口外 */
+  html { min-height: 100%; }
   body {
     background: var(--bg);
     color: var(--text);
     font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
     font-size: 14px;
     line-height: 1.6;
+    min-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   header { max-width: 1440px; margin: 0 auto; padding: 24px 32px 0; }
   h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
@@ -49,7 +54,8 @@
   nav button:hover { border-color: var(--primary); color: var(--primary); }
   nav button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 
-  main { max-width: 1440px; margin: 0 auto; padding: 0 32px 48px; }
+  main { max-width: 1440px; margin: 0 auto; padding: 0 32px 64px;
+    padding-bottom: max(64px, calc(32px + env(safe-area-inset-bottom))); }
   section { display: none; }
   section.active { display: block; }
 
@@ -67,6 +73,10 @@
     padding: 20px 24px;
   }
   .kpi .v { font-size: 34px; font-weight: 700; line-height: 1.2; }
+  .kpi .v.c-ok { color: #2F9E5B; }
+  .kpi .v.c-low { color: var(--p2); }
+  .kpi .v.c-mid { color: #C07A00; }
+  .kpi .v.c-high { color: var(--p0); }
   .kpi .l { font-size: 13px; color: var(--muted); margin-top: 2px; }
 
   /* 进度条 */
@@ -151,9 +161,18 @@
     h1 { font-size: 18px; }
     .kpis { grid-template-columns: repeat(2, 1fr); gap: 12px; }
     .card { padding: 16px; }
+    .bar-row { flex-wrap: wrap; }
     .bar-row .bl { width: 76px; }
-    .bar-row .val { width: 84px; }
+    .bar-row .val { width: auto; min-width: 84px; }
     .rec dl { grid-template-columns: 1fr; }
+    /* 表格转卡片：竖屏下宽表格会把内容挤出可视区（参考模板同款处理） */
+    table, tbody, tr, td { display: block; width: 100%; }
+    thead { display: none; }
+    tbody tr { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; padding: 10px 12px; }
+    tbody tr:hover { background: #fff; }
+    tbody td { border: none; padding: 3px 0; }
+    details { padding: 10px 12px; }
+    nav button { padding: 8px 16px; font-size: 14px; }
   }
 </style>
 </head>
@@ -207,8 +226,16 @@
   // ---------- 概览 ----------
   (function () {
     var e = D.estimate;
+    // 风险用百分比：0-100 分值本质就是百分比刻度，"8/100" 不如 "8%" 直观。
+    // 主数字用**聚合风险**（取最危险单文件）——入口风险常远低于实际，
+    // 只显示入口会让用户低估问题（实测入口 8% vs 聚合 14%）。
+    var riskPct = D.meta.aggregateRiskScore !== undefined ? D.meta.aggregateRiskScore : D.meta.riskScore
+    var riskClass = riskPct >= 50 ? 'c-high' : riskPct >= 25 ? 'c-mid' : riskPct >= 10 ? 'c-low' : 'c-ok'
+    var riskLabel = D.meta.aggregateRiskScore !== undefined
+      ? '最高单文件风险' + (D.meta.entryRiskScore !== undefined ? '（入口 ' + D.meta.entryRiskScore + '%）' : '')
+      : '风险分'
     var kpis = [
-      { v: D.meta.riskScore, l: '风险分 / 100' },
+      { v: riskPct + '%', l: riskLabel, cls: riskClass },
       { v: D.summary.totalFindings, l: '问题条数' },
       { v: e.callSites, l: '调用点（agent ' + e.agentCallSites + '）' },
       { v: e.estimatedTasks + (e.determined ? '' : '↓'), l: '估算任务量' + (e.determined ? '' : '（下限）') },
@@ -220,7 +247,8 @@
     if (e.dynamicNodes > 0) kpis.push({ v: e.dynamicNodes, l: '动态节点（静态不可知）' });
 
     var h = '<div class="kpis">' + kpis.map(function (k) {
-      return '<div class="kpi"><div class="v">' + esc(k.v) + '</div><div class="l">' + esc(k.l) + '</div></div>';
+      return '<div class="kpi"><div class="v' + (k.cls ? ' ' + k.cls : '') + '">' + esc(k.v) +
+        '</div><div class="l">' + esc(k.l) + '</div></div>';
     }).join('') + '</div>';
 
     // 严重度分布

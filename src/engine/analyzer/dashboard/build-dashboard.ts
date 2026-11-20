@@ -34,6 +34,8 @@ export interface DashboardView {
     entryFindings?: number
     /** 聚合风险分（取最危险单文件） */
     aggregateRiskScore?: number
+    /** 入口文件自身风险分（跨文件分析时与聚合风险区分） */
+    entryRiskScore?: number
   }
   estimate: {
     callSites: number
@@ -141,6 +143,7 @@ export function buildDashboardView(
       ...(opts.aiSummary ? { aiSummary: opts.aiSummary } : {}),
       ...(report.entry ? { entryFindings: report.entry.totalFindings } : {}),
       ...(report.aggregateRiskScore !== undefined ? { aggregateRiskScore: report.aggregateRiskScore } : {}),
+      entryRiskScore: report.summary.riskScore,
     },
     estimate: {
       callSites: report.executionEstimate.callSites,
