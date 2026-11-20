@@ -101,9 +101,20 @@ test("配置: 非法值回退默认（enabled 非 true 一律关、anchor 白名
 
 // ── 渲染 ──
 
-test("渲染: 无 running run 返回空行集（空态策略继承 workflow-tasks）", () => {
+test("渲染: 常驻语义——无 running run 也显示（终态树不隐藏）", () => {
   const lines = fixedPanelLines(viewState(3, false), 80, 10, 5000, identityTheme)
-  assert.deepEqual(lines, [])
+  assert.ok(lines.length > 0, "常驻面板不应随 run 结束隐藏")
+  assert.ok(lines[0].includes("demo_run"), `头行应显示最近 run：${lines[0]}`)
+})
+
+test("渲染: 完全无数据时显示占位提示（不隐藏）", () => {
+  const v = viewState(0, false)
+  v.runs = []
+  v.rows = []
+  const lines = fixedPanelLines(v, 80, 10, 5000, identityTheme)
+  assert.equal(lines.length, 2)
+  assert.ok(lines[0].includes("无在途 workflow"), `头行应为占位：${lines[0]}`)
+  assert.ok(lines[1].includes("workflow 运行时这里显示执行树"), `应有占位提示：${lines[1]}`)
 })
 
 test("渲染: 有 running run 输出 run 头 + 执行树行（run 节点也是一行），节点行带图标与状态", () => {
@@ -122,10 +133,12 @@ test("渲染: 超出 maxRows 折叠为 …共 N 节点 尾行", () => {
   assert.ok(lines[3].includes(foldLine(12)), `折叠行应标注总行数：${lines[3]}`)
 })
 
-test("渲染: 空态 runs 空但 rows 非空也隐藏（防御）", () => {
+test("渲染: runs 空但 rows 非空仍显示树（常驻，runs 数据缺失不阻断）", () => {
   const v = viewState(2, true)
   v.runs = []
-  assert.deepEqual(fixedPanelLines(v, 80, 10, 5000, identityTheme), [])
+  const lines = fixedPanelLines(v, 80, 10, 5000, identityTheme)
+  assert.ok(lines.length > 0)
+  assert.ok(lines[0].includes("无在途 workflow"))
 })
 
 // ── 互斥协调器 ──

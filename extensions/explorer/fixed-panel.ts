@@ -13,7 +13,6 @@
  */
 
 import fs from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import { truncateToWidth } from "@earendil-works/pi-tui"
 import type { ExplorerViewState } from "../../src/explorer/controller/explorer-controller.js"
@@ -78,17 +77,18 @@ export function foldLine(total: number): string {
 
 /**
  * 固定面板行集：run 头 1 行 + 执行树行（全展开、无选中），超出 maxRows 折叠。
- * 空态策略继承 workflow-tasks：无 running run 时返回空数组——overlay 渲染零行即视觉不可见
- * （run 结束不常驻占屏；终态 run 到 Ctrl+B overlay 查看）。
+ * 常驻语义：开启后一直显示——无 run 时显示占位提示（不隐藏）；run 结束后显示终态树。
  * 纯函数：now 注入供测试确定秒表值。
  */
 export function fixedPanelLines(view: ExplorerViewState, width: number, maxRows: number, now: number, theme: ThemeLike): string[] {
-  if (!view.rows.length || !view.runs.some((r) => r.status === "running")) return []
   const depths = depthMapOf(view.rows)
-  const body = view.rows.map((n) => renderTreeRow(n, depths.get(n.nodeKey) ?? 0, width, false, true, theme, now))
   const activeRun = view.runs.find((r) => r.runId === view.activeRunId) ?? view.runs[0]
-  const header = activeRun ? `${activeRun.label ?? activeRun.runId}（${activeRun.agentsDone}/${activeRun.agentsTotal}）` : "（无 run）"
+  const header = activeRun
+    ? `${activeRun.label ?? activeRun.runId}（${activeRun.agentsDone}/${activeRun.agentsTotal}）`
+    : "无在途 workflow"
+  const body = view.rows.map((n) => renderTreeRow(n, depths.get(n.nodeKey) ?? 0, width, false, true, theme, now))
   const lines = [header, ...body]
+  if (!view.rows.length) lines.push(theme.fg("muted", "  （workflow 运行时这里显示执行树）"))
   if (lines.length <= maxRows) return lines.map((l) => truncateToWidth(l, width))
   const shown = lines.slice(0, maxRows - 1).map((l) => truncateToWidth(l, width))
   shown.push(truncateToWidth(`  ${foldLine(lines.length)}`, width))
@@ -130,24 +130,9 @@ export function createFixedPanel(deps: FixedPanelDeps): FixedPanelHandle {
           const tl = themeLikeOf(theme)
           const render = (width: number): string[] => {
             try {
-              const view = deps.getView()
-              const lines = fixedPanelLines(view, width, config.maxRows, Date.now(), tl)
-              // 临时诊断（定位「右侧面板不显示」问题，定位后移除）：记录 view 数据状态与输出行数
-              try {
-                fs.appendFileSync(
-                  path.join(os.tmpdir(), "pi-fixed-panel-debug.log"),
-                  `${new Date().toISOString()} render: width=${width} rows=${view.rows.length} runs=${view.runs.map((r) => r.status).join(",")} out=${lines.length}行\n`,
-                )
-              } catch { /* 诊断失败不影响渲染 */ }
-              return lines
-            } catch (e) {
+              return fixedPanelLines(deps.getView(), width, config.maxRows, Date.now(), tl)
+            } catch {
               // 自防御：render 异常击穿宿主（同 workflow-tasks 教训），空行集兜底
-              try {
-                fs.appendFileSync(
-                  path.join(os.tmpdir(), "pi-fixed-panel-debug.log"),
-                  `${new Date().toISOString()} render 异常: ${String((e as Error)?.message ?? e)}\n`,
-                )
-              } catch { /* ignore */ }
               return []
             }
           }
@@ -183,12 +168,8 @@ export function createFixedPanel(deps: FixedPanelDeps): FixedPanelHandle {
           },
         },
       ).catch((err: unknown) => {
-        // reject 不能静默（旧版曾丢 Promise 导致挂载失败无迹可查）
-        const msg = `[pi-code-mode] 固定面板 overlay 挂载失败: ${String((err as Error)?.message ?? err)}`
-        console.error(msg)
-        try {
-          fs.appendFileSync(path.join(os.tmpdir(), "pi-fixed-panel-debug.log"), `${new Date().toISOString()} ${msg}\n`)
-        } catch { /* ignore */ }
+        // reject 不能静默（曾丢 Promise 导致挂载失败无迹可查）
+        console.error("[pi-code-mode] 固定面板 overlay 挂载失败:", String((err as Error)?.message ?? err))
       })
     },
     uninstall(_ctx: any) {
