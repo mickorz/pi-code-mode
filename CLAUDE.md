@@ -180,6 +180,8 @@ const model = options.model ?? resolveTierModel(options.tier ?? "<已确认的�
 | `/workflows anal` 的 AI 规则检查 | **fast** | 6 条规则 254s；单条 14s |
 | `/workflows anal` 的 AI 优化建议（Planner） | **fast**（与规则检查一致） | 少一个配置面 |
 | 档位解析失败 | **告警 + 回退会话默认** | 必须打印 warning，禁止静默回退 |
+| `/workflows optimize` Patch Generator | **big** | 生成生产 Workflow JS 补丁，正确性优先（2026-11-20 确认） |
+| `/workflows optimize` Patch Reviewer | **fast** | 按约束审查 diff，速度优先（2026-11-20 确认） |
 
 新增调用点时的流程：先 `ask_user_question` 确认档位 → 在 `createPlannerAgent({ tier })` 或
 `agent(prompt, { tier })` 写明 → 回填本表。

@@ -1,0 +1,513 @@
+/**
+ * /workflows optimize 子命令（O0 + O1）
+ *
+ * 用户命令面只有 3 条（见 2026-11-20-workflow-optimization-command-simplification.md）：
+ *   optimize <file-or-dir> [--rules R,R] [--tier T] [--fresh]   生成并验证候选（不改原文件）
+ *   optimize apply <id>                                          写回（O3，本阶段未实现）
+ *   optimize rollback <id>                                       回滚（O3，本阶段未实现）
+ *
+ * status / review / benchmark / discard 是内部生命周期，不暴露为命令。
+ */
+import fs from "node:fs"
+import path from "node:path"
+
+import { analyzeWorkflow, createPlannerAgent, resolveTierModel } from "../../../../src/tools/workflow-analyze-tool.js"
+import { loadRuleDocs } from "../../../../src/engine/analyzer/ai-rule-checker/rule-doc-loader.js"
+import { condenseRuleDoc } from "../../../../src/engine/analyzer/ai-rule-checker/prompt-builder.js"
+import { writeDashboard } from "../../../../src/engine/analyzer/dashboard/build-dashboard.js"
+import { generatePatchSet } from "../../../../src/engine/optimizer/patch-generator.js"
+import { reviewPatch } from "../../../../src/engine/optimizer/patch-reviewer.js"
+import { applyPatchSet, validatePatchSet } from "../../../../src/engine/optimizer/patch-validator.js"
+import { renderReview } from "../../../../src/engine/optimizer/review-renderer.js"
+import {
+  findOpenSession,
+  nextSessionId,
+  readSession,
+  sessionPaths,
+  toRelKey,
+  updateSession,
+  writeSession,
+} from "../../../../src/engine/optimizer/session-store.js"
+import type { OptimizationSession, PatchReview, PatchSet } from "../../../../src/engine/optimizer/session-types.js"
+import { resolveTarget } from "../../../../src/engine/optimizer/target-resolver.js"
+import { copyWorkspace, detectSourceChanges } from "../../../../src/engine/optimizer/workspace.js"
+import type { Subcommand } from "../types.js"
+
+/** 默认可自动优化（副作用小、验证可穷尽）；其余规则只诊断不自动改 */
+const AUTO_SAFE_RULES = new Set(["DET-001", "IO-001", "REC-002"])
+/** 明确不自动改：需要运行语义或副作用证明 */
+const AUTO_UNSAFE_RULES = new Set(["SERIAL-002", "CONC-002", "SIDEFX-001", "BUDGET-001"])
+/** 生成器档位（CLAUDE.md 已确认：generator=big / reviewer=fast） */
+const GENERATOR_TIER = "big"
+const REVIEWER_TIER = "fast"
+
+export const optimizeSubcommand: Subcommand = {
+  usage:
+    "optimize <路径|目录> [--rules R,R] [--tier T] [--fresh] | optimize apply <id> | optimize rollback <id>  生成并验证 Workflow JS 优化候选（不改原文件）",
+  async run(argv, ctx, deps) {
+    try {
+      const [first, ...rest] = argv
+      if (!first) {
+        ctx.ui.notify(usageText(), "info")
+        return
+      }
+      if (first === "apply") {
+        await runApply(rest, ctx, deps)
+        return
+      }
+      if (first === "rollback") {
+        await runRollback(rest, ctx, deps)
+        return
+      }
+      await runOptimize(first, rest, ctx, deps)
+    } catch (e) {
+      ctx.ui.notify(`优化失败：${String((e as Error)?.stack ?? e).slice(0, 800)}`, "warning")
+    }
+  },
+}
+
+function usageText(): string {
+  return [
+    "用法：",
+    "  /workflows optimize <路径|目录> [--rules R,R] [--tier T] [--fresh]",
+    "      分析并生成优化候选（隔离工作区验证，不修改原文件）",
+    "  /workflows optimize apply <优化编号>",
+    "      将已验证候选写回原文件（先备份，再原子写入）",
+    "  /workflows optimize rollback <优化编号>",
+    "      从该候选的备份恢复原文件",
+    "",
+    `默认可自动优化：${[...AUTO_SAFE_RULES].join(", ")}`,
+    `默认不自动改：${[...AUTO_UNSAFE_RULES].join(", ")}（需人工判断副作用/运行语义）`,
+  ].join("\n")
+}
+
+function flagValue(argv: string[], name: string): string | undefined {
+  const i = argv.indexOf(name)
+  return i >= 0 ? argv[i + 1] : undefined
+}
+
+// ---------------------------------------------------------------- optimize
+
+async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Promise<void> {
+  const cwd = ctx.cwd ?? process.cwd()
+  const fresh = argv.includes("--fresh")
+  const tier = flagValue(argv, "--tier") ?? GENERATOR_TIER
+  const rulesArg = flagValue(argv, "--rules")
+  const requested = rulesArg ? rulesArg.split(",").map((s) => s.trim()).filter(Boolean) : undefined
+
+  // 同 target 的未完成会话：默认继续，--fresh 才新建（避免用户重复跑丢掉已验证工作）
+  if (!fresh) {
+    const open = findOpenSession(cwd, ref)
+    if (open) {
+      const p = sessionPaths(cwd, open.id)
+      ctx.ui.notify(
+        [
+          `发现该目标未完成的优化候选：${open.id}（状态 ${open.status}）`,
+          `审阅：${p.review}`,
+          "",
+          "继续处理该候选；如需重新生成请加 --fresh。",
+        ].join("\n"),
+        "info",
+      )
+      return
+    }
+  }
+
+  const resolved = resolveTarget(cwd, ref)
+  if (typeof resolved === "string") {
+    ctx.ui.notify(resolved, "warning")
+    return
+  }
+
+  ctx.ui.notify(`分析中…\n${ref}\n（${resolved.files.length} 个 js 文件）`, "info")
+
+  // ① 分析（静态 + AI Rule Check，默认开启；Planner 建议这里不需要，避免重复耗时）
+  const before = await analyzeWorkflow({
+    // 目录模式直接传 dirPath；文件/注册表模式传绝对 scriptPath（内含 sibling 聚合）
+    ...(resolved.kind === "directory" ? { dirPath: resolved.root } : { scriptPath: path.join(resolved.root, path.basename(resolved.ref)) }),
+    cwd,
+    includeRuleCheck: true,
+    ruleCheckAgent: createPlannerAgent({ cwd, tier: REVIEWER_TIER }),
+    includeSuggestions: false,
+    format: "md",
+  })
+  if (!before.ok || !before.report) {
+    ctx.ui.notify(`分析失败：${before.error ?? "unknown"}`, "warning")
+    return
+  }
+
+  // ② 选问题簇
+  const allClusters = before.report.clusters ?? []
+  const selected = requested
+    ? allClusters.filter((c) => requested.includes(c.ruleId))
+    : allClusters.filter((c) => AUTO_SAFE_RULES.has(c.ruleId))
+
+  // ③ 建会话
+  const id = nextSessionId(cwd)
+  const p = sessionPaths(cwd, id)
+  fs.mkdirSync(p.dir, { recursive: true })
+  fs.writeFileSync(p.beforeMd, before.rendered ?? "", "utf8")
+  fs.writeFileSync(p.beforeJson, JSON.stringify(before.report, null, 2), "utf8")
+  try {
+    const d = writeDashboard({ report: before.report, outDir: p.dir, projectName: id, aiEnabled: true })
+    fs.renameSync(d.htmlPath, p.beforeDashboard)
+  } catch {
+    /* dashboard 失败不影响优化主流程 */
+  }
+
+  const session: OptimizationSession = {
+    schemaVersion: "1.0",
+    id,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: "analyzed",
+    target: {
+      kind: resolved.kind,
+      ref,
+      root: resolved.root,
+      sourceHashes: resolved.sourceHashes,
+      files: resolved.files,
+    },
+    selectedClusters: selected.map((c) => c.key),
+    model: {
+      generatorTier: tier,
+      ...(resolveTierModel(tier, cwd) ? { generatorModel: resolveTierModel(tier, cwd)! } : {}),
+      reviewerTier: REVIEWER_TIER,
+      ...(resolveTierModel(REVIEWER_TIER, cwd) ? { reviewerModel: resolveTierModel(REVIEWER_TIER, cwd)! } : {}),
+    },
+    workspace: { path: p.workspace, patchApplied: false },
+    validation: { sourceUnchanged: "pass" },
+  }
+  writeSession(cwd, session)
+
+  if (selected.length === 0) {
+    updateSession(cwd, id, { status: "rejected", reason: "没有可安全自动优化的问题簇" })
+    const unsafe = allClusters.filter((c) => AUTO_UNSAFE_RULES.has(c.ruleId)).map((c) => c.ruleId)
+    ctx.ui.notify(
+      [
+        `[无可自动优化项] ${id}`,
+        `静态问题簇 ${allClusters.length} 个，但没有落在可安全自动优化的规则内。`,
+        unsafe.length ? `以下问题需人工处理（副作用/运行语义）：${[...new Set(unsafe)].join(", ")}` : "",
+        "",
+        `完整分析：${p.beforeMd}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      "warning",
+    )
+    return
+  }
+
+  // ④ 复制隔离工作区
+  const { manifest } = copyWorkspace(resolved.root, p.workspace)
+
+  // ⑤ 生成补丁
+  const relatedFiles = new Set<string>()
+  for (const c of selected) {
+    for (const loc of c.locations) {
+      const file = loc.split(":L")[0]
+      if (file) relatedFiles.add(file)
+    }
+  }
+  // 单次只改 1 个文件：实测把 3 个文件全文（DET-001 命中跨 3 文件）塞进 big 档
+  // prompt 会超 240s 超时。最小可行优先——一个文件改对了，再处理下一个。
+  const candidates = resolved.sources.filter((s) => relatedFiles.has(s.file) || relatedFiles.size === 0)
+  candidates.sort((a, b) => a.content.split("\n").length - b.content.split("\n").length)
+  const editable = candidates.slice(0, 1)
+  if (editable.length === 0) {
+    updateSession(cwd, id, { status: "failed", reason: "问题簇证据未指向任何可编辑文件" })
+    ctx.ui.notify(`[无法定位修改文件] ${id}：问题簇证据里没有可识别的文件`, "warning")
+    return
+  }
+  const docs = loadRuleDocs()
+  const ruleDocs = docs.rules
+    .filter((r) => selected.some((c) => c.ruleId === r.id))
+    .map((r) => ({ id: r.id, doc: condenseRuleDoc(r.doc) }))
+
+  // 只传证据行附近的窗口（±40 行）：全文 + 规则文档会让 big 档超 240s（实测）
+  const evidenceLines = new Map<string, number[]>()
+  for (const c of selected) {
+    for (const loc of c.locations) {
+      const m = /^(.*?):L(\d+)-(\d+)$/.exec(loc)
+      if (m) {
+        const arr = evidenceLines.get(m[1]!) ?? []
+        arr.push(Number(m[2]), Number(m[3]))
+        evidenceLines.set(m[1]!, arr)
+      }
+    }
+  }
+  const WINDOW = 40
+  let gen = await generatePatchSet(
+    {
+      clusters: selected,
+      files: editable.map((f) => {
+        const rel = toRelKey(f.file)
+        const all = f.content.split("\n")
+        const hash = resolved.sourceHashes[rel] ?? ""
+        const touched = evidenceLines.get(rel) ?? []
+        if (touched.length === 0) return { path: rel, content: f.content, hash }
+        const start = Math.max(1, Math.min(...touched) - WINDOW)
+        const end = Math.min(all.length, Math.max(...touched) + WINDOW)
+        return {
+          path: rel,
+          content: all.slice(start - 1, end).join("\n"),
+          hash,
+          snippetStart: start,
+          snippetEnd: end,
+          totalLines: all.length,
+        }
+      }),
+      ruleDocs,
+      requiredValidation: [],
+      report: before.report,
+    },
+    createPlannerAgent({ cwd, tier }),
+  )
+
+  // 实测：big 档生成补丁（复杂输出）常超 240s；超时则降级 fast 重试一次。
+  // 不静默降级——reason 与 review 都会写明实际使用的档位。
+  let usedTier = tier
+  const genDiag: string[] = []
+  if ((!gen.ok || !gen.patch) && /超时|timeout/i.test(gen.error ?? "") && tier !== REVIEWER_TIER) {
+    genDiag.push(`生成器 "${tier}" 档超时（${gen.error}），已自动降级 "${REVIEWER_TIER}" 重试`)
+    ctx.ui.notify(`生成器 "${tier}" 档超时，降级 "${REVIEWER_TIER}" 重试…`, "info")
+    const retry = await generatePatchSet(
+      {
+        clusters: selected,
+        files: editable.map((f) => {
+          const rel = toRelKey(f.file)
+          const all = f.content.split("\n")
+          const hash = resolved.sourceHashes[rel] ?? ""
+          const touched = evidenceLines.get(rel) ?? []
+          if (touched.length === 0) return { path: rel, content: f.content, hash }
+          const start = Math.max(1, Math.min(...touched) - WINDOW)
+          const end = Math.min(all.length, Math.max(...touched) + WINDOW)
+          return {
+            path: rel,
+            content: all.slice(start - 1, end).join("\n"),
+            hash,
+            snippetStart: start,
+            snippetEnd: end,
+            totalLines: all.length,
+          }
+        }),
+        ruleDocs,
+        requiredValidation: [],
+        report: before.report,
+      },
+      createPlannerAgent({ cwd, tier: REVIEWER_TIER }),
+    )
+    if (retry.ok && retry.patch) {
+      usedTier = REVIEWER_TIER
+      gen = retry
+      if (retry.raw) fs.writeFileSync(path.join(p.dir, "patchset.raw.txt"), retry.raw, "utf8")
+    }
+  }
+
+  if (!gen.ok || !gen.patch) {
+    updateSession(cwd, id, { status: "failed", reason: `补丁生成失败：${gen.error ?? "unknown"}` })
+    ctx.ui.notify(
+      [`[补丁生成失败] ${id}`, `原因：${gen.error ?? "unknown"}`, "", `原文件未修改。分析报告：${p.beforeMd}`].join("\n"),
+      "warning",
+    )
+    return
+  }
+  fs.writeFileSync(p.patchset, JSON.stringify(gen.patch, null, 2), "utf8")
+  // 模型原始输出必须落盘：空补丁时只有它能说明模型为什么没改
+  if (gen.raw) fs.writeFileSync(path.join(p.dir, "patchset.raw.txt"), gen.raw, "utf8")
+
+  // ⑥ 结构校验 + 应用（仅工作区）
+  const validation = validatePatchSet(gen.patch, p.workspace)
+  if (!validation.ok || !validation.normalized) {
+    updateSession(cwd, id, { status: "rejected", validation: { patchSchema: "fail" }, reason: "补丁结构校验未通过" })
+    const review = renderReview({
+      session: readSession(cwd, id)!,
+      clusters: selected,
+      patch: gen.patch,
+      patchIssues: validation.issues.map((i) => `${i.path}：${i.reason}`),
+      blockers: ["补丁结构校验未通过，未应用到工作区。"],
+    })
+    fs.writeFileSync(p.review, review, "utf8")
+    ctx.ui.notify(
+      [`[补丁被拒绝] ${id}`, `结构校验问题 ${validation.issues.length} 项：`, ...validation.issues.slice(0, 5).map((i) => `- ${i.path}：${i.reason}`), "", `审阅：${p.review}`].join("\n"),
+      "warning",
+    )
+    return
+  }
+
+  const applied = applyPatchSet(validation.normalized, p.workspace)
+  updateSession(cwd, id, {
+    status: "patched",
+    workspace: { path: p.workspace, patchApplied: true },
+    validation: { patchSchema: "pass" },
+    model: { ...session.model, generatorTier: usedTier },
+    ...(genDiag.length ? { reason: genDiag.join("; ") } : {}),
+  })
+
+  // ⑦ 生产文件必须未被改动
+  const changed = detectSourceChanges(resolved.root, resolved.sourceHashes)
+  if (changed.length > 0) {
+    updateSession(cwd, id, { status: "stale", validation: { sourceUnchanged: "fail", patchSchema: "pass" }, reason: "优化期间生产文件被改动" })
+    ctx.ui.notify(
+      [`[优化中止] ${id}`, "优化期间生产文件发生变化：", ...changed.slice(0, 5).map((c) => `- ${c.path}`), "", "请重新运行 optimize。"].join("\n"),
+      "warning",
+    )
+    return
+  }
+  updateSession(cwd, id, { validation: { sourceUnchanged: "pass" } })
+
+  // ⑧ 补丁审查（fast）
+  const diffs = applied.files.map((f) => ({
+    path: f.path,
+    diff: makeSimpleDiff(
+      resolved.sources.find((s) => toRelKey(s.file) === f.path)?.content ?? "",
+      fs.readFileSync(path.join(p.workspace, f.path), "utf8"),
+      f.path,
+    ),
+    before: resolved.sources.find((s) => toRelKey(s.file) === f.path)?.content ?? "",
+    after: fs.readFileSync(path.join(p.workspace, f.path), "utf8"),
+  }))
+
+  let patchReview: PatchReview | undefined
+  try {
+    const rv = await reviewPatch(
+      {
+        patch: validation.normalized,
+        afterFiles: diffs.map((d) => ({ path: d.path, before: d.before, after: d.after })),
+        requiredValidation: [],
+        clusters: selected.map((c) => ({ ruleId: c.ruleId, evidence: c.evidence, ...(c.suggestion ? { suggestion: c.suggestion } : {}) })),
+      },
+      createPlannerAgent({ cwd, tier: REVIEWER_TIER }),
+    )
+    if (rv.ok && rv.review) patchReview = rv.review
+  } catch {
+    /* 审查失败不阻断静态结论，但 review 里会显示缺失 */
+  }
+
+  // ⑨ 工作区静态复检（确认目标规则已解决，且未新增严重问题）
+  const afterReport = await analyzeWorkflow({
+    ...(resolved.kind === "directory" ? { dirPath: p.workspace } : { scriptPath: path.join(p.workspace, path.basename(resolved.ref)) }),
+    cwd,
+    includeRuleCheck: false,
+    includeSuggestions: false,
+    format: "md",
+  })
+
+  const afterFindings = afterReport.report?.summary.totalFindings ?? -1
+  const targetResolved = selected.every((c) => !(afterReport.report?.clusters ?? []).some((x) => x.ruleId === c.ruleId && x.count >= c.count))
+  const staticPass = afterReport.ok && afterFindings >= 0 && afterFindings <= before.report.summary.totalFindings
+  if (afterReport.ok && afterReport.report) {
+    fs.writeFileSync(path.join(p.dir, "after.report.json"), JSON.stringify(afterReport.report, null, 2), "utf8")
+    fs.writeFileSync(path.join(p.dir, "after.report.md"), afterReport.rendered ?? "", "utf8")
+  }
+
+  // ⑩ 状态：O1 阶段没有真实 Benchmark，因此只能到 benchmark-pending，不能 ready
+  const reviewDecision = patchReview?.decision ?? "needs-human"
+  const finalStatus = !staticPass || reviewDecision === "reject" ? "rejected" : "benchmark-pending"
+  const blockers: string[] = [...genDiag]
+  if (!staticPass) blockers.push("静态复检未通过（问题数增加或目标规则未解决），拒绝应用。")
+  if (reviewDecision === "reject") blockers.push("补丁审查判定 reject，拒绝应用。")
+  if (finalStatus === "benchmark-pending") {
+    blockers.push("O2 真实 Benchmark 尚未接入：当前只有静态与 AI 复核证据，**不能写回生产文件**。")
+  }
+
+  updateSession(cwd, id, {
+    status: finalStatus,
+    validation: { static: staticPass ? "pass" : "fail", aiRuleCheck: "unavailable", benchmark: "pending", quality: "pending" },
+    reason: blockers[0],
+  })
+
+  const reviewMd = renderReview({
+    session: readSession(cwd, id)!,
+    clusters: selected,
+    patch: validation.normalized,
+    ...(patchReview ? { patchReview } : {}),
+    diffs: diffs.map((d) => ({ path: d.path, diff: d.diff })),
+    staticAfter: { totalFindings: afterFindings, targetRuleResolved: targetResolved },
+    blockers,
+  })
+  fs.writeFileSync(p.review, reviewMd, "utf8")
+
+  const files = validation.normalized.files.length
+  const edits = validation.normalized.files.reduce((n, f) => n + f.edits.length, 0)
+  ctx.ui.notify(
+    [
+      finalStatus === "rejected" ? `[候选被拒绝] ${id}` : `[优化候选待验证] ${id}`,
+      "",
+      `目标：${ref}`,
+      `问题簇：${selected.map((c) => c.ruleId).join(", ")}`,
+      `修改：${files} 个文件 / ${edits} 处补丁`,
+      `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条${targetResolved ? "（目标规则已解决）" : "（目标规则仍在）"}`,
+      patchReview ? `补丁审查：${patchReview.decision}${patchReview.findings.length ? `（${patchReview.findings.length} 项发现）` : ""}` : "补丁审查：未完成",
+      "",
+      "原文件未修改。",
+      ...(blockers.length ? ["", ...blockers.map((b) => `- ${b}`)] : []),
+      "",
+      `审阅：${p.review}`,
+      `工作区：${p.workspace}（${manifest.files.length} 个文件已复制）`,
+    ].join("\n"),
+    finalStatus === "rejected" ? "warning" : "info",
+  )
+  void deps
+}
+
+// ---------------------------------------------------------------- apply / rollback（O3，未实现）
+
+async function runApply(argv: string[], ctx: any, deps: any): Promise<void> {
+  const id = argv.find((a) => !a.startsWith("--"))
+  const cwd = ctx.cwd ?? process.cwd()
+  if (!id) {
+    ctx.ui.notify("用法：/workflows optimize apply <优化编号>", "warning")
+    return
+  }
+  const s = readSession(cwd, id)
+  if (!s) {
+    ctx.ui.notify(`找不到优化会话：${id}`, "warning")
+    return
+  }
+  ctx.ui.notify(
+    [
+      `[写回未实现] ${id}`,
+      `当前状态：${s.status}`,
+      "",
+      "O3 阶段（真实 Benchmark + 质量门 + 原子写回 + 备份）尚未实现。",
+      "在此之前不会修改任何生产文件——这是安全设计，不是故障。",
+      "",
+      `审阅：${sessionPaths(cwd, id).review}`,
+    ].join("\n"),
+    "warning",
+  )
+  void deps
+}
+
+async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
+  const id = argv.find((a) => !a.startsWith("--"))
+  const cwd = ctx.cwd ?? process.cwd()
+  if (!id) {
+    ctx.ui.notify("用法：/workflows optimize rollback <优化编号>", "warning")
+    return
+  }
+  ctx.ui.notify(`[回滚未实现] ${id}：O3 阶段实现（先从 apply 产生 backup，才谈得上 rollback）`, "warning")
+  void deps
+}
+
+/** 简易 unified diff（按行 LCS 太重，这里只做前后行对比，足够 review 阅读） */
+function makeSimpleDiff(before: string, after: string, filePath: string): string {
+  const a = before.split("\n")
+  const b = after.split("\n")
+  const out: string[] = [`--- a/${filePath}`, `+++ b/${filePath}`]
+  const max = Math.max(a.length, b.length)
+  let start = 0
+  while (start < max && a[start] === b[start]) start++
+  let endA = a.length - 1
+  let endB = b.length - 1
+  while (endA >= start && endB >= start && a[endA] === b[endB]) {
+    endA--
+    endB--
+  }
+  if (start > endA && start > endB) return `${out.join("\n")}\n（无差异）`
+  out.push(`@@ -${start + 1},${Math.max(1, endA - start + 1)} +${start + 1},${Math.max(1, endB - start + 1)} @@`)
+  for (let i = start; i <= endA; i++) out.push(`-${a[i] ?? ""}`)
+  for (let i = start; i <= endB; i++) out.push(`+${b[i] ?? ""}`)
+  return out.join("\n")
+}
