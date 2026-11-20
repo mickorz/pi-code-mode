@@ -99,7 +99,7 @@ skipped: []
 | 项 | 说明 |
 |---|---|
 | 保留名清单需随宿主升级维护 | `PI_RESERVED_COMMAND_NAMES` 抄录自 pi 1.4.x（24 公开 + 3 直达）；宿主未从包主入口导出该清单 |
-| 当前会话注册的 workflow 无顶层命令 | 需重启会话（宿主无命令热注册/注销的可靠 API） |
+| 当前会话注册/注销的 workflow 无顶层命令变更 | 需 `/reload` 或重启会话（宿主无命令注销 API）；详见 `dev-docs/experience/pi-cannot-unregister-slash-commands.md` |
 | legacy 项目无顶层命令 | 设计决策，非缺陷 |
 | 无设置开关 | 显式 manifest 已控制规模，YAGNI |
 
