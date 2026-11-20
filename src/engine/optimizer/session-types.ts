@@ -49,6 +49,9 @@ export interface OptimizationSession {
   selectedClusters: string[]
 
   model: {
+    /** 分析档位（AI Rule Check）；2026-11-20 用户决策：分析用 big */
+    analyzerTier?: string
+    /** 生成/审查档位；2026-11-20 用户决策：执行用 fast */
     generatorTier: string
     generatorModel?: string
     reviewerTier: string

@@ -37,8 +37,16 @@ import type { Subcommand } from "../types.js"
 const AUTO_SAFE_RULES = new Set(["DET-001", "IO-001", "REC-002"])
 /** 明确不自动改：需要运行语义或副作用证明 */
 const AUTO_UNSAFE_RULES = new Set(["SERIAL-002", "CONC-002", "SIDEFX-001", "BUDGET-001"])
-/** 生成器档位（CLAUDE.md 已确认：generator=big / reviewer=fast） */
-const GENERATOR_TIER = "big"
+/**
+ * 档位分工（CLAUDE.md 已确认，2026-11-20 用户决策）：
+ *  - 分析类（AI Rule Check）用 big：强模型看代码，允许 ≤10 分钟
+ *  - 执行类（生成补丁 / 审查 diff）用 fast：要快，迭代成本低
+ *
+ * 实测依据：big 档生成含完整上下文的补丁会 >240s（3 次均超时），
+ * 而 fast 档 14~60s 即可给出可用的最小补丁。
+ */
+const ANALYZER_TIER = "big"
+const GENERATOR_TIER = "fast"
 const REVIEWER_TIER = "fast"
 
 export const optimizeSubcommand: Subcommand = {
@@ -122,15 +130,41 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   ctx.ui.notify(`分析中…\n${ref}\n（${resolved.files.length} 个 js 文件）`, "info")
 
   // ① 分析（静态 + AI Rule Check，默认开启；Planner 建议这里不需要，避免重复耗时）
-  const before = await analyzeWorkflow({
-    // 目录模式直接传 dirPath；文件/注册表模式传绝对 scriptPath（内含 sibling 聚合）
+  // 两段式：先纯静态拿问题簇（百毫秒），再只对选中规则做 big 档 AI 复核。
+  // 全量 6 条语义规则在 big 档下单次 5~10 分钟，而 optimize 只关心选中的簇。
+  const tStatic = Date.now()
+  const statics = await analyzeWorkflow({
     ...(resolved.kind === "directory" ? { dirPath: resolved.root } : { scriptPath: path.join(resolved.root, path.basename(resolved.ref)) }),
     cwd,
-    includeRuleCheck: true,
-    ruleCheckAgent: createPlannerAgent({ cwd, tier: REVIEWER_TIER }),
+    includeRuleCheck: false,
     includeSuggestions: false,
     format: "md",
   })
+  if (!statics.ok || !statics.report) {
+    ctx.ui.notify(`静态分析失败：${statics.error ?? "unknown"}`, "warning")
+    return
+  }
+  const staticMs = Date.now() - tStatic
+
+  const preClusters = statics.report.clusters ?? []
+  const preselect = requested
+    ? preClusters.filter((c) => requested.includes(c.ruleId))
+    : preClusters.filter((c) => AUTO_SAFE_RULES.has(c.ruleId))
+  const focusedRules = [...new Set(preselect.map((c) => c.ruleId))]
+
+  const tAi = Date.now()
+  const before = await analyzeWorkflow({
+    ...(resolved.kind === "directory" ? { dirPath: resolved.root } : { scriptPath: path.join(resolved.root, path.basename(resolved.ref)) }),
+    cwd,
+    includeRuleCheck: focusedRules.length > 0,
+    ...(focusedRules.length > 0
+      ? { ruleCheckAgent: createPlannerAgent({ cwd, tier: ANALYZER_TIER }), aiRules: focusedRules }
+      : {}),
+    includeSuggestions: false,
+    format: "md",
+  })
+  const aiMs = Date.now() - tAi
+  const timings = { staticMs, aiMs }
   if (!before.ok || !before.report) {
     ctx.ui.notify(`分析失败：${before.error ?? "unknown"}`, "warning")
     return
@@ -170,6 +204,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     },
     selectedClusters: selected.map((c) => c.key),
     model: {
+      analyzerTier: ANALYZER_TIER,
       generatorTier: tier,
       ...(resolveTierModel(tier, cwd) ? { generatorModel: resolveTierModel(tier, cwd)! } : {}),
       reviewerTier: REVIEWER_TIER,
@@ -268,9 +303,12 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   // 不静默降级——reason 与 review 都会写明实际使用的档位。
   let usedTier = tier
   const genDiag: string[] = []
-  if ((!gen.ok || !gen.patch) && /超时|timeout/i.test(gen.error ?? "") && tier !== REVIEWER_TIER) {
-    genDiag.push(`生成器 "${tier}" 档超时（${gen.error}），已自动降级 "${REVIEWER_TIER}" 重试`)
-    ctx.ui.notify(`生成器 "${tier}" 档超时，降级 "${REVIEWER_TIER}" 重试…`, "info")
+  // 超时重试一次（同档）：实测 fast 档生成同样有 provider 波动
+  // （同一 prompt 有时 60s 完成、有时 >240s 超时）。重试一次比直接失败更实用，
+  // 但不无限重试——两次都超时就明确报告，不假装成功。
+  if ((!gen.ok || !gen.patch) && /超时|timeout/i.test(gen.error ?? "")) {
+    genDiag.push(`生成器 "${tier}" 档超时（${gen.error}），已重试 1 次`)
+    ctx.ui.notify(`生成器 "${tier}" 档超时，重试 1 次…`, "info")
     const retry = await generatePatchSet(
       {
         clusters: selected,
@@ -295,10 +333,9 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
         requiredValidation: [],
         report: before.report,
       },
-      createPlannerAgent({ cwd, tier: REVIEWER_TIER }),
+      createPlannerAgent({ cwd, tier }),
     )
     if (retry.ok && retry.patch) {
-      usedTier = REVIEWER_TIER
       gen = retry
       if (retry.raw) fs.writeFileSync(path.join(p.dir, "patchset.raw.txt"), retry.raw, "utf8")
     }
@@ -319,6 +356,42 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   // ⑥ 结构校验 + 应用（仅工作区）
   const validation = validatePatchSet(gen.patch, p.workspace)
   if (!validation.ok || !validation.normalized) {
+    // 模型明确给出 needsHumanDecision = 「不能安全自动改」，这是有效结论，不是失败。
+    const nhd = gen.patch.needsHumanDecision ?? []
+    const onlyHumanDecision = nhd.length > 0 && (gen.patch.files?.length ?? 0) === 0
+    if (onlyHumanDecision) {
+      updateSession(cwd, id, {
+        status: "analyzed",
+        validation: { patchSchema: "unavailable", sourceUnchanged: "pass" },
+        reason: "模型判定无法在不改变行为的前提下自动修改，需要人工决策",
+      })
+      const review = renderReview({
+        session: readSession(cwd, id)!,
+        clusters: selected,
+        patch: gen.patch,
+        blockers: [
+          "模型已确认该问题成立，但判定**无法安全自动修改**（原因见第 2 节 needsHumanDecision）。",
+          "这是有效结论，不是失败：原文件未改动，也没有生成不可信的补丁。",
+        ],
+      })
+      fs.writeFileSync(p.review, review, "utf8")
+      ctx.ui.notify(
+        [
+          "[需要人工决策] " + id,
+          "",
+          "目标：" + ref,
+          "问题簇：" + selected.map((c) => c.ruleId).join(", "),
+          "",
+          "模型判定无法安全自动修改，原因：",
+          ...nhd.flatMap((d) => ["- " + d.cluster + "：" + d.question.slice(0, 600), ...d.options.map((o) => "  · " + o)]),
+          "",
+          "原文件未修改。",
+          "审阅：" + p.review,
+        ].join("\n"),
+        "warning",
+      )
+      return
+    }
     updateSession(cwd, id, { status: "rejected", validation: { patchSchema: "fail" }, reason: "补丁结构校验未通过" })
     const review = renderReview({
       session: readSession(cwd, id)!,
@@ -405,6 +478,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   const reviewDecision = patchReview?.decision ?? "needs-human"
   const finalStatus = !staticPass || reviewDecision === "reject" ? "rejected" : "benchmark-pending"
   const blockers: string[] = [...genDiag]
+  blockers.push(`耗时：静态 ${(timings.staticMs / 1000).toFixed(0)}s + AI 复核 ${(timings.aiMs / 1000).toFixed(0)}s（${ANALYZER_TIER} 档，${focusedRules.join(",") || "无"}）`)
   if (!staticPass) blockers.push("静态复检未通过（问题数增加或目标规则未解决），拒绝应用。")
   if (reviewDecision === "reject") blockers.push("补丁审查判定 reject，拒绝应用。")
   if (finalStatus === "benchmark-pending") {

@@ -112,7 +112,10 @@ export function buildPatchGeneratorPrompt(input: PatchGeneratorInput): string {
    不要因为「需要新函数」就放弃生成补丁。
 8. **files 为空时，必须给出 needsHumanDecision 说明原因**（例如需要改多个文件、需要改运行时时序、
    或该处无法在不改变行为的前提下局部替换）。不允许静默返回空补丁。
-9. 不确定时输出 needsHumanDecision（说明问题与选项），不要猜。
+9. **输出预算**：单次补丁的所有 newText 合计不超过 60 行。
+   若最小可行改动会超过这个规模，请在 needsHumanDecision 里说明「需分步优化」并建议拆分方式，
+   而不是一次输出大段代码（实测超过 60 行会因生成时间过长而超时）。
+10. 不确定时输出 needsHumanDecision（说明问题与选项），不要猜。
 
 ## 已选问题簇
 ${clusters}
@@ -137,6 +140,36 @@ ${OUTPUT_EXAMPLE}
 两个 edit 的行区间不能重叠。行号请从源码上下文标注的行号读取（片段模式下注意起始行偏移）。`
 }
 
+/** needsHumanDecision 归一化：字符串 → 单条说明；对象 → 单条；数组 → 逐条 */
+function normalizeNeedsHumanDecision(raw: unknown): NonNullable<PatchSet["needsHumanDecision"]> {
+  if (typeof raw === "string" && raw.trim()) {
+    return [{ cluster: "（未指定）", question: raw.trim(), options: [] }]
+  }
+  if (Array.isArray(raw)) {
+    return raw
+      .map((x) => (typeof x === "string" ? { cluster: "（未指定）", question: x, options: [] } : (x as Record<string, unknown>)))
+      .map((x) => ({
+        cluster: String(x.cluster ?? "（未指定）"),
+        question: String(x.question ?? ""),
+        options: Array.isArray(x.options) ? (x.options as unknown[]).map(String) : [],
+      }))
+      .filter((x) => x.question)
+  }
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>
+    if (o.question !== undefined || o.cluster !== undefined) {
+      return [
+        {
+          cluster: String(o.cluster ?? "（未指定）"),
+          question: String(o.question ?? ""),
+          options: Array.isArray(o.options) ? (o.options as unknown[]).map(String) : [],
+        },
+      ]
+    }
+  }
+  return []
+}
+
 /** 从模型输出抠 PatchSet JSON */
 export function parsePatchSet(raw: string): { ok: boolean; patch?: PatchSet; error?: string } {
   const text = String(raw ?? "").trim()
@@ -151,8 +184,15 @@ export function parsePatchSet(raw: string): { ok: boolean; patch?: PatchSet; err
   } catch (e) {
     return { ok: false, error: `JSON 解析失败：${String((e as Error)?.message ?? e)}` }
   }
-  const obj = parsed as Partial<PatchSet>
-  if (!Array.isArray(obj.files) && !Array.isArray(obj.needsHumanDecision)) {
+  const obj = parsed as Record<string, unknown>
+  const rawNhd = obj.needsHumanDecision
+  /**
+   * 实测：模型经常把 needsHumanDecision 写成**字符串**（一段完整的人工决策说明），
+   * 而不是 [{cluster,question,options}]。这是「为什么不能改」的高价值输出，
+   * 因为格式不一致就丢掉它，等于把最该看的结论扔了。
+   */
+  const nhd = normalizeNeedsHumanDecision(rawNhd)
+  if (!Array.isArray(obj.files) && nhd.length === 0) {
     return { ok: false, error: "既没有 files 也没有 needsHumanDecision" }
   }
   return {
@@ -160,8 +200,8 @@ export function parsePatchSet(raw: string): { ok: boolean; patch?: PatchSet; err
     patch: {
       schemaVersion: (obj.schemaVersion ?? "1.0") as "1.0",
       targetRoot: String(obj.targetRoot ?? "."),
-      files: Array.isArray(obj.files) ? obj.files : [],
-      ...(Array.isArray(obj.needsHumanDecision) ? { needsHumanDecision: obj.needsHumanDecision } : {}),
+      files: Array.isArray(obj.files) ? (obj.files as PatchSet["files"]) : [],
+      ...(nhd.length > 0 ? { needsHumanDecision: nhd } : {}),
     },
   }
 }

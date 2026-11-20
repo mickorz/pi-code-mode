@@ -44,6 +44,8 @@ export function validatePatchSet(patch: PatchSet, workspaceDir: string): PatchVa
     if (!patch.needsHumanDecision?.length) {
       issues.push({ path: "<patchset>", reason: "没有 edits 也没有 needsHumanDecision（空补丁无意义）" })
     }
+    // 有 needsHumanDecision = 模型明确说「不能安全自动改」，这是有效结论而非失败。
+    // 交由调用方把状态设为 needs-human，而不是 rejected。
     return { ok: false, issues }
   }
 
@@ -132,6 +134,19 @@ export function validatePatchSet(patch: PatchSet, workspaceDir: string): PatchVa
     }
 
     normalizedFiles.push({ ...file, path: rel, edits: sorted })
+  }
+
+  // 输出预算硬上限：单次补丁 newText 合计 > 80 行视为「一次改太多」，拒绝以引导拆分。
+  // 实测超过这个规模，fast 档生成会因输出过长而超时。
+  const newTextLines = normalizedFiles.reduce(
+    (n, f) => n + f.edits.reduce((m, e) => m + e.newText.split("\n").length, 0),
+    0,
+  )
+  if (newTextLines > 80) {
+    issues.push({
+      path: "<patchset>",
+      reason: `补丁过大：newText 合计 ${newTextLines} 行（上限 80）。请拆分后分次优化。`,
+    })
   }
 
   if (issues.length > 0) return { ok: false, issues }
