@@ -48,6 +48,8 @@ export interface WorkflowTreeNode {
     outputType?: string
     /** 节点快照的 2KB 结果预览（journal 未写入时的详情兜底） */
     outputPreview?: string
+    /** 运行中的流式输出尾部（方案 B；仅展示，完成态后被 journal 结果取代） */
+    partialOutput?: string
     error?: string
   }
 }
@@ -147,6 +149,18 @@ export class WorkflowTreeModel {
 
   size(): number {
     return this.nodes.size
+  }
+
+  /**
+   * 是否有「会走字」的运行中节点（决定秒表 tick 是否需要真的重绘；折叠子树也算）。
+   * 只算非 run 节点：run 节点的 running 不会带来可见变化（头部的计数本身不会自增），
+   * 计入会让一个卡住的 run 永久 1s 重绘一次。
+   */
+  hasRunning(): boolean {
+    for (const node of this.nodes.values()) {
+      if (node.kind !== "run" && node.status === "running") return true
+    }
+    return false
   }
 
   /** 按树的深度优先展开顺序返回可见节点（不含已折叠子树；navigation 层负责折叠判定） */
@@ -359,6 +373,7 @@ export class WorkflowTreeModel {
           replayed: record.replayed,
           outputType: record.outputType,
           outputPreview: record.outputPreview,
+          partialOutput: record.partialOutput,
           error: record.error,
         },
       },

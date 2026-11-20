@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "workflows": [
+    {
+      "id": "schema_result_view",
+      "name": "schema_result_view",
+      "description": "结构化结果详情展示验收（脱敏/截断/空态）",
+      "file": "dev-examples/sample-project-acceptance/G-ui/schema-result-view-test.js",
+      "registeredAt": "2026-11-20T02:53:17.615Z"
+    }
+  ]
+}

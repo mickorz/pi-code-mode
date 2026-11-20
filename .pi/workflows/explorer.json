@@ -1,0 +1,8 @@
+{
+  "fixedPanel": {
+    "enabled": true,
+    "anchor": "top-right",
+    "width": 34,
+    "maxRows": 10
+  }
+}
