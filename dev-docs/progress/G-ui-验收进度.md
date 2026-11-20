@@ -58,6 +58,16 @@
 
 第三次复跑（run `run-1795078433379-4o4uqf`）三连一致；总时长 97.6s（前两次 6.5s）为调度/配额等待间隙，agent 本体 ~11s，无异常。
 
+第四次复跑（run `run-1795094091296-nxxg4v`）形态一致；此后同脚本复跑不再逐次记录。
+
+### 2026-11-20 右侧固定面板实机验证（用户截图目视）：✅ 通过
+
+> 完整排查故事见 `dev-docs/experience/fixed-panel-overlay-invisible.md`（双层 bug：非法锚点零绘制 + 无头渲染无数据链）。
+
+用户截图确认：右侧悬浮执行树正常显示（registry:schema_result_view (1/2) 头行 + 树结构，类型图标/状态色/秒表全部在线），用户自跑 registry workflow 实时渲染正常。修复链：锚点 right-top（非法值）→ top-right（ea5cce5）+ view() 无头渲染自动建树（765bfa6）+ 常驻语义（空态占位不隐藏，f2788c6）。
+
+遗留观察（不阻塞）：悬浮遮主区右上（overlay 语义，后续可加 collapsed 收起）；run 行显示 runId 非 label（UI 打磨项）；常驻阈值 80 列（窄窗口不显示，属预期）。
+
 配套 UI 改进（commit b254c92）：树行按节点类型着色（run=accent/workflow与composite=border/phase=warning/agent=text/tool=success，选中行 accent 加粗），用户交互 TUI 目视确认生效。
 
 ## 遗留
