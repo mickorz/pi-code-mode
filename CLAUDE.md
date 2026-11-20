@@ -179,6 +179,11 @@ const model = options.model ?? resolveTierModel(options.tier ?? "<已确认的�
 | --- | --- | --- |
 | `/workflows anal` 的 AI 规则检查 | **fast** | 6 条规则 254s；单条 14s |
 | `/workflows anal` 的 AI 优化建议（Planner） | **fast**（与规则检查一致） | 少一个配置面 |
+| 内置 workflow `coder`（`workflows/coder.js`） | **fast** | 实施与验证；`args.tier` 可覆盖 |
+| 内置 workflow `reviewer`（`workflows/reviewer.js`） | **big** | 独立代码评审；`args.tier` 可覆盖 |
+| 内置 workflow `judge`（`workflows/judge.js`） | **big** | 裁决；`args.tier` 可覆盖 |
+| 内置 workflow `fixer`（`workflows/fixer.js`） | **fast** | 定向修复；`args.tier` 可覆盖 |
+| `quality-loop`（`workflows/quality-loop.js`） | 按角色缺省 fast/big/big/fast | 纯编排零 agent；`coderTier`/`reviewerTier`/`judgeTier`/`fixerTier` 分别覆盖 |
 | 档位解析失败 | **告警 + 回退会话默认** | 必须打印 warning，禁止静默回退 |
 
 新增调用点时的流程：先 `ask_user_question` 确认档位 → 在 `createPlannerAgent({ tier })` 或
