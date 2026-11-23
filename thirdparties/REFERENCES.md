@@ -30,6 +30,8 @@
 | REF-022 | linger | https://github.com/simplexai-labs/linger.git | thirdparties/linger | 436a24b53d6b978d82d6a3e457eaa5bf5d89fe91 | 修改版 Apache-2.0（附加托管服务限制与前端 LOGO/版权信息保留条款） | 架构参考：开源个人 Agent（本地运行，pnpm monorepo：apps/packages/contracts/e2e 分层）；只读研究，禁止复制其前端代码，集成前再评估 | 2026-11-20 引入。个人 Agent 产品架构（会话/技能/集成组织）与本地 AI 运行形态对照 |
 | REF-023 | PiBot | https://github.com/w01fb0ss/PiBot.git | thirdparties/PiBot | 008198f0b6507419684dc98a46f2834af6ac40b5 | Apache-2.0 | 架构参考：本地优先桌面多 Agent 团队应用（命名 Bot 单聊/群聊、规划/命令/文件/浏览器、风险步骤审批门禁，基于 pi agent kernel）；只读研究，集成前再评估 | 2026-11-22 引入。多 Bot 协作与审批门禁形态与本包 workflow 编排/子代理方向对照（pi 内核衍生生态） |
 
+## Submodule 引入与登记流程
+
 1. 引入：`git submodule add <仓库地址> thirdparties/<项目名>`，克隆后固定到目标 commit。
 2. 忽略规则：`.gitignore` 默认不忽略 `thirdparties/`，无需白名单；如某个本地只读目录不入库，单独追加该目录的 ignore 条目。
 3. 登记：在本文件表格新增一行，固定 commit 用 `git -C thirdparties/<项目名> rev-parse HEAD` 获取；License 读取仓库内 LICENSE 文件，无 LICENSE 的仓库填「未发现 LICENSE 文件」并将复用策略标为「只读研究，禁止复制任何代码」。
