@@ -894,13 +894,21 @@ async function benchmarkSession(input: {
   const verifierCmd = flagValue(argv, "--verify-cmd")
   const qualityGate = verifierCmd ? ({ kind: "verifier", command: verifierCmd } as const) : ({ kind: "none" } as const)
 
+  // 项目根：workflow 里的相对路径（如 templatePath 默认 templates/...）是相对**项目根**的，
+  // 不是相对脚本目录。用 target 目录当 cwd 会让依赖项目根的 workflow 直接跑不起来。
+  const projectRoot = findProjectRoot(productionRoot)
+  const runDirs: Record<"before" | "after", string | undefined> = { before: undefined, after: undefined }
+
   let verifierResult: VerifierResult | undefined
   const runOnce = async (label: "before" | "after"): Promise<RealRunOutcome> => {
-    const root = label === "before" ? productionRoot : workspaceDir
-    const scriptAbs = path.join(root, entryName)
-    const tool = makeWorkflowTool({ ...deps.makeDeps(root), deliver: deps.deliver })
+    // 脚本：before 用生产原版，after 用隔离工作区版本；两者都在项目根下运行
+    const scriptAbs = label === "before" ? path.join(productionRoot, entryName) : path.join(workspaceDir, entryName)
+    // runDir 隔离：给 --args 里的 runDir 追加 -before / -after，避免两次写同一目录
+    const runArgs = benchArgs.runDir ? { ...benchArgs, runDir: `${String(benchArgs.runDir)}-${label}` } : benchArgs
+    if (typeof runArgs.runDir === "string") runDirs[label] = runArgs.runDir
+    const tool = makeWorkflowTool({ ...deps.makeDeps(projectRoot), deliver: deps.deliver })
     const t0 = Date.now()
-    const out: any = await tool.execute("bench", { scriptPath: scriptAbs, args: benchArgs, background: false }, undefined, undefined, undefined)
+    const out: any = await tool.execute("bench", { scriptPath: scriptAbs, args: runArgs, background: false }, undefined, undefined, undefined)
     const durationMs = Date.now() - t0
     const text: string = out?.content?.[0]?.text ?? ""
     const failed = Boolean(out?.isError) || /\[workflow 失败\]|执行失败/.test(text)
@@ -941,7 +949,18 @@ async function benchmarkSession(input: {
     ...(verifierCmd
       ? {
           runVerifier: async (cmd: string) => {
-            const vr = await runVerifierCommand({ command: cmd, cwd: workspaceDir })
+            // cwd 用项目根：verifier 要能读到 runDir 产物（相对项目根）。
+            // 同时注入两次 runDir，让 verifier 能对比 before/after 产物是否等价 ——
+            // 这才是「质量未降级」的直接证据。
+            const vr = await runVerifierCommand({
+              command: cmd,
+              cwd: projectRoot,
+              env: {
+                ...(runDirs.before ? { PI_OPT_BEFORE_RUN: runDirs.before } : {}),
+                ...(runDirs.after ? { PI_OPT_AFTER_RUN: runDirs.after } : {}),
+                PI_OPT_PROJECT_ROOT: projectRoot,
+              },
+            })
             verifierResult = vr
             return { ok: vr.ok, output: vr.note }
           },
@@ -1174,6 +1193,30 @@ async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
  * 之前把 review.md 原文塞进 <pre>，浏览器里看到的是 ## / | 表格 | / ```diff 这些原始标记。
  * 这里直接用 session / patch / review / diffs 数据渲染卡片、表格与带颜色的 diff。
  */
+/**
+ * 从任意目录向上找项目根：含 .opencode-workflows / templates / package.json 的目录。
+ *
+ * 为什么需要：workflow 脚本里的相对路径（如 templatePath 默认 templates/...）
+ * 是相对**项目根**解析的。benchmark 若用 target 目录当 cwd，
+ * 依赖项目根的 workflow 会直接跑不起来（实测 1-scan-template.js）。
+ */
+function findProjectRoot(fromDir: string): string {
+  let dir = path.resolve(fromDir)
+  for (let i = 0; i < 12; i++) {
+    if (
+      fs.existsSync(path.join(dir, ".opencode-workflows")) ||
+      fs.existsSync(path.join(dir, "templates")) ||
+      fs.existsSync(path.join(dir, "package.json"))
+    ) {
+      return dir
+    }
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return path.resolve(fromDir)
+}
+
 function writeOptimizeReport(input: {
   dir: string
   id: string

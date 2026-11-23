@@ -101,6 +101,8 @@ export function runVerifierCommand(input: {
   command: string
   cwd: string
   timeoutMs?: number
+  /** 额外环境变量（benchmark 用它注入 before/after 产物目录供对比） */
+  env?: Record<string, string>
 }): Promise<VerifierResult> {
   const parsed = parseVerifierCommand(input.command)
   if ("error" in parsed) {
@@ -126,7 +128,7 @@ export function runVerifierCommand(input: {
         maxBuffer: 4 * 1024 * 1024,
         windowsHide: true,
         // 不继承交互式 stdin：verifier 不应等待用户输入
-        env: { ...process.env, CI: process.env.CI ?? "1" },
+        env: { ...process.env, CI: process.env.CI ?? "1", ...(input.env ?? {}) },
       },
       (err, stdout, stderr) => {
         const durationMs = Date.now() - started
