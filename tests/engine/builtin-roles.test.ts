@@ -17,7 +17,7 @@ import path from "node:path"
 import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
 import { parseWorkflowScript } from "../../src/engine/runtime/vm.js"
 import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
-import { structuredResult } from "./helpers.js"
+import { textResult } from "./helpers.js"
 
 const REPO = path.resolve(import.meta.dirname, "../..")
 const WORKFLOWS_DIR = path.join(REPO, "workflows")
@@ -46,7 +46,8 @@ function queueRunner(results: unknown[]) {
       calls.push({ label: options.label ?? "", model: options.model, phase: options.phase })
       const next = results.shift()
       if (next === undefined) throw new Error(`fake runner 调用超出预设序列（第 ${calls.length} 次，label=${options.label}）`)
-      return structuredResult(next)
+      // 字符串预设 = 已是原始文本（测宽容解析）；对象预设 = 序列化为常规文本输出
+      return textResult(typeof next === "string" ? next : JSON.stringify(next))
     },
   }
   return { runner, calls }
@@ -113,7 +114,7 @@ test("reviewer：一次 agent 调用，缺省 tier=big，空 findings 合法", a
   const { result, calls } = await run("reviewer", { task: "评审改动" }, [resultOf("completed", "无问题")])
   assert.equal(result.agentCount, 1)
   assert.equal(calls[0]!.model, "fake/big")
-  assert.deepEqual((result.result as { findings: unknown[] }).findings, [])
+  assert.equal((result.result as { findings: unknown[] }).findings.length, 0)
 })
 
 test("judge：一次 agent 调用，三态原样透传", async () => {
@@ -129,6 +130,30 @@ test("fixer：一次 agent 调用，缺省 tier=fast", async () => {
   const { result, calls } = await run("fixer", { task: "修复", findings }, [resultOf("completed")])
   assert.equal(result.agentCount, 1)
   assert.equal(calls[0]!.model, "fake/fast")
+})
+
+test("常规文本输出：坏 JSON 与非法 status 明确报错，不静默降级", async () => {
+  for (const bad of ["没有 JSON 的纯文本", JSON.stringify({ status: "maybe", summary: "s" })]) {
+    const { runner, calls } = queueRunner([bad])
+    await assert.rejects(
+      runWorkflow(readWorkflow("coder"), { args: { task: "t" }, agent: runner, resolveTier: tierResolver }),
+      /未找到 JSON 对象|JSON 解析失败|status 非法/,
+    )
+    assert.equal(calls.length, 1)
+  }
+})
+
+test("常规文本输出：文本里夹杂说明文字也能提取 JSON", async () => {
+  const wrapped = `评审完成，结论如下：
+${JSON.stringify(resultOf("completed", "ok"))}
+以上。`
+  const { runner } = queueRunner([wrapped])
+  const result = await runWorkflow(readWorkflow("reviewer"), {
+    args: { task: "t" },
+    agent: runner,
+    resolveTier: tierResolver,
+  })
+  assert.equal((result.result as { summary: string }).summary, "ok")
 })
 
 test("fixer：缺 findings 明确报错，不跑空修复", async () => {

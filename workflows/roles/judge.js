@@ -19,28 +19,29 @@ export const meta = {
   description: "依据任务、变更事实与评审证据裁决通过、继续修复或升级用户决策",
 }
 
-const RESULT_SCHEMA = {
-  type: "object",
-  required: ["status", "summary", "findings", "evidence", "nextStep"],
-  properties: {
-    status: { type: "string", enum: ["converged", "continue", "escalate"] },
-    summary: { type: "string" },
-    findings: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["severity", "location", "evidence", "recommendation"],
-        properties: {
-          severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
-          location: { type: "string" },
-          evidence: { type: "string" },
-          recommendation: { type: "string" },
-        },
-      },
-    },
-    evidence: { type: "array", items: { type: "string" } },
-    nextStep: { type: "string" },
-  },
+// 常规文本输出解析：agent 不再用 schema 强约束（避免宿主修复循环的长尾延迟），
+// 改为提示词要求 JSON、脚本侧宽容提取。解析失败/缺必需字段按可恢复错误上抛，不静默降级。
+function parseResult(value, allowedStatus) {
+  let text = value
+  if (typeof text !== "string") text = JSON.stringify(text)
+  const start = text.indexOf("{")
+  const end = text.lastIndexOf("}")
+  if (start < 0 || end <= start) throw new Error("角色输出中未找到 JSON 对象，原文开头：" + text.slice(0, 120))
+  let parsed
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1))
+  } catch (e) {
+    throw new Error("角色输出 JSON 解析失败：" + String(e?.message ?? e))
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("角色输出不是 JSON 对象")
+  if (!allowedStatus.includes(parsed.status)) {
+    throw new Error(`角色 status 非法：${JSON.stringify(parsed.status)}（允许：${allowedStatus.join(" / ")}）`)
+  }
+  return {
+    ...parsed,
+    findings: Array.isArray(parsed.findings) ? parsed.findings : [],
+    evidence: Array.isArray(parsed.evidence) ? parsed.evidence : [],
+  }
 }
 
 const task = (typeof args === "string" ? args : String(args?.task ?? "")).trim()
@@ -89,7 +90,6 @@ const result = await agent(prompt, {
   label: "judge",
   tier,
   timeoutMs: 3600000,
-  schema: RESULT_SCHEMA,
 })
 
-return result
+return parseResult(result, ["converged", "continue", "escalate"])

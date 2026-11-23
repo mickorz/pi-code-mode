@@ -272,7 +272,7 @@ coder → reviewer → judge
 - `status` 是唯一可用于判断分支的字段；不要从 `summary` 文字里猜结果。
 - `findings` 为空不等于任务通过——`reviewer` 空 findings 只代表没发现问题，最终判定归 `judge`。
 - `evidence` 是自查依据，可据此复核模型有没有真跑命令。
-- 结构化输出由 schema 约束：模型给不合规 JSON 时宿主会带着错误清单重试（最多 2 轮），仍不合规则该节点失败——这是预期行为，不是静默降级。
+- 角色输出为常规文本：提示词要求返回 JSON，脚本侧宽容提取（允许前后夹杂说明文字）；解析失败或 `status` 不在合法枚举内会明确报错，不静默降级。不用 schema 硬约束，避免宿主修复循环带来的长尾延迟。
 
 ## 6. 运行观察与证据
 
@@ -284,7 +284,7 @@ coder → reviewer → judge
 /workflows cancel <runId> # 停止在途 run（journal 保留，可 resume）
 ```
 
-`quality-loop` 的每个子角色是独立子流程（journal key 形如 `runId:wf0:0`），所以能看清是哪一轮、哪个角色慢或失败。日志中的失败会写明阶段与原因（如 `[schema] 结构化输出校验失败`）。
+`quality-loop` 的每个子角色是独立子流程（journal key 形如 `runId:wf0:0`），所以能看清是哪一轮、哪个角色慢或失败。日志中的失败会写明阶段与原因（如「角色输出 JSON 解析失败」）。
 
 ## 7. 边界：它们不会做什么
 
@@ -307,7 +307,7 @@ coder → reviewer → judge
 | `xxx 需要 args.task` | 缺必填参数；按第 3 节补齐 |
 | `fixer 需要 args.findings` | fixer 不接受空 findings；先把 judge/reviewer 的 findings 传进来 |
 | 档位 warning 后仍能跑 | 档位名不在 `model-tiers.json` 里，已回退会话默认模型；补配置或换档位名 |
-| 某节点 schema 校验失败 | 模型输出不合契约，adapter 会重试 2 轮；仍失败则该阶段失败，产物与错误写进日志 |
+| 报「角色输出 JSON 解析失败 / status 非法」 | 模型没按契约给 JSON；该阶段明确失败，产物与错误写进日志，重跑即可 |
 
 ## 9. 自定义
 
