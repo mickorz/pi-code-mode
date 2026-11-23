@@ -106,6 +106,8 @@ export function buildPatchGeneratorPrompt(input: PatchGeneratorInput): string {
    行号必须精确指向要替换的完整语句块；程序会用该行区间切片做替换。
    若你给了 oldText，它必须与该行区间内容一致（否则会被拒绝）。
 4. 只能修改下面列出的文件；不得新增文件、不得重命名、不得改动未列出的文件。
+   注意：本次是**单文件批次**——其他文件里的同类问题会在后续批次单独处理，
+   不要因为「其他文件未提供」就拒绝生成，也不要在 needsHumanDecision 里报为阻塞。
 5. 不得删除或弱化 export const meta。
 6. 不得引入新依赖；不得修改 Plan Required Validation。
 7. **允许在同一个文件内新增辅助函数**：常见改法是「用 2 个 edit 完成」——
@@ -148,39 +150,47 @@ export function normalizeNeedsHumanDecision(raw: unknown): NonNullable<PatchSet[
   }
   if (Array.isArray(raw)) {
     return raw
-      .map((x) => (typeof x === "string" ? { cluster: "（未指定）", question: x, options: [] } : (x as Record<string, unknown>)))
-      .map((x) => ({
-        cluster: String(x.cluster ?? "（未指定）"),
-        // 实测模型常用 verdict + reasons 表达结论（question 为空），
-        // 只认 question 会把最有价值的原因整段丢掉。
-        question: [
-          String(x.question ?? x.verdict ?? "").trim(),
-          ...(Array.isArray(x.reasons) ? (x.reasons as unknown[]).map((r) => `- ${String(r)}`) : []),
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        options: Array.isArray(x.options) ? (x.options as unknown[]).map(String) : [],
-      }))
+      .map((x) => (typeof x === "string" ? { cluster: "", question: x } : (x as Record<string, unknown>)))
+      .map((x) => toDecision(String(x.cluster ?? ""), x))
       .filter((x) => x.question)
   }
   if (raw && typeof raw === "object") {
     const o = raw as Record<string, unknown>
-    if (o.question !== undefined || o.cluster !== undefined) {
-      return [
-        {
-          cluster: String(o.cluster ?? "（未指定）"),
-          question: [
-            String(o.question ?? o.verdict ?? "").trim(),
-            ...(Array.isArray(o.reasons) ? (o.reasons as unknown[]).map((r) => `- ${String(r)}`) : []),
-          ]
-            .filter(Boolean)
-            .join("\n"),
-          options: Array.isArray(o.options) ? (o.options as unknown[]).map(String) : [],
-        },
-      ]
+    // 宽容判定：只要出现任一已知字段就当成决策对象。
+    // 实测模型用过 question/verdict/reason + reasons/evidence/suggestedSplit，
+    // 旧实现只认 question 或 cluster，导致整段高质量分析被丢弃、误报「空补丁」。
+    const known = ["question", "verdict", "reason", "reasons", "evidence", "suggestedSplit", "options", "cluster"]
+    if (known.some((k) => o[k] !== undefined)) {
+      return [toDecision(String(o.cluster ?? ""), o)]
     }
   }
   return []
+}
+
+/**
+ * 把模型给出的「不能自动改」对象统一成 {cluster, question, options}。
+ *
+ * 字段名不固定，见过：
+ *  - question / verdict / reason            → 结论标题
+ *  - reasons / evidence / suggestedSplit    → 逐条原因或分批建议
+ *  - options / minimalFixShape              → 可选方案
+ */
+function toDecision(cluster: string, raw: Record<string, unknown>): NonNullable<PatchSet["needsHumanDecision"]>[number] {
+  const title = String(raw.question ?? raw.verdict ?? raw.reason ?? "").trim()
+  // 合并而不是 ?? 短路：模型可能同时给 reasons 与 suggestedSplit，
+  // 短路会让后面的分批建议被丢掉。
+  const pointLines = [raw.reasons, raw.evidence, raw.suggestedSplit]
+    .filter((x): x is unknown[] => Array.isArray(x))
+    .flat()
+    .map((p) => `- ${String(p)}`)
+  const minimal = raw.minimalFixShape ? [`建议的最小改法：${String(raw.minimalFixShape)}`] : []
+  const options = (Array.isArray(raw.options) ? (raw.options as unknown[]).map(String) : []).concat(minimal)
+  const question = [title, ...pointLines].filter(Boolean).join("\n")
+  return {
+    cluster: cluster || "（未指定）",
+    question: question || "（模型未说明原因）",
+    options,
+  }
 }
 
 /** 从模型输出抠 PatchSet JSON */

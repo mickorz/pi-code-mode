@@ -13,7 +13,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { buildPatchGeneratorPrompt, parsePatchSet } from "../../src/engine/optimizer/patch-generator.js"
+import { buildPatchGeneratorPrompt, normalizeNeedsHumanDecision, parsePatchSet } from "../../src/engine/optimizer/patch-generator.js"
 import { parsePatchReview } from "../../src/engine/optimizer/patch-reviewer.js"
 import { applyPatchSet, validatePatchSet } from "../../src/engine/optimizer/patch-validator.js"
 import { listSessions, nextSessionId, readSession, writeSession } from "../../src/engine/optimizer/session-store.js"
@@ -448,4 +448,33 @@ test("选择可编辑文件：file 模式必须优先用户指定的 target（�
     return a.content.split("\n").length - b.content.split("\n").length
   })[0]!
   assert.equal(picked.file, "big.js", "必须选中用户指定的文件，不能被更小的文件顶掉")
+})
+
+// ---- 回归：模型用 reason/evidence 字段时不能被当成「空补丁」----
+test("normalizeNeedsHumanDecision：兼容 reason + evidence + minimalFixShape", () => {
+  const raw = {
+    reason: "命中点不可定位",
+    evidence: ["片段只到 L160", "真正 retries: 2 在 L184"],
+    options: ["A：放宽区间"],
+    minimalFixShape: "只把 retries: 2 改为 1",
+  }
+  const nhd = normalizeNeedsHumanDecision(raw)
+  assert.equal(nhd.length, 1, "必须识别为决策对象，不能返回空数组")
+  assert.match(nhd[0]!.question, /命中点不可定位/)
+  assert.match(nhd[0]!.question, /片段只到 L160/)
+  assert.match(nhd[0]!.question, /真正 retries: 2 在 L184/)
+  assert.ok(nhd[0]!.options.some((o) => o.includes("放宽区间")))
+  assert.ok(nhd[0]!.options.some((o) => o.includes("最小改法")))
+})
+
+test("normalizeNeedsHumanDecision：兼容 verdict + reasons + suggestedSplit", () => {
+  const nhd = normalizeNeedsHumanDecision({ verdict: "约束冲突", reasons: ["无 fs 能力"], suggestedSplit: ["第1批：A.js"] })
+  assert.equal(nhd.length, 1)
+  assert.match(nhd[0]!.question, /约束冲突/)
+  assert.match(nhd[0]!.question, /无 fs 能力/)
+  assert.match(nhd[0]!.question, /第1批/)
+})
+
+test("normalizeNeedsHumanDecision：完全未知结构 → 空数组（不瞎猜）", () => {
+  assert.deepEqual(normalizeNeedsHumanDecision({ foo: "bar" }), [])
 })
