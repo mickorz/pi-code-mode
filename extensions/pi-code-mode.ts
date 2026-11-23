@@ -292,7 +292,7 @@ export default function extension(pi: ExtensionAPI): void {
   registerScheduleCommand(pi, { scheduler })
 
   // ---- workflow 注册表顶层命令直跑（/<workflowId>）----
-  // 仅显式 manifest 模式注册；命名/冲突问题汇总为一条 warning（诊断由注册器返回）
+  // 内置 workflow 总是注册；项目 workflow 仅 manifest 模式注册；命名/冲突问题汇总为一条 warning（诊断由注册器返回）
   pi.on("session_start", (_event, ctx) => {
     const r = registerWorkflowDirectCommands(pi, { runManager, makeDeps, deliver }, ctx.cwd)
     if (r.skipped.length) {

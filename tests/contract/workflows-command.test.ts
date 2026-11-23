@@ -22,11 +22,14 @@ test("run 参数: 值中含等号时按首个等号切分", () => {
   assert.deepEqual(r.args, { q: "a=b" });
 });
 
-test("run 参数: 整段无等号 -> 自然语言指令落到 args.task", () => {
+test("run 参数: 整段无等号 -> 自然语言指令落到 args.task（两字任务也合法）", () => {
   const r = parseWorkflowsRunArgs(["coder", "修复", "登录", "超时"]);
   assert.equal(r.scriptPath, "coder");
   assert.deepEqual(r.args, { task: "修复 登录 超时" });
   assert.equal(r.error, undefined);
+
+  const shortTask = parseWorkflowsRunArgs(["coder", "修复"]);
+  assert.deepEqual(shortTask.args, { task: "修复" });
 });
 
 test("run 参数: 缺路径 / key=value 混用裸词 / 过短裸词 返回 error", () => {

@@ -109,7 +109,7 @@ export function parseWorkflowsRunArgs(
 ): { scriptPath?: string; args?: Record<string, unknown>; error?: string } {
   const [scriptPath, ...rest] = argv
   if (!scriptPath) return { error: "缺少脚本路径或注册表工作流名" }
-  // 自然语言形态：整段无等号 -> 作为 args.task（不足 3 字符的裸词仍按非法参数报错，避免手滑）
+  // 自然语言形态：整段无等号 -> 作为 args.task（不足 2 字符的裸词仍按非法参数报错，避免手滑）
   if (rest.length && !rest.some((token) => token.includes("="))) {
     const instruction = rest.join(" ").trim()
     if (instruction.length < 2) return { error: `参数 "${instruction}" 既不是 key=value 也不是指令文本` }

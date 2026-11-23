@@ -10,7 +10,7 @@ import { makeWorkflowTool, parseWorkflowsRunArgs } from "../../../src/tools/work
 import type { Subcommand } from "./types.js"
 
 export const runSubcommand: Subcommand = {
-  usage: "run <路径|注册表名> [k=v...]  后台执行脚本，结果自动回传会话",
+  usage: "run <路径|注册表名> [<指令文本> | k=v...]  后台执行脚本，结果自动回传会话",
   async run(argv, ctx, deps) {
     const cwd = ctx.cwd ?? process.cwd()
     const parsed = parseWorkflowsRunArgs(argv)

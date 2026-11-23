@@ -2,14 +2,16 @@
  * workflow 注册表顶层斜杠命令直跑（/<workflowId>）。
  *
  * 注册时机：session_start（pi 的 registerCommand 必须在会话装配期调用，且宿主不支持注销命令）。
- * 注册条件：仅显式 manifest 模式（.pi/workflows/register.json）——legacy 目录扫描的存量脚本
- *          数量不可控，注册成顶层命令会污染斜杠补全；这类项目继续用 /workflows run <路径>。
+ * 注册条件：内置 workflow 总是注册；项目 workflow 仅在显式 manifest 模式
+ *          （.pi/workflows/register.json）注册。legacy 目录扫描的存量脚本数量不可控，
+ *          不注册成顶层命令，继续用 /workflows run <路径>。
  *
  * 执行链复用：handler 不解析脚本、不碰 RunManager，直接转发 makeWorkflowTool
  *            （scriptPath=workflowId, background=true），与 /workflows run 完全同链。
  *
  * 调用时求值：pi 无法注销已注册命令，unregister 后旧命令残留到会话重启。handler 每次触发
- *            实时重查 manifest，已注销则只提示、绝不执行（第三方 pi-dynamic-workflows 同款防护）。
+ *            实时重查合并后的 registry；项目条目已注销则只提示、绝不执行。内置不依赖 manifest，
+ *            因此始终可以执行。
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
@@ -101,10 +103,11 @@ function makeDirectHandler(id: string, deps: WorkflowsCommandDeps) {
   return async (args: string, ctx: any): Promise<void> => {
     const cwd = ctx.cwd ?? process.cwd()
 
-    // 调用时求值：已注销则拒绝执行（宿主无法注销已注册命令）
+    // 调用时求值：项目 workflow 注销后拒绝执行（宿主无法注销命令）；
+    // 内置 workflow 不在 manifest 中，必须以合并后的 registry 为准。
     let exists = false
     try {
-      exists = loadManifest(cwd) != null && loadRegistry(cwd).has(id)
+      exists = loadRegistry(cwd).has(id)
     } catch (error) {
       ctx.ui.notify(`[/${id}] 读取 workflow 注册表失败: ${errorText(error)}`, "warning")
       return

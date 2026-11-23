@@ -1,7 +1,7 @@
 // 内置 workflow（随包 workflows/*.js）注册契约：
 //   - 无 manifest 的项目也能按名解析内置 workflow（安装即生效）
 //   - 内置带 builtin 标记，项目注册条目不带
-//   - 项目条目与内置同 id 时项目优先（手工改 manifest 的场景）
+//   - 项目条目与 legacy 目录均不得使用内置 id（拒绝遮蔽，避免顶层命令错跑）
 //   - 内置 id 视为保留：项目侧再注册同 id 被拒绝；内置不可注销
 //   - legacy 目录扫描模式仍只扫项目目录，内置不污染排他语义
 import { test } from "node:test"
@@ -106,10 +106,8 @@ test("内置不可注销：unregister 给出明确提示且不动 manifest", asy
   assert.ok(loadRegistry(dir).has("coder"))
 })
 
-test("项目条目优先：manifest 同 id 时遮蔽内置", () => {
+test("manifest 同 id：拒绝遮蔽内置 workflow", () => {
   const dir = emptyProject()
-  const mine = path.join(dir, "my-quality-loop.js")
-  fs.writeFileSync(mine, "export const meta = { id: 'quality-loop', name: 'my_quality_loop' }\nreturn await agent('x')")
   fs.writeFileSync(
     registerJsonPath(dir),
     JSON.stringify(
@@ -118,7 +116,13 @@ test("项目条目优先：manifest 同 id 时遮蔽内置", () => {
       2,
     ),
   )
-  const wf = loadRegistry(dir).get("quality-loop")!
-  assert.equal(wf.builtin, undefined)
-  assert.equal(wf.filePath, mine)
+  assert.throws(() => loadRegistry(dir), /内置 workflow 的保留 id/)
+})
+
+test("legacy 同 id：拒绝遮蔽内置 workflow", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-builtin-legacy-shadow-"))
+  const legacyDir = path.join(dir, ".opencode-workflows", "workflows")
+  fs.mkdirSync(legacyDir, { recursive: true })
+  fs.writeFileSync(path.join(legacyDir, "reviewer.js"), "export const meta = { id: 'reviewer', name: 'mine_reviewer' }\nreturn await agent('x')")
+  assert.throws(() => loadRegistry(dir), /内置 workflow 的保留 id.*兼容目录/)
 })

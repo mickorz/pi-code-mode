@@ -15,8 +15,7 @@
  * （如 `workflows/roles/*.js`、`workflows/flows/*.js`），递归扫描、按 meta.id 寻址；
  * 目录只用于人类分类，不参与 id 解析。由 builtinWorkflowsDir() 定位
  * （src 与 dist 两种运行形态均解析到包根）。
- * 合并顺序：项目注册表优先，内置补缺——同 id 时项目条目生效；内置 id 视为保留，
- * 项目侧再用同 id 注册会被拒绝（避免语义隐式漂移）。
+ * 内置 id 是保留 id：项目注册表与 legacy 目录均不得同名（发现即明确报错，避免内置命令静默丢失或错跑项目脚本）。
  *
  * workflowId = meta.id ?? meta.name（与现有脚本格式零冲突）
  * Schedule 只依赖 workflowId，不依赖文件名/LLM 判断（需求文档第 7 节）。
@@ -154,10 +153,8 @@ export function isBuiltinWorkflow(id: string): boolean {
 
 export function loadRegistry(directory: string): Map<string, RegisteredWorkflow> {
   const result = loadProjectRegistry(directory)
-  // 内置补缺：项目注册表优先，同名内置被项目条目遮蔽
-  for (const [id, workflow] of loadBuiltinWorkflows()) {
-    if (!result.has(id)) result.set(id, workflow)
-  }
+  // 项目来源已拒绝内置保留 id，此处直接并入，内置永远不会被项目脚本遮蔽。
+  for (const [id, workflow] of loadBuiltinWorkflows()) result.set(id, workflow)
   return result
 }
 
@@ -168,6 +165,9 @@ function loadProjectRegistry(directory: string): Map<string, RegisteredWorkflow>
   if (manifest) {
     const result = new Map<string, RegisteredWorkflow>()
     for (const entry of manifest.workflows) {
+      if (isBuiltinWorkflow(entry.id)) {
+        throw new Error(`workflowId "${entry.id}" 是内置 workflow 的保留 id，不能写入项目注册表`)
+      }
       const existing = result.get(entry.id)
       if (existing) {
         throw new Error(`workflowId "${entry.id}" 在注册表中重复：${existing.filePath} 与 ${entry.file}（register.json 被手工改动，id 必须唯一）`)
@@ -192,6 +192,9 @@ function loadProjectRegistry(directory: string): Map<string, RegisteredWorkflow>
       const script = fs.readFileSync(filePath, "utf-8")
       const { meta } = parseWorkflowScript(script)
       const id = meta.id ?? meta.name
+      if (isBuiltinWorkflow(id)) {
+        throw new Error(`workflowId "${id}" 是内置 workflow 的保留 id，不能放在兼容目录 ${filePath}`)
+      }
       const existing = result.get(id)
       if (existing) {
         throw new Error(`workflowId "${id}" 重复：${existing.filePath} 与 ${filePath}（meta.id ?? meta.name 必须全局唯一）`)

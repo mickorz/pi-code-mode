@@ -167,6 +167,20 @@ test("直跑 handler: 注销后只提示不执行", async () => {
   assert.equal(probe.calls(), 0)
 })
 
+test("直跑 handler: 内置 workflow 不依赖 manifest，命令会进入执行链", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-direct-builtin-")) // 故意没有 manifest
+  const { pi, commands } = makePi()
+  const probe = makeDepsProbe() // makeDeps 抛错：证明通过了 registry 存在检查、进入执行链
+  registerWorkflowDirectCommands(pi, probe.deps as any, dir)
+  const { ctx, notes } = makeCtx(dir)
+
+  assert.ok(commands.has("reviewer"), "内置 reviewer 应在无 manifest 时注册顶层命令")
+  await commands.get("reviewer").handler("评审当前改动", ctx)
+  assert.equal(probe.calls(), 1)
+  assert.match(notes[0].text, /执行失败/)
+  assert.ok(!notes[0].text.includes("已注销"))
+})
+
 test("直跑 handler: 参数非法时短路，不执行", async () => {
   const dir = makeProject([{ id: "smoke_test", file: "smoke-test.js" }])
   const { pi, commands } = makePi()

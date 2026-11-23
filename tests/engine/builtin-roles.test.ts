@@ -33,15 +33,9 @@ function readWorkflow(id: string): string {
   return fs.readFileSync(workflowPath(id), "utf-8")
 }
 
-/** 临时项目：把五个脚本拷进 registry 扫描目录，按 meta.id 解析（模拟真实注册后状态） */
+/** 临时项目：内置 workflow 随包自动并入 registry，无需复制或注册。 */
 function tmpProjectWithBuiltins(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-builtin-"))
-  const target = path.join(dir, ".opencode-workflows", "workflows")
-  fs.mkdirSync(target, { recursive: true })
-  for (const id of ["coder", "reviewer", "judge", "fixer"]) {
-    fs.copyFileSync(workflowPath(id), path.join(target, `${id}.js`))
-  }
-  return dir
+  return fs.mkdtempSync(path.join(os.tmpdir(), "wf-builtin-"))
 }
 
 /** 按调用顺序返回预设结构化结果，并记录每次调用的 model/label */
