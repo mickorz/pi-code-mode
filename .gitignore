@@ -20,3 +20,7 @@ dist/
 .pi/workflows/reports/
 .opencode-workflows/
 dev-examples/sample-project-acceptance/.journal/
+
+# optimize 会话（含 workspace 副本、报告、备份）是运行产物，不入库
+.pi/workflows/optimizations/
+dev-examples/*/.pi/
