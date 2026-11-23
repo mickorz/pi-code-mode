@@ -63,6 +63,38 @@ export function renderRunStatus(run: ReturnType<RunManager["status"]>): string {
 }
 
 /**
+ * 斜杠命令参数切分：按空白分隔，支持用 "..." 或 '...' 包裹含空格的单个值（引号本身丢弃）。
+ * 用途：`/coder task="修复 登录 超时"` 这类必带空格的参数；未闭合引号按到末尾处理。
+ * 纯函数，命令层与测试共用。
+ */
+export function splitCommandArgs(text: string): string[] {
+  const out: string[] = []
+  let current = ""
+  let quote: '"' | "'" | null = null
+  for (const ch of text) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        out.push(current)
+        current = ""
+      }
+      continue
+    }
+    current += ch
+  }
+  if (current) out.push(current)
+  return out
+}
+
+/**
  * /workflows run 子命令参数解析：首个 token 为脚本路径或注册表工作流名，
  * 其余 token 按 key=value 收进 args（值能 JSON.parse 则转类型，否则保持字符串）。
  * 纯函数，命令层与测试共用。

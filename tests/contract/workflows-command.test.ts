@@ -1,7 +1,7 @@
 // /workflows run 子命令参数解析契约（命令层与 workflow 工具共用）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseWorkflowsRunArgs, renderRunStatus } from "../../src/tools/workflow-tools.js";
+import { parseWorkflowsRunArgs, renderRunStatus, splitCommandArgs } from "../../src/tools/workflow-tools.js";
 import { RunManager } from "../../src/manager/run-manager.js";
 
 test("run 参数: 仅脚本路径", () => {
@@ -25,6 +25,28 @@ test("run 参数: 值中含等号时按首个等号切分", () => {
 test("run 参数: 缺路径或非法 token 返回 error", () => {
   assert.match(parseWorkflowsRunArgs([]).error!, /缺少/);
   assert.match(parseWorkflowsRunArgs(["a.js", "flag"]).error!, /key=value/);
+});
+
+test("斜杠参数切分: 双引号/单引号包裹含空格的值, 引号丢弃", () => {
+  assert.deepEqual(splitCommandArgs('coder task="修复 登录 超时" tier=fast'), [
+    "coder",
+    "task=修复 登录 超时",
+    "tier=fast",
+  ]);
+  assert.deepEqual(splitCommandArgs("quality-loop task='两个 词' maxRepairRounds=2"), [
+    "quality-loop",
+    "task=两个 词",
+    "maxRepairRounds=2",
+  ]);
+  assert.deepEqual(splitCommandArgs("   "), []);
+  assert.deepEqual(splitCommandArgs('a "b c"'), ["a", "b c"]);
+});
+
+test("斜杠参数切分后仍可解析为 args: 带空格的成句 task", () => {
+  const argv = splitCommandArgs('/coder task="修复 登录接口 超时重试" tier=fast');
+  const r = parseWorkflowsRunArgs(argv);
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.args, { task: "修复 登录接口 超时重试", tier: "fast" });
 });
 
 test("cancel/stop 选集: 只停在途运行, cancel 未知 id 返回 false", async () => {

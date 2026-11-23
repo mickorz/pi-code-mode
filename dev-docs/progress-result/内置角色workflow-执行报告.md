@@ -106,6 +106,8 @@ P3-4 关键观察（证明闭环的每道闸都真的在工作）：
 3. 复审只跑了 18.2s（增量核对），第 2 轮 judge 判 `converged`；
 4. 最终产物验证：`git check-ignore` 命中 `.gitignore:23`，`calc.js`/`calc-check.js` 仍可入库。
 
+**联调中顺手修掉的口径问题**：`/coder task="两个 词"` 这类带空格的成句参数原本会被 `/\s+/` 切碎（顶层直跑与 `/workflows run` 两条路径都是），已抽出共享的 `splitCommandArgs()`（`src/tools/workflow-tools.ts`）支持 `"..."` / `'...'` 包裹，两处调用点改为共用，补 2 条 contract 断言（16/16）。否则文档里的成句示例都跑不通。
+
 **发现的行为特征**：第 1 轮 reviewer 触发一次 schema 修复循环——模型给出了缺 `recommendation` 的 finding，adapter 校验失败后重试通过（该次 138s）。这是 schema 契约生效的预期表现（要求每条 finding 可执行），不是缺陷；若后续频繁发生，再考虑放宽 `recommendation` 为可选。
 
 证据文件（已 gitignore，不入库）：`dev-examples/builtin-roles-smoke/logs/A-host-warmup.log`、`B-coder-fast.log`、`C-reviewer-big.log`、`D-quality-loop.log`，以及 `.pi/workflows/journal/run-17953994*.json`。

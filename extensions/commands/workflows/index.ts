@@ -20,6 +20,7 @@ import { registerSubcommand, unregisterSubcommand } from "./register.js"
 import { uiSubcommand } from "./navigator/index.js"
 import { watchSubcommand } from "./watch.js"
 import { completeWorkflowsArgs } from "./completions.js"
+import { splitCommandArgs } from "../../../src/tools/workflow-tools.js"
 import type { Subcommand, WorkflowsCommandDeps } from "./types.js"
 
 /** 路由表：cancel/stop、register/reg、unregister/unreg 为同义别名，各指向同一实现 */
@@ -62,7 +63,7 @@ export function registerWorkflowsCommand(pi: ExtensionAPI, deps: WorkflowsComman
     getArgumentCompletions: (prefix: string) =>
       completeWorkflowsArgs(prefix, { runManager: deps.runManager, cwd: process.cwd() }),
     handler: async (args: string, ctx: any) => {
-      const argv = args.trim().split(/\s+/).filter(Boolean)
+      const argv = splitCommandArgs(args)
       if (!argv.length) {
         ctx.ui.notify(helpText(), "info")
         return

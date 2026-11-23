@@ -14,7 +14,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { loadManifest, loadRegistry } from "../../../src/engine/runtime/workflow-registry.js"
-import { makeWorkflowTool, parseWorkflowsRunArgs } from "../../../src/tools/workflow-tools.js"
+import { makeWorkflowTool, parseWorkflowsRunArgs, splitCommandArgs } from "../../../src/tools/workflow-tools.js"
 import type { WorkflowsCommandDeps } from "./types.js"
 
 /**
@@ -114,7 +114,7 @@ function makeDirectHandler(id: string, deps: WorkflowsCommandDeps) {
       return
     }
 
-    const tokens = args.trim() ? args.trim().split(/\s+/) : []
+    const tokens = splitCommandArgs(args)
     const parsed = parseWorkflowsRunArgs([id, ...tokens])
     if (parsed.error || !parsed.scriptPath) {
       ctx.ui.notify(parsed.error ?? `用法: /${id} [key=value ...]`, "warning")
