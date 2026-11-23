@@ -10,6 +10,8 @@
 import fs from "node:fs"
 import path from "node:path"
 
+import { writeFileAtomic } from "../governance/file-lock.js"
+
 import type { OptimizationSession, OptimizationStatus } from "./session-types.js"
 
 export const OPTIMIZE_DIR = path.join(".pi", "workflows", "optimizations")
@@ -76,7 +78,8 @@ export function writeSession(cwd: string, session: OptimizationSession): void {
   const p = sessionPaths(cwd, session.id)
   fs.mkdirSync(p.dir, { recursive: true })
   const next: OptimizationSession = { ...session, updatedAt: new Date().toISOString() }
-  fs.writeFileSync(p.session, JSON.stringify(next, null, 2), "utf8")
+  // 原子写：session.json 损坏会让后续「找不到优化会话」，且无法从备份恢复
+  writeFileAtomic(p.session, JSON.stringify(next, null, 2))
 }
 
 /** 原地更新状态与校验结果 */
@@ -121,7 +124,23 @@ export function listSessions(cwd: string): OptimizationSession[] {
 const TERMINAL: OptimizationStatus[] = ["applied", "rolled-back", "rejected", "failed", "discarded", "stale"]
 
 export function findOpenSession(cwd: string, targetRef: string): OptimizationSession | undefined {
-  return listSessions(cwd).find((s) => s.target.ref === targetRef && !TERMINAL.includes(s.status))
+  // P2-4：`./wf` 与 `wf` 是同一目标，用解析后的绝对路径比较，
+  // 否则同一目标会建出两个会话、互相看不见。
+  let needle = targetRef
+  try {
+    needle = path.resolve(cwd, targetRef)
+  } catch {
+    /* 保留原串 */
+  }
+  return listSessions(cwd).find((s) => {
+    if (TERMINAL.includes(s.status)) return false
+    if (s.target.ref === targetRef) return true
+    try {
+      return path.resolve(cwd, s.target.ref) === needle
+    } catch {
+      return false
+    }
+  })
 }
 
 /** 相对路径统一正斜杠（Windows 下 sourceHashes 键必须稳定） */

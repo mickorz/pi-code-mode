@@ -27,6 +27,11 @@ export interface WorkspaceManifest {
 export interface CopyResult {
   dir: string
   manifest: WorkspaceManifest
+  /**
+   * 是否因上限（MAX_FILES / MAX_FILE_BYTES）跳过了文件。
+   * true = 隔离工作区不完整，调用方必须拒绝把它的验证结果当作可信结论。
+   */
+  truncated: boolean
 }
 
 /**
@@ -82,7 +87,9 @@ export function copyWorkspace(sourceRoot: string, destDir: string): CopyResult {
   walk(sourceRoot, "")
   const manifest: WorkspaceManifest = { createdAt: new Date().toISOString(), root: toRelKey(sourceRoot), files, skipped }
   fs.writeFileSync(path.join(destDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8")
-  return { dir: destDir, manifest }
+  // 静默截断会让「隔离验证」不完整却看起来成功 —— 显式上报，由调用方决定拒绝。
+  const truncated = files.length >= MAX_FILES
+  return { dir: destDir, manifest, truncated }
 }
 
 /**

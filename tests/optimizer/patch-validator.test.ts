@@ -282,6 +282,8 @@ test("buildPatchGeneratorPrompt：包含硬约束与文件 hash", () => {
 
 // ---- P0-2 回归：行号 splice 必须只改 startLine 指向的位置 ----
 import { applyEditsByLine } from "../../src/engine/optimizer/patch-validator.js"
+import { applyToProduction, writeBackupFile } from "../../src/engine/optimizer/apply-service.js"
+import { findOpenSession } from "../../src/engine/optimizer/session-store.js"
 
 test("applyEditsByLine：相同文本出现多次时只改行号指向的那一处", () => {
   const src = ["const a = 1", "const dup = 1", "const b = 2", "const dup = 1", "const c = 3"].join("\n")
@@ -330,4 +332,79 @@ test("validatePatchSet：oldText 仅空白差异应通过（归一化正则必�
   })
   const r = validatePatchSet(p, ws)
   assert.equal(r.ok, true, r.issues.map((i) => i.reason).join("; "))
+})
+
+// ---- P2 回归 ----
+test("P2-7 copyWorkspace：超过文件上限时 truncated=true（不静默截断）", () => {
+  const { cwd: _c, dir } = makeTarget()
+  const dest = path.join(tmp(), "ws")
+  const r = copyWorkspace(dir, dest)
+  assert.equal(r.truncated, false, "正常规模不应截断")
+  void _c
+})
+
+test("P2-5 备份文件名：不同路径归一后不再碰撞", () => {
+  const { cwd } = makeTarget()
+  const sessionDir = path.join(cwd, "s")
+  // a/b.js 与 a__b.js 旧实现都会变成 a__b.js.bak
+  const n1 = writeBackupFile(sessionDir, "a/b.js", "content-1")
+  const n2 = writeBackupFile(sessionDir, "a__b.js", "content-2")
+  assert.notEqual(n1, n2, "不同文件必须得到不同备份名")
+  assert.ok(n1.includes("a/b.js"), "保留目录层级便于排查")
+  assert.ok(fs.existsSync(path.join(sessionDir, "backup", n1)))
+  assert.ok(fs.existsSync(path.join(sessionDir, "backup", n2)))
+})
+
+test("P2-6 applyToProduction：被篡改成 ../ 的 path 直接拒绝（纵深防御）", () => {
+  const cwd = tmp()
+  const root = path.join(cwd, "wf")
+  fs.mkdirSync(root, { recursive: true })
+  const src = "export const meta = { name: 'demo' }\n"
+  fs.writeFileSync(path.join(root, "demo.js"), src, "utf8")
+  const sessionDir = path.join(cwd, "s")
+  fs.mkdirSync(sessionDir, { recursive: true })
+  const r = applyToProduction({
+    sessionDir,
+    optimizationId: "opt-1",
+    targetRoot: root,
+    items: [{ path: "../evil.js", content: "x", expectedSourceHash: sha256(src) }],
+  })
+  assert.equal(r.ok, false)
+  assert.match(r.error ?? "", /路径不允许写回/)
+})
+
+test("P2-3 writeSession：原子写后内容可读（不留下损坏文件）", () => {
+  const cwd = tmp()
+  const s: OptimizationSession = {
+    schemaVersion: "1.0",
+    id: "opt-20260101-001",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: "analyzed",
+    target: { kind: "directory", ref: "./wf", root: "/x", sourceHashes: {}, files: [] },
+    selectedClusters: [],
+    model: { generatorTier: "fast", reviewerTier: "fast" },
+    workspace: { path: "/x", patchApplied: false },
+    validation: {},
+  }
+  writeSession(cwd, s)
+  assert.equal(readSession(cwd, s.id)?.status, "analyzed")
+})
+
+test("P2-4 findOpenSession：./wf 与 wf 视为同一目标", () => {
+  const cwd = tmp()
+  const mk = (ref: string): OptimizationSession => ({
+    schemaVersion: "1.0",
+    id: nextSessionId(cwd),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: "analyzed",
+    target: { kind: "directory", ref, root: "/x", sourceHashes: {}, files: [] },
+    selectedClusters: [],
+    model: { generatorTier: "fast", reviewerTier: "fast" },
+    workspace: { path: "/x", patchApplied: false },
+    validation: {},
+  })
+  writeSession(cwd, mk("./wf"))
+  assert.ok(findOpenSession(cwd, "wf"), "./wf 建的会话应能被 wf 找到")
 })

@@ -111,6 +111,25 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   const tier = flagValue(argv, "--tier") ?? GENERATOR_TIER
   const rulesArg = flagValue(argv, "--rules")
   const requested = rulesArg ? rulesArg.split(",").map((s) => s.trim()).filter(Boolean) : undefined
+  // P2-8：usage 写着「明确不自动改」的规则，若用户显式 --rules 请求，必须再给 --unsafe-rules。
+  // 否则「默认安全」形同虚设：一条 --rules SERIAL-002 就能把并行化建议推进自动改流程。
+  if (requested) {
+    const unsafeAsked = requested.filter((r) => AUTO_UNSAFE_RULES.has(r))
+    if (unsafeAsked.length > 0 && !argv.includes("--unsafe-rules")) {
+      ctx.ui.notify(
+        [
+          `[拒绝] 以下规则默认不自动改（需人工判断副作用/运行语义）：${unsafeAsked.join(", ")}`,
+          "",
+          "确认要尝试自动改，请显式加 --unsafe-rules：",
+          `  /workflows optimize ${ref} --rules ${unsafeAsked.join(",")} --unsafe-rules`,
+          "",
+          "注意：并行化/并发预算类改动必须先用真实 Benchmark 证明产物一致，否则极易「快了但错了」。",
+        ].join("\n"),
+        "warning",
+      )
+      return
+    }
+  }
 
   // 同 target 的未完成会话：默认继续，--fresh 才新建（避免用户重复跑丢掉已验证工作）
   if (!fresh) {
@@ -265,7 +284,23 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   }
 
   // ④ 复制隔离工作区
-  const { manifest } = copyWorkspace(resolved.root, p.workspace)
+  const wsCopy = copyWorkspace(resolved.root, p.workspace)
+  const manifest = wsCopy.manifest
+  // P2-7：工作区不完整时，后续所有静态/benchmark 结论都不可信 → 直接拒绝
+  if (wsCopy.truncated) {
+    updateSession(cwd, id, { status: "rejected", reason: "目标目录文件数超过上限，隔离工作区不完整" })
+    ctx.ui.notify(
+      [
+        `[拒绝优化] ${id}`,
+        `目标目录文件数超过隔离工作区上限（${manifest.files.length} 个已复制），工作区不完整。`,
+        "在不完整的工作区上做的验证结论不可信，因此不生成候选。",
+        "",
+        "请缩小目标范围（指定单文件或更小目录）。",
+      ].join("\n"),
+      "warning",
+    )
+    return
+  }
 
   // ⑤ 生成补丁
   // 只传证据行附近的窗口（±40 行）：全文 + 规则文档会让 big 档超 240s（实测）
@@ -545,6 +580,8 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
       try {
         benchArgs = JSON.parse(argsRaw)
       } catch {
+        // P2-10：不能停在 patched（会被 findOpenSession 挡住后续重跑）
+        updateSession(cwd, id, { status: "failed", reason: "--args 不是合法 JSON，benchmark 未执行" })
         ctx.ui.notify(`--args 不是合法 JSON：${argsRaw}`, "warning")
         return
       }
@@ -593,7 +630,19 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
       }
     }
 
-    ctx.ui.notify(`运行真实 Benchmark（before: 生产目录 / after: 工作区，args=${JSON.stringify(benchArgs)}）…`, "info")
+    // P2-9：before 在生产目录真实执行，可能重复写产物/调外部服务。必须让用户先看到。
+    ctx.ui.notify(
+      [
+        "运行真实 Benchmark：",
+        `  before：生产目录 ${resolved.root}（**会在真实目录执行一次 workflow**）`,
+        `  after ：隔离工作区 ${p.workspace}`,
+        `  args  ：${JSON.stringify(benchArgs)}`,
+        "",
+        "注意：若该 workflow 会写产物/调用外部服务，before 轮会在生产目录重复发生一次。",
+        "如需避免，请改用专门的可重复执行 args，或先备份生产产物目录。",
+      ].join("\n"),
+      "info",
+    )
     const verdict = await runRealBenchmark({
       scriptPath: path.join(resolved.root, path.basename(resolved.ref)),
       cwd,

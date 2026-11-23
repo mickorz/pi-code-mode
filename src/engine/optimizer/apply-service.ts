@@ -13,7 +13,7 @@ import fs from "node:fs"
 import path from "node:path"
 
 import { writeFileAtomic } from "../governance/file-lock.js"
-import { sha256 } from "./target-resolver.js"
+import { isAllowedPatchPath, sha256 } from "./target-resolver.js"
 import { toRelKey } from "./session-store.js"
 
 export interface BackupEntry {
@@ -48,10 +48,13 @@ export function readBackupManifest(sessionDir: string): BackupManifest | undefin
 /** 把文件内容备份到会话 backup/ 目录（不覆盖已有备份：同会话重复 apply 应被上层拒绝） */
 export function writeBackupFile(sessionDir: string, relPath: string, content: string): string {
   const dir = backupDir(sessionDir)
-  fs.mkdirSync(dir, { recursive: true })
-  const safe = toRelKey(relPath).replace(/[\\/]/g, "__")
-  const name = `${safe}.bak`
-  fs.writeFileSync(path.join(dir, name), content, "utf8")
+  const rel = toRelKey(relPath)
+  // P2-5：保留目录层级 + 追加 hash 后缀，避免 `a/b.js` 与 `a__b.js` 归一成同名互相覆盖
+  const hash = sha256(content).replace(/^sha256:/, "").slice(0, 12)
+  const name = `${rel}.${hash}.bak`
+  const abs = path.join(dir, name)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, content, "utf8")
   return name
 }
 
@@ -95,6 +98,13 @@ export function applyToProduction(input: {
   targetRoot: string
   items: ApplyPlanItem[]
 }): ApplyResult {
+  // ⓪ 纵深防御：不信任上游 validator，自己再查一次路径白名单。
+  // patchset.json 是磁盘文件，可能被手工篡改（如把 path 改成 `../evil.js`）。
+  const badPaths = input.items.map((i) => i.path).filter((rel) => !isAllowedPatchPath(rel))
+  if (badPaths.length > 0) {
+    return { ok: false, applied: [], error: `路径不允许写回：${badPaths.join(", ")}` }
+  }
+
   // ① 全量 hash 校验
   const stale: NonNullable<ApplyResult["stale"]> = []
   for (const item of input.items) {
