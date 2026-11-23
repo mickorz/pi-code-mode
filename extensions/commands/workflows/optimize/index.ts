@@ -23,6 +23,7 @@ import { renderBenchmarkVerdict, runRealBenchmark, type RealRunOutcome } from ".
 import { applyToProduction, readBackupManifest, rollbackFromBackup } from "../../../../src/engine/optimizer/apply-service.js"
 import { renderVerifier, runVerifierCommand, type VerifierResult } from "../../../../src/engine/optimizer/verifier-runner.js"
 import { makeWorkflowTool } from "../../../../src/tools/workflow-tools.js"
+import { openInBrowser, shouldAutoOpen } from "../../../../src/utils/open-browser.js"
 import {
   findOpenSession,
   nextSessionId,
@@ -804,12 +805,35 @@ async function runOptimizeBody(
 
   const files = validation.normalized.files.length
   const edits = validation.normalized.files.reduce((n, f) => n + f.edits.length, 0)
+
+  // 生成 HTML 报告（零依赖，file:// 可直开），供写完摘要后自动打开
+  let reportPath: string | undefined
+  try {
+    reportPath = writeOptimizeReport(
+      p.dir,
+      [
+        finalStatus === "rejected" ? `[候选被拒绝] ${id}` : `[优化候选待验证] ${id}`,
+        `目标：${ref}`,
+        `问题簇：${selected.map((c) => c.ruleId).join(", ")}`,
+        `修改：${files} 个文件 / ${edits} 处补丁`,
+        `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条`,
+        ...blockers.map((b) => `- ${b}`),
+      ].join("\n"),
+      reviewMd,
+    )
+  } catch {
+    reportPath = undefined
+  }
+
   const summaryText = [
     finalStatus === "rejected" ? `[候选被拒绝] ${id}` : `[优化候选待验证] ${id}`,
     "",
     `目标：${ref}`,
     `问题簇：${selected.map((c) => c.ruleId).join(", ")}`,
     `修改：${files} 个文件 / ${edits} 处补丁`,
+    // 必须列出具体文件：已知失败形态是「改对了但改错了地方」，
+    // 只写「1 个文件」用户没法发现改错目标。
+    ...validation.normalized.files.map((f) => `  - ${f.path}（${f.edits.length} 处）`),
     `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条${targetResolved ? "（目标规则已解决）" : staticTargetResolved ? "（静态未新增）" : "（目标规则仍在）"}`,
     ...(unresolvedNote ? [`注意：${unresolvedNote}`] : []),
     patchReview ? `补丁审查：${patchReview.decision}${patchReview.findings.length ? `（${patchReview.findings.length} 项发现）` : ""}` : "补丁审查：未完成",
@@ -817,10 +841,18 @@ async function runOptimizeBody(
     "原文件未修改。",
     ...(blockers.length ? ["", ...blockers.map((b) => `- ${b}`)] : []),
     "",
-    `审阅：${p.review}`,
+    `报告：${reportPath ?? p.review}`,
     `工作区：${p.workspace}（${manifest.files.length} 个文件已复制）`,
   ].join("\n")
   notify(summaryText, finalStatus === "rejected" ? "warning" : "info")
+
+  // 自动打开报告：optimize 完成后的产物就是「改了什么 + diff + 审查 + 结论」，
+  // 用户明确要求完成后能看到报告。--no-open 或 CI 环境跳过。
+  if (reportPath && !argv.includes("--no-open") && shouldAutoOpen().open) {
+    const r = await openInBrowser(reportPath)
+    if (!r.ok) notify(`报告已生成但打开失败（${r.error?.slice(0, 60)}）：${reportPath}`, "warning")
+  }
+
   // 后台模式下命令已提前返回，需要把摘要 return 出去交给 deliver 回传；
   // 同时把最后一个阶段节点收尾成 ok（否则 status 里永远显示 running）
   runtime?.sealStage()
@@ -1131,6 +1163,32 @@ async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
     "info",
   )
   void deps
+}
+
+/**
+ * 把 optimize 结论写成单文件 HTML（零依赖，file:// 可直接打开）。
+ *
+ * 为什么不用 after dashboard：optimize 的交付物是「改了什么 + 为什么 + 验证到哪一步」，
+ * 即 review.md 的内容；dashboard 只展示问题分布，看不到 diff 与审查意见。
+ */
+function writeOptimizeReport(dir: string, summary: string, reviewMd: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  const html = [
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>Optimize 报告</title><style>',
+    'body{margin:0;background:#F6F8FB;color:#253247;font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;font-size:14px;line-height:1.7}',
+    '.page{max-width:1100px;margin:0 auto;padding:24px 32px 64px}',
+    '.card{background:#fff;border:1px solid #E7ECF2;border-radius:12px;padding:24px;margin-bottom:20px}',
+    'h1{font-size:20px;margin:0 0 16px}h2{font-size:15px;margin:0 0 12px}',
+    'pre{white-space:pre-wrap;word-break:break-word;font-family:"SF Mono",Consolas,monospace;font-size:12.5px;',
+    'background:#F8FAFC;border:1px solid #E7ECF2;border-radius:8px;padding:14px;margin:0;color:#34455C}',
+    "</style></head><body><div class=\"page\">",
+    '<div class="card"><h1>Optimize 结论</h1><pre>' + esc(summary) + "</pre></div>",
+    '<div class="card"><h2>完整审阅（review.md）</h2><pre>' + esc(reviewMd) + "</pre></div>",
+    "</div></body></html>",
+  ].join("")
+  const file = path.join(dir, "optimize-report.html")
+  fs.writeFileSync(file, html, "utf8")
+  return file
 }
 
 /** 简易 unified diff（按行 LCS 太重，这里只做前后行对比，足够 review 阅读） */
