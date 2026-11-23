@@ -147,3 +147,37 @@ test("renderBenchmarkVerdict：包含结论/质量门/指标表/原因", async (
   assert.match(md, /\| durationMs \|/)
   assert.match(md, /未通过原因/)
 })
+
+// ---- M5 回归：before 失败不能作为基线 ----
+test("rejected：before 执行失败 → 基线不可比（不能因 after 跑通就算改善）", async () => {
+  const v = await runRealBenchmark({
+    scriptPath: "wf.js",
+    cwd: "/x",
+    run: runOf(outcome({ ok: false, error: "before boom" }), outcome({ durationMs: 30_000 })),
+    qualityGate: VERIFIER_PASS,
+    runVerifier: runVerifierOk,
+  })
+  assert.equal(v.accepted, false)
+  assert.ok(v.reasons.some((r) => /before 执行失败，基线不可比/.test(r)), v.reasons.join("; "))
+})
+
+// ---- M8 回归：token 拿不到时应为 undefined（不虚构 0），且比较时跳过 ----
+test("toBenchmarkMetrics：token 缺失时保持 undefined 而非 0", () => {
+  const m = toBenchmarkMetrics({ ok: true, durationMs: 1000, agents: 2, failedAgents: 0 })
+  assert.equal(m.inputTokens, undefined, "不能虚构 0")
+  assert.equal(m.outputTokens, undefined)
+})
+
+test("comparison：一侧 token 缺失时该指标不计入改善", async () => {
+  const v = await runRealBenchmark({
+    scriptPath: "wf.js",
+    cwd: "/x",
+    run: runOf(outcome({ inputTokens: undefined }), outcome({ durationMs: 50_000, inputTokens: undefined })),
+    qualityGate: VERIFIER_PASS,
+    runVerifier: runVerifierOk,
+  })
+  const tokenCmp = v.comparisons.find((c) => c.metric === "inputTokens")
+  // 两侧都 undefined → 该指标不应出现在 comparisons
+  assert.equal(tokenCmp, undefined, "两侧都无数据时不该产生 token 比较项")
+  assert.equal(v.accepted, true, "duration 改善仍应可 accept")
+})

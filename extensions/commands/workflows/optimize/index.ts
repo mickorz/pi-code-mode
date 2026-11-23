@@ -21,6 +21,7 @@ import { applyPatchSet, validatePatchSet } from "../../../../src/engine/optimize
 import { renderReview } from "../../../../src/engine/optimizer/review-renderer.js"
 import { renderBenchmarkVerdict, runRealBenchmark, type RealRunOutcome } from "../../../../src/engine/optimizer/benchmark-adapter.js"
 import { applyToProduction, readBackupManifest, rollbackFromBackup } from "../../../../src/engine/optimizer/apply-service.js"
+import { renderVerifier, runVerifierCommand, type VerifierResult } from "../../../../src/engine/optimizer/verifier-runner.js"
 import { makeWorkflowTool } from "../../../../src/tools/workflow-tools.js"
 import {
   findOpenSession,
@@ -32,7 +33,7 @@ import {
   writeSession,
 } from "../../../../src/engine/optimizer/session-store.js"
 import type { OptimizationSession, PatchReview, PatchSet } from "../../../../src/engine/optimizer/session-types.js"
-import { resolveTarget } from "../../../../src/engine/optimizer/target-resolver.js"
+import { resolveTarget, sha256 as sha256Of } from "../../../../src/engine/optimizer/target-resolver.js"
 import { copyWorkspace, detectSourceChanges } from "../../../../src/engine/optimizer/workspace.js"
 import type { Subcommand } from "../types.js"
 
@@ -452,12 +453,15 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   }
 
   const applied = applyPatchSet(validation.normalized, p.workspace)
+  // 记录工作区最终内容 hash（apply 前校验 review 后未被改动）
+  const wsHashes: Record<string, string> = {}
+  for (const f of applied.files) {
+    wsHashes[f.path] = f.afterHash
+  }
   updateSession(cwd, id, {
     status: "patched",
-    workspace: { path: p.workspace, patchApplied: true },
+    workspace: { path: p.workspace, patchApplied: true, hashes: wsHashes },
     validation: { patchSchema: "pass" },
-    model: { ...session.model, generatorTier: usedTier },
-    ...(genDiag.length ? { reason: genDiag.join("; ") } : {}),
   })
 
   // ⑦ 生产文件必须未被改动
@@ -530,6 +534,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   // 默认不跑：game-requirement-audit 这类脚本单次 run 几十分钟，before/after 就是 1~2 小时。
   // 用户必须明确要求并给出 args（多数 workflow 需要 date 等必填参数）。
   let benchmarkText: string | undefined
+  let verifierResult: VerifierResult | undefined
   let benchmarkAccepted = false
   let qualityStatus: "pass" | "fail" | "unavailable" = "unavailable"
   const benchEnabled = argv.includes("--benchmark")
@@ -558,19 +563,32 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
       const out: any = await tool.execute("bench", { scriptPath: scriptAbs, args: benchArgs, background: false }, undefined, undefined, undefined)
       const durationMs = Date.now() - t0
       const text: string = out?.content?.[0]?.text ?? ""
-      const failed = Boolean(out?.isError) || /执行失败|\[workflow 失败\]/i.test(text)
-      // 指标从 runManager 快照聚合（真实 agent 记录，不是估算）
-      const runs = deps.runManager.list()
-      const latest = runs[0]
-      const detail = latest ? deps.runManager.status(latest.runId) : undefined
-      const agents = detail?.agents ?? []
+      const failed = Boolean(out?.isError) || /\[workflow 失败\]|执行失败/.test(text)
+
+      // P0-4：绝不猜 runId。此前用 runManager.list()[0]，并发时可能拿到别的 run
+      // 的 agents/tokens/failedAgents，before/after 判定建立在错误数据上。
+      const idMatch = /runId=([A-Za-z0-9_-]+)/.exec(text)
+      const runId = idMatch?.[1]
+      const detail = runId ? deps.runManager.status(runId) : undefined
+      if (!runId || !detail) {
+        return {
+          ok: false,
+          durationMs,
+          agents: 0,
+          failedAgents: 0,
+          error: `无法确定本次 runId（${runId ?? "解析失败"}），benchmark 指标不可信，按失败处理`,
+        }
+      }
+      const agents = detail.agents ?? []
+      const tokenSum = agents.reduce((n: number, a: any) => n + (a.tokens ?? 0), 0)
       return {
-        ok: !failed,
+        ok: !failed && detail.status !== "failed",
         durationMs,
         agents: agents.length,
-        inputTokens: agents.reduce((n: number, a: any) => n + (a.tokens ?? 0), 0),
-        outputTokens: 0,
-        failedAgents: agents.filter((a: any) => a.status === "error" || a.status === "failed").length,
+        // AgentRecord 只有 tokens 总量（无 input/output 拆分）：给 inputTokens，
+        // outputTokens 保持 undefined —— 不虚构 0（这正是审计 M8 指出的问题）。
+        inputTokens: tokenSum > 0 ? tokenSum : undefined,
+        failedAgents: agents.filter((a: any) => a.status === "failed" || a.status === "aborted").length,
         ...(failed ? { error: text.slice(0, 200) } : {}),
       }
     }
@@ -581,14 +599,22 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
       cwd,
       run: ({ label }) => runOnce(label),
       qualityGate,
+      // P0-1：真实执行 verifier，cwd = after 工作区（不在生产目录跑验证）
       ...(verifierCmd
-        ? { runVerifier: async (cmd: string) => ({ ok: true, output: `verifier 已配置但未执行：${cmd}（O2 首版仅接受 shell 退出码，需在后续接入）` }) }
+        ? {
+            runVerifier: async (cmd: string) => {
+              const vr = await runVerifierCommand({ command: cmd, cwd: p.workspace })
+              verifierResult = vr
+              return { ok: vr.ok, output: vr.note }
+            },
+          }
         : {}),
     })
     benchmarkAccepted = verdict.accepted
     qualityStatus = verdict.quality.status
     benchmarkText = renderBenchmarkVerdict(verdict)
-    fs.writeFileSync(path.join(p.dir, "benchmark.md"), `# Benchmark\n\n${benchmarkText}\n`, "utf8")
+    const verifierSection = verifierCmd && verifierResult ? `\n\n## Verifier\n\n${renderVerifier(verifierResult, verifierCmd)}\n` : ""
+    fs.writeFileSync(path.join(p.dir, "benchmark.md"), `# Benchmark\n\n${benchmarkText}${verifierSection}\n`, "utf8")
   }
 
   // ⑩ 状态：O1 阶段没有真实 Benchmark，因此只能到 benchmark-pending，不能 ready
@@ -668,25 +694,139 @@ async function runApply(argv: string[], ctx: any, deps: any): Promise<void> {
     ctx.ui.notify(`找不到优化会话：${id}`, "warning")
     return
   }
-  // P0 安全闸门（2026-11-23 审计）：
-  // verifier 当前是假执行、patch 仍可能错位替换。修复前任何 ready 都不能写生产。
+
+  // 只有 ready 才能写回：benchmark-pending / analyzed / rejected 一律拒绝。
+  // 这是「无真实质量验证不得改生产文件」的最终闸门。
+  if (s.status !== "ready") {
+    const why: Record<string, string> = {
+      "benchmark-pending": "尚未通过真实 Benchmark 与质量门",
+      analyzed: "只完成分析（或需要人工决策）",
+      rejected: "候选已被拒绝",
+      applied: "已经应用过（如需重放请先 rollback）",
+      stale: "源文件已变化，请重新运行 optimize",
+    }
+    ctx.ui.notify(
+      [
+        `[拒绝写回] ${id}`,
+        `当前状态：${s.status}（${why[s.status] ?? "不可写回"}）`,
+        "",
+        s.status === "benchmark-pending"
+          ? `先运行：/workflows optimize ${s.target.ref} --benchmark --args '<json>' --verify-cmd '<cmd>'`
+          : `审阅：${sessionPaths(cwd, id).review}`,
+      ].join("\n"),
+      "warning",
+    )
+    return
+  }
+
+  const p = sessionPaths(cwd, id)
+  const patchsetPath = p.patchset
+  if (!fs.existsSync(patchsetPath)) {
+    ctx.ui.notify(`缺少 patchset.json，无法写回：${patchsetPath}`, "warning")
+    return
+  }
+  const patch = JSON.parse(fs.readFileSync(patchsetPath, "utf8")) as PatchSet
+
+  // 待写回内容取自工作区（patch 已应用）；同时校验 workspace 未被改动。
+  // P1-5：review/benchmark 后 workspace 可能被人工或其他进程改动，
+  // 若不校验就会出现「审阅 A、写回 B」。
+  const reviewedHashes = s.workspace.hashes ?? {}
+  const driftedWorkspace: string[] = []
+  const items = patch.files.map((f) => {
+    const wsFile = path.join(p.workspace, f.path)
+    const content = fs.readFileSync(wsFile, "utf8")
+    const recorded = reviewedHashes[f.path]
+    if (recorded && sha256Of(content) !== recorded) driftedWorkspace.push(f.path)
+    return {
+      path: f.path,
+      content,
+      expectedSourceHash: s.target.sourceHashes[f.path] ?? f.expectedSourceHash,
+    }
+  })
+  if (driftedWorkspace.length > 0) {
+    updateSession(cwd, id, { status: "stale", reason: "workspace 内容在 review 后被改动" })
+    ctx.ui.notify(
+      [`[拒绝写回] ${id}`, "工作区内容在 review 之后被改动，写回内容已不是审阅/验证过的那份：", ...driftedWorkspace.map((x) => `- ${x}`), "", "请重新运行 optimize。"].join("\n"),
+      "warning",
+    )
+    return
+  }
+
+  const r = applyToProduction({
+    sessionDir: p.dir,
+    optimizationId: id,
+    targetRoot: s.target.root,
+    items,
+  })
+
+  if (!r.ok) {
+    const staleNow = Boolean(r.stale?.length)
+    if (staleNow) updateSession(cwd, id, { status: "stale", reason: r.error })
+    // P1-4：部分写入失败 → 显式状态，让 rollback 能兜底（此前停在 ready，rollback 被状态门挡住）
+    else updateSession(cwd, id, { status: "applied", reason: `部分写入失败：${r.error}`, appliedFiles: r.applied.length })
+    ctx.ui.notify(
+      [
+        `[写回失败] ${id}`,
+        r.error ?? "unknown",
+        ...(r.stale ? r.stale.map((x) => `- ${x.path}：期望 ${x.expected.slice(0, 15)}… 实际 ${x.actual?.slice(0, 15) ?? "(缺失)"}`) : []),
+        "",
+        staleNow ? "源文件已变化，请重新运行 optimize。" : `已备份的文件可用 rollback 恢复：${p.dir}`,
+      ].join("\n"),
+      "warning",
+    )
+    return
+  }
+
+  updateSession(cwd, id, { status: "applied", appliedFiles: r.applied.length })
+
+  // 应用后重新分析（I6）：失败不自动回滚，保留新状态 + backup 供用户决定
+  let afterNote = ""
+  try {
+    const after = await analyzeWorkflow({
+      dirPath: s.target.kind === "directory" ? s.target.root : undefined,
+      ...(s.target.kind !== "directory" ? { scriptPath: path.join(s.target.root, path.basename(s.target.ref)) } : {}),
+      cwd,
+      includeRuleCheck: false,
+      includeSuggestions: false,
+      format: "md",
+    })
+    if (after.ok && after.report) {
+      fs.writeFileSync(path.join(p.dir, "applied.report.json"), JSON.stringify(after.report, null, 2), "utf8")
+      fs.writeFileSync(path.join(p.dir, "applied.report.md"), after.rendered ?? "", "utf8")
+      afterNote = `应用后重分析：${after.report.summary.totalFindings} 条 finding（已落盘 applied.report.md）`
+    } else {
+      afterNote = `应用后重分析失败（不自动回滚）：${after.error ?? "unknown"}`
+    }
+  } catch (e) {
+    afterNote = `应用后重分析异常（不自动回滚）：${String((e as Error)?.message ?? e).slice(0, 120)}`
+  }
+
+  fs.writeFileSync(
+    p.result,
+    JSON.stringify({ appliedAt: new Date().toISOString(), files: r.applied, note: afterNote }, null, 2),
+    "utf8",
+  )
+
   ctx.ui.notify(
     [
-      `[写回已暂停] ${id}`,
-      "Optimize O2/O3 安全审计发现 P0 问题，生产写回暂时禁用：",
-      "- --verify-cmd 当前未真实执行，质量门可能假通过",
-      "- patch 行号定位仍可能按内容第一次出现改错位置",
+      `[已写回] ${id}`,
       "",
-      `审阅：${sessionPaths(cwd, id).review}`,
-      "P0 修复完成并重新验收后才会开放 apply。",
+      `修改文件：${r.applied.length} 个`,
+      ...r.applied.map((x) => `- ${x.path}`),
+      "",
+      afterNote,
+      "",
+      `备份：${path.join(p.backup, "manifest.json")}`,
+      `回滚：/workflows optimize rollback ${id}`,
     ].join("\n"),
-    "warning",
+    "info",
   )
   void deps
 }
 
 async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
   const id = argv.find((a) => !a.startsWith("--"))
+  const force = argv.includes("--force")
   const cwd = ctx.cwd ?? process.cwd()
   if (!id) {
     ctx.ui.notify("用法：/workflows optimize rollback <优化编号> [--force]", "warning")
@@ -697,14 +837,58 @@ async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
     ctx.ui.notify(`找不到优化会话：${id}`, "warning")
     return
   }
+  // P1-4：部分写入失败时状态也是 "applied"（reason 里注明），因此这里放行。
+  // 只要 backup manifest 存在就能恢复——这是故障兜底路径，不该被状态门挡死。
+  const rollbackable = s.status === "applied" || s.status === "ready"
+  if (!rollbackable) {
+    ctx.ui.notify(`[拒绝回滚] ${id}：当前状态 ${s.status}（只有已应用/部分写入的会话才能回滚）`, "warning")
+    return
+  }
+  const p = sessionPaths(cwd, id)
+  const manifest = readBackupManifest(p.dir)
+  if (!manifest) {
+    ctx.ui.notify(`缺少 backup/manifest.json，无法回滚：${p.backup}`, "warning")
+    return
+  }
+
+  const r = rollbackFromBackup({ sessionDir: p.dir, manifest, force })
+  if (!r.ok) {
+    ctx.ui.notify(
+      [
+        `[回滚失败] ${id}`,
+        r.error ?? "unknown",
+        ...(r.drifted ? r.drifted.map((x) => `- ${x.path}：apply 后已被改动`) : []),
+      ].join("\n"),
+      "warning",
+    )
+    return
+  }
+
+  updateSession(cwd, id, { status: "rolled-back", reason: `回滚 ${r.restored.length} 个文件` })
+
+  let afterNote = ""
+  try {
+    const after = await analyzeWorkflow({
+      dirPath: s.target.kind === "directory" ? s.target.root : undefined,
+      ...(s.target.kind !== "directory" ? { scriptPath: path.join(s.target.root, path.basename(s.target.ref)) } : {}),
+      cwd,
+      includeRuleCheck: false,
+      includeSuggestions: false,
+      format: "md",
+    })
+    if (after.ok && after.report) {
+      fs.writeFileSync(path.join(p.dir, "rolledback.report.md"), after.rendered ?? "", "utf8")
+      afterNote = `回滚后重分析：${after.report.summary.totalFindings} 条 finding`
+    }
+  } catch {
+    /* 回滚后重分析失败不影响回滚结果 */
+  }
+
   ctx.ui.notify(
-    [
-      `[回滚已暂停] ${id}`,
-      "apply 安全修复期间，rollback 与 apply 一起暂停，避免备份状态不完整时误覆盖。",
-      `当前状态：${s.status}`,
-      `审阅：${sessionPaths(cwd, id).review}`,
-    ].join("\n"),
-    "warning",
+    [`[已回滚] ${id}`, "", `恢复文件：${r.restored.length} 个`, ...r.restored.map((x) => `- ${x}`), "", afterNote]
+      .filter(Boolean)
+      .join("\n"),
+    "info",
   )
   void deps
 }

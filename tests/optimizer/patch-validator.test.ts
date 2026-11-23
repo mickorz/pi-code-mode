@@ -279,3 +279,55 @@ test("buildPatchGeneratorPrompt：包含硬约束与文件 hash", () => {
   assert.match(prompt, new RegExp(sha256(WF).slice(0, 20)))
   assert.match(prompt, /产物 schema 不变/)
 })
+
+// ---- P0-2 回归：行号 splice 必须只改 startLine 指向的位置 ----
+import { applyEditsByLine } from "../../src/engine/optimizer/patch-validator.js"
+
+test("applyEditsByLine：相同文本出现多次时只改行号指向的那一处", () => {
+  const src = ["const a = 1", "const dup = 1", "const b = 2", "const dup = 1", "const c = 3"].join("\n")
+  // 只改第 4 行（索引 3）那处 dup
+  const r = applyEditsByLine(src, [{ startLine: 4, endLine: 4, newText: "const dup = 99" }])
+  assert.equal(r.ok, true)
+  const out = r.patched.split("\n")
+  assert.equal(out[1], "const dup = 1", "第 2 行不能被改（旧 replace 实现会改这里）")
+  assert.equal(out[3], "const dup = 99", "必须只改第 4 行")
+})
+
+test("applyEditsByLine：newText 含 $& / $$ 不被特殊展开", () => {
+  const src = "const x = 1"
+  const r = applyEditsByLine(src, [{ startLine: 1, endLine: 1, newText: 'const x = "$& $$ 价格 $1"' }])
+  assert.equal(r.ok, true)
+  assert.equal(r.patched, 'const x = "$& $$ 价格 $1"', "必须逐字保留，不能被 String.replace 展开")
+})
+
+test("applyEditsByLine：多个 edit 倒序应用，行号互不干扰", () => {
+  const src = ["L1", "L2", "L3", "L4", "L5"].join("\n")
+  const r = applyEditsByLine(src, [
+    { startLine: 2, endLine: 2, newText: "L2-new" },
+    { startLine: 4, endLine: 5, newText: "L4-L5-new" },
+  ])
+  assert.equal(r.ok, true)
+  assert.equal(r.patched, ["L1", "L2-new", "L3", "L4-L5-new"].join("\n"))
+})
+
+test("validatePatchSet：oldText 仅空白差异应通过（归一化正则必须是 \s）", () => {
+  const { cwd, dir } = makeTarget()
+  const ws = path.join(cwd, "ws")
+  copyWorkspace(dir, ws)
+  // 行 2 原文是 "const a = await agent('读文件', { retries: 2 })"
+  // oldText 用不同缩进/多空格给出，应通过一致性校验
+  const p = patchWith({
+    edits: [
+      {
+        startLine: 2,
+        endLine: 2,
+        oldText: "const   a   =   await agent('读文件',   { retries: 2 })",
+        newText: "const a = await agent('读文件', { retries: 1 })",
+        rationale: "r",
+        relatedCluster: "RETRY-001",
+      },
+    ],
+  })
+  const r = validatePatchSet(p, ws)
+  assert.equal(r.ok, true, r.issues.map((i) => i.reason).join("; "))
+})

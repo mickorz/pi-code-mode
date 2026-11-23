@@ -61,6 +61,12 @@ export interface OptimizationSession {
   workspace: {
     path: string
     patchApplied: boolean
+    /**
+     * patch 应用到工作区后的文件 hash（P1-5）。
+     * apply 前重算比对：不一致 = review/benchmark 之后工作区被改动，
+     * 写回内容已不是被审阅/验证过的那份 → 拒绝写回。
+     */
+    hashes?: Record<string, string>
   }
 
   validation: {

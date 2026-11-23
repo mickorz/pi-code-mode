@@ -15,8 +15,9 @@ export interface RealRunOutcome {
   ok: boolean
   durationMs: number
   agents: number
-  inputTokens: number
-  outputTokens: number
+  /** undefined = 无法从 run 记录拿到（不虚构 0） */
+  inputTokens?: number
+  outputTokens?: number
   failedAgents: number
   error?: string
   /** 产物关键文件 sha256（质量比较用；缺省表示不校验产物） */
@@ -95,6 +96,11 @@ export async function runRealBenchmark(input: RunBenchmarkInput): Promise<Benchm
   if (!after.ok) {
     accepted = false
     reasons.push(`after 执行失败：${after.error ?? "unknown"}`)
+  }
+  // before 失败 → 基线不可比。此前只查 after，会让「before 崩了、after 跑通」看起来像改善。
+  if (!before.ok) {
+    accepted = false
+    reasons.push(`before 执行失败，基线不可比：${before.error ?? "unknown"}`)
   }
   if (after.failedAgents > before.failedAgents) {
     accepted = false

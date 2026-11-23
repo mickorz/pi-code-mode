@@ -34,6 +34,32 @@ function parseOk(source: string): { ok: boolean; error?: string } {
   }
 }
 
+/**
+ * 按行号 splice 应用 edits（校验与落盘共用）。
+ *
+ * 为什么不用 String.replace：
+ *  - replace 只替换**第一次出现**的位置，不一定是 startLine 指向处；
+ *  - 重复样板代码（如两行相同的 await agent(...)）会改错位置；
+ *  - newText 里的 $& / $$ / $' 会被 replace 特殊展开，静默改写内容。
+ *
+ * 行号 splice 让 startLine/endLine 成为唯一写入位置；oldText 只做一致性校验。
+ */
+export function applyEditsByLine(
+  original: string,
+  edits: Array<{ startLine: number; endLine: number; newText: string }>,
+): { ok: boolean; patched: string; error?: string } {
+  const src = original.split("\n")
+  // 倒序应用：后面的 edit 不影响前面的行号
+  const sorted = [...edits].sort((a, b) => b.startLine - a.startLine)
+  for (const edit of sorted) {
+    if (edit.startLine < 1 || edit.endLine < edit.startLine || edit.endLine > src.length) {
+      return { ok: false, patched: original, error: `L${edit.startLine}-${edit.endLine} 行号越界（文件 ${src.length} 行）` }
+    }
+    src.splice(edit.startLine - 1, edit.endLine - edit.startLine + 1, ...edit.newText.split("\n"))
+  }
+  return { ok: true, patched: src.join("\n") }
+}
+
 /** 校验 PatchSet 是否可安全应用（不写盘） */
 export function validatePatchSet(patch: PatchSet, workspaceDir: string): PatchValidationResult {
   const issues: PatchValidationIssue[] = []
@@ -96,8 +122,10 @@ export function validatePatchSet(patch: PatchSet, workspaceDir: string): PatchVa
         continue
       }
       const sliced = originalLines.slice(edit.startLine - 1, edit.endLine).join("\n")
+      // oldText 若提供，必须与行号切片一致（只容忍空白差异）。
+      // 归一化正则是 \s（空白）而不是 s（字母）——之前的 /s+/g 让这条防线完全失效。
       if (edit.oldText !== undefined && edit.oldText.trim().length > 0) {
-        const norm = (s: string) => s.replace(/s+/g, " ").trim()
+        const norm = (s: string) => s.replace(/\s+/g, " ").trim()
         if (norm(edit.oldText) !== norm(sliced)) {
           issues.push({
             path: rel,
@@ -106,14 +134,14 @@ export function validatePatchSet(patch: PatchSet, workspaceDir: string): PatchVa
           continue
         }
       }
-      // 在 patched 中按切片替换（此时 patched 还没被前面的 edit 影响区域之外的内容；倒序应用保证行号有效）
-      const occurrences = patched.split(sliced).length - 1
-      if (occurrences === 0) {
-        issues.push({ path: rel, reason: `L${edit.startLine}-${edit.endLine} 切片在文件中找不到` })
-        continue
-      }
-      patched = patched.replace(sliced, edit.newText)
     }
+
+    const applied = applyEditsByLine(original, sorted)
+    if (!applied.ok) {
+      issues.push({ path: rel, reason: applied.error ?? "按行号应用失败" })
+      continue
+    }
+    patched = applied.patched
 
     const parsed = parseOk(patched)
     if (!parsed.ok) {
@@ -165,12 +193,9 @@ export function applyPatchSet(patch: PatchSet, workspaceDir: string): ApplyResul
   for (const file of patch.files) {
     const abs = path.join(workspaceDir, file.path)
     const original = fs.readFileSync(abs, "utf8")
-    const lines = original.split("\n")
-    let patched = original
-    for (const edit of file.edits) {
-      const sliced = lines.slice(edit.startLine - 1, edit.endLine).join("\n")
-      patched = patched.replace(sliced, edit.newText)
-    }
+    const applied = applyEditsByLine(original, file.edits)
+    if (!applied.ok) return { ok: false, files, issues: [{ path: file.path, reason: applied.error ?? "应用失败" }] }
+    const patched = applied.patched
     fs.writeFileSync(abs, patched, "utf8")
     files.push({ path: file.path, beforeHash: sha256(original), afterHash: sha256(patched) })
   }
