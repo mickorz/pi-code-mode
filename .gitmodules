@@ -85,3 +85,7 @@
 	path = thirdparties/linger
 	url = https://github.com/simplexai-labs/linger.git
 	branch = main
+[submodule "thirdparties/PiBot"]
+	path = thirdparties/PiBot
+	url = https://github.com/w01fb0ss/PiBot.git
+	branch = main
