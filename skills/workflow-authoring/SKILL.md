@@ -20,6 +20,7 @@ description: 编写 pi 动态工作流 JavaScript 脚本时加载。涉及 workf
    分析类（扫描 / 对照 / 枚举 / 归类）与写作类（长输出报告 / 终稿）分两问让用户各选一个；写作类缺省用会话默认模型。**model-tiers 已配置的档位（读 `.pi/workflows/model-tiers.json` 的 tiers 键）直接推荐用 tier 名**，不必逐个列模型串
 3. **并发**：默认 16（运行时钳制上限，组数 ≤ 并发才能一波跑完）；网关限流环境建议 8；允许自定义正整数。
 4. **拆分形态**：多阶段流程默认推荐 **sub workflow 拆分**（问询确认，用户未明确反对即按拆分做）：主编排 + 各阶段子流程，创建 `.pi/workflows/<workflow 名>/` 子文件夹，主编排与全部子流程都放里面（布局与调用约定见「拆分：子文件夹布局」）；只有无阶段边界、agent 总数少的短流程才单文件全写。用户明确说「写一起」时按单文件做。
+5. **是否跑 Analyzer（`anal`）**：问一句「要不要过一遍 anal 检查」；**默认不需要**（用户未明确说要即按不做）。要跑时按「Analyzer 静态分析（按需）」执行，并要求无 critical/high 未处理项。
 
 答案直接落成脚本头部：model 常量、args 默认值与 `setConcurrency(并发)`，并在头注释里记录用户选择。档位执行细节见 [性能与质量模式手册](references/performance.md)。
 
@@ -32,7 +33,7 @@ description: 编写 pi 动态工作流 JavaScript 脚本时加载。涉及 workf
 5. `agent()` 的 agentType 选项在 pi 版当前被忽略（子代理默认可用全部工具）；只读任务在 prompt 中明确「不要修改任何文件」，写文件任务无需额外参数
 6. **阶段失败闸门**：agent 重试耗尽（缺省重试 1 次）后，当前阶段收尾、下一 `phase()` 边界终止 run 并报告失败明细；需静默继续传工具参数 `continueOnAgentFailure: true`，需要容错降级用 `fallback()`（降级成功自动吸收失败）
 7. **默认超时 1 小时**：生成的每个 `agent()` 调用默认带 `timeoutMs: 3600000`；任务明显更快（如固定文本回复）可用更小值，用户显式指定时从其指定——缺省无兜底超时的裸 agent 不要生成
-8. **交付前必须过 Analyzer**：`workflow_analyze`（或 CLI `analyze`）无 critical/high 未处理项；报告写入 `.pi/workflows/reports/` 随交付
+8. **Analyzer 按需，不默认跑**：用户确认要过 `anal` 时，`workflow_analyze`（或 `/workflows analyze`）不得留 critical/high 未处理项，报告写入 `.pi/workflows/reports/`；用户未要求就**不要**自动跑 Anal（AI 规则检查会真实调模型，数分钟级耗时与 token）
 9. **不要用 `tools` 或 `mcp` 作局部变量名**：两者是注入的全局（MCP 直调，见下节），局部同名会遮蔽导致 TypeError
 
 ## 可用全局
@@ -272,9 +273,9 @@ try { await checkpoint('即将改动生产配置，确认？') } catch { return 
 
 ## Workflow Plan 与 Analyzer（M1 工程化流程）
 
-脚本写完后不是直接交付，走两步工程化检查：
+脚本写完后，走两步工程化检查：Plan 按需生成，Analyzer 只在用户要求时跑。
 
-### 1. 生成/更新 Plan（多阶段 workflow 必做）
+### 1. 生成/更新 Plan（多阶段 workflow 按需）
 
 Plan 是**独立于 JS 的执行策略文件**（stages / quality 强制项 / fast·balanced·quality 三个 Profile）：
 
@@ -286,13 +287,17 @@ Plan 是**独立于 JS 的执行策略文件**（stages / quality 强制项 / fa
 - **不改 JS 就能换策略**（改 Profile）；`source.scriptHash` 用于检测 Plan 是否过期
 - 没有 Plan 的旧 Workflow 照常运行——Plan 是可选的工程化增量
 
-### 2. Analyzer 静态分析（必做）
+### 2. Analyzer 静态分析（按需，不默认跑）
+
+**先问用户要不要跑**；用户未明确要求就不跑（默认不用）。原因：`anal` 的 AI 规则检查会真实调模型，数分钟级耗时且耗 token。用户确认要跑时：
 
 ```
 /workflows analyze <脚本路径>          # 会话内命令（唯一手动入口，AI 建议默认开启）
 /workflows plan validate <plan.json>   # Plan 校验
 workflow_analyze({ scriptPath: "..." })  # 等价工具（Agent 自动调用，同一 Core）
 ```
+
+判定标准：critical/high 必须有结论（修掉，或写明为什么保留），报告落 `.pi/workflows/reports/`。
 
 读报告要点（详见 [analyzer-rules.md](references/analyzer-rules.md)）：
 
