@@ -77,13 +77,13 @@
 
 ## 5.1 内置区域（2026-11-20 追加）
 
-内置不再靠注册：注册表在项目条目之后自动并入包根 `workflows/*.js`，顶层斜杠命令也无条件注册内置（不再依赖 manifest 存在）。
+内置不再靠注册：注册表递归扫描包根 `workflows/<分类>/*.js` 并自动并入，顶层斜杠命令也无条件注册内置（不再依赖 manifest 存在）。
 
 - 解析：`builtinWorkflowsDir()` 沿 `import.meta.url` 上溯到包根 `workflows/`，递归扫描分类子目录（`roles/`、`flows/`…），按 `meta.id` 寻址、目录不参与 id；`src`/`dist` 两种运行形态一致；单文件解析失败带 `workflows/<分类>/<文件>` 上抛。
 - 保留 id：项目 manifest 与 legacy 目录均禁止使用内置 id；发现同名立即报错，防止顶层命令错跑。
 - 保留 id：`/workflows register` 用内置 id 报"内置 workflow 的保留 id"并拒绝；`/workflows unregister <内置>` 明确提示不可注销。
 - 视图：`/workflows list` 分「项目注册 / 内置（随包分发，无需注册）」两段；`unreg` 补全不再列内置，`run` 补全包含内置。
-- 测试：新增 `tests/contract/builtin-workflows-registry.test.ts` 6 条（零注册可解析 / legacy 模式可见 / 保留 id 拒绝 / 不可注销 / 项目优先 / 不可用 id 判定），并更新直跑注册、补全、registry 相关断言。engine 218/218、contract 239/239 全绿。
+- 测试：`tests/contract/builtin-workflows-registry.test.ts` 共 8 条（内置目录与分类递归扫描 / 零注册可解析 / legacy 模式可见 / register 保留 id 拒绝 / 内置不可注销 / manifest 同 id 拒绝 / legacy 同 id 拒绝）；并更新直跑注册、补全、registry 相关断言。最新验证：engine 220/220、contract 244/244、build 全绿。
 
 ## 6. 后续使用方式
 
