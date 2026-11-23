@@ -1,7 +1,7 @@
 # 内置角色 Workflow 执行报告
 
 - 日期：2026-11-20
-- 计划：[2026-11-20-内置质量闭环workflow执行计划](../planning/2026-11-20-内置质量闭环workflow执行计划.md)
+- 计划：[2026-11-20-内置质量闭环workflow执行计划](../planning/completed/2026-11-20-内置质量闭环workflow执行计划.md)（已完成归档）
 - 前置分析：[ak-pi-workflow-roles Agent 体系封装分析](../research/2026-11-20-ak-pi-workflow-roles-agent-analysis.md)
 - 参考项目：`thirdparties/ak-pi-workflow-roles`（Apache-2.0，`fbe6c7c1`），仅取“职责隔离 + 组合归调用方”方法论，未复制任何 Soul 文本或代码
 
@@ -70,7 +70,7 @@
 
 ## 5. 遗留项
 
-1. **真实模型联调未跑**：全部验证使用 fake runner（无 LLM）。待按计划 P3 用低风险任务跑一次 `coder fast → reviewer big` 与一次 `quality-loop`，以 journal 为证据。
+1. ~~真实模型联调未跑~~ → 已完成，见第 7 节。
 2. 顶层 `/coder`、`/reviewer`、`/judge`、`/fixer`、`/quality-loop` 直跑命令需重启 pi 会话后出现在补全列表（宿主限制，会话内用 `/workflows run <id>`）。
 3. 组合层暂未做多 reviewer 并行、inspector 发布门禁、collector 外部证据；按计划第 13 节门槛，待真实使用信号再加。
 
@@ -87,3 +87,25 @@
 ```text
 /quality-loop task="..." maxRepairRounds=2 coderTier=big judgeTier=ultra
 ```
+
+## 7. P3 宿主联调（2026-11-20，真实模型）
+
+方式：`BILI_PI_INLINE=1 pi -ne -e . --print`（只加载本插件），主会话只负责调用 `workflow` 工具，证据以 journal + 各类 run 日志为准。沙盒目标文件：`dev-examples/builtin-roles-smoke/calc.js`（初始人为植入 bug：`add` 返回 `a - b`）。
+
+| 步骤 | 命令形态 | runId | 结果 |
+| --- | --- | --- | --- |
+| P3-1/P3-2 宿主冒烟 + 预热 | 内联脚本 `agent('只回复 ok', {tier:'fast'})` | `run-1795399467730-dcfqsu` | 1 agent ok 1547ms；journal 记录 model=`deepseek-v4.1-flash-official`，证明 `fast` 档解析生效 |
+| P3-3 实施（fast） | `scriptPath="coder"`，`tier=fast` | `run-1795399491514-mbvx5o` | status=completed 41.4s；真实修好 `add` 并新增 `calc-check.js`；`node calc-check.js` exit=0 |
+| P3-3 评审（big） | `scriptPath="reviewer"`，`tier=big` | `run-1795399566274-t4lm49` | status=completed 50.5s；独立发现真实问题（`logs/` 未被 .gitignore 覆盖），并自证负向用例能捕获原 bug |
+| P3-4 质量闭环 | `scriptPath="quality-loop"` | `run-1795399646403-haucnz` | 6 agent / 10 阶段 / 249s；coder→reviewer→judge(continue)→fixer→reviewer→judge(converged)；`roundsCompleted=2` |
+
+P3-4 关键观察（证明闭环的每道闸都真的在工作）：
+
+1. 第 1 轮 judge 判 `continue`（功能已满足，但上一条 low finding 连续两轮未修），findings 被正确交给 fixer；
+2. fixer 只改 `.gitignore` 一行（根因处修复），未扩大范围；
+3. 复审只跑了 18.2s（增量核对），第 2 轮 judge 判 `converged`；
+4. 最终产物验证：`git check-ignore` 命中 `.gitignore:23`，`calc.js`/`calc-check.js` 仍可入库。
+
+**发现的行为特征**：第 1 轮 reviewer 触发一次 schema 修复循环——模型给出了缺 `recommendation` 的 finding，adapter 校验失败后重试通过（该次 138s）。这是 schema 契约生效的预期表现（要求每条 finding 可执行），不是缺陷；若后续频繁发生，再考虑放宽 `recommendation` 为可选。
+
+证据文件（已 gitignore，不入库）：`dev-examples/builtin-roles-smoke/logs/A-host-warmup.log`、`B-coder-fast.log`、`C-reviewer-big.log`、`D-quality-loop.log`，以及 `.pi/workflows/journal/run-17953994*.json`。

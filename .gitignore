@@ -20,3 +20,4 @@ dist/
 .pi/workflows/reports/
 .opencode-workflows/
 dev-examples/sample-project-acceptance/.journal/
+dev-examples/builtin-roles-smoke/logs/
