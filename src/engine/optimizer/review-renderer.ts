@@ -73,14 +73,24 @@ export function renderReview(input: ReviewInput): string {
       }
       lines.push("")
     }
-    if (input.patch.needsHumanDecision?.length) {
-      lines.push("### 需要人工决策（模型未擅自处理）")
+  }
+  // needsHumanDecision 必须**独立于 files 渲染**：
+  // 「需要人工决策」恰恰是 files 为空的场景，旧实现把它放进 else 分支，
+  // 结果模型给的原因与分步方案在 review.md 里完全看不到。
+  if (input.patch?.needsHumanDecision?.length) {
+    lines.push("### 需要人工决策（模型未擅自处理）")
+    lines.push("")
+    for (const d of input.patch.needsHumanDecision) {
+      lines.push(`**${d.cluster}**`)
       lines.push("")
-      for (const d of input.patch.needsHumanDecision) {
-        lines.push(`- **${d.cluster}**：${d.question}`)
-        for (const o of d.options) lines.push(`  - ${o}`)
+      for (const ln of d.question.split("\n")) lines.push(ln)
+      lines.push("")
+      if (d.options.length > 0) {
+        lines.push("可选方案：")
+        lines.push("")
+        for (const o of d.options) lines.push(`- ${o}`)
+        lines.push("")
       }
-      lines.push("")
     }
   }
 

@@ -142,7 +142,7 @@ ${OUTPUT_EXAMPLE}
 }
 
 /** needsHumanDecision 归一化：字符串 → 单条说明；对象 → 单条；数组 → 逐条 */
-function normalizeNeedsHumanDecision(raw: unknown): NonNullable<PatchSet["needsHumanDecision"]> {
+export function normalizeNeedsHumanDecision(raw: unknown): NonNullable<PatchSet["needsHumanDecision"]> {
   if (typeof raw === "string" && raw.trim()) {
     return [{ cluster: "（未指定）", question: raw.trim(), options: [] }]
   }
@@ -151,7 +151,14 @@ function normalizeNeedsHumanDecision(raw: unknown): NonNullable<PatchSet["needsH
       .map((x) => (typeof x === "string" ? { cluster: "（未指定）", question: x, options: [] } : (x as Record<string, unknown>)))
       .map((x) => ({
         cluster: String(x.cluster ?? "（未指定）"),
-        question: String(x.question ?? ""),
+        // 实测模型常用 verdict + reasons 表达结论（question 为空），
+        // 只认 question 会把最有价值的原因整段丢掉。
+        question: [
+          String(x.question ?? x.verdict ?? "").trim(),
+          ...(Array.isArray(x.reasons) ? (x.reasons as unknown[]).map((r) => `- ${String(r)}`) : []),
+        ]
+          .filter(Boolean)
+          .join("\n"),
         options: Array.isArray(x.options) ? (x.options as unknown[]).map(String) : [],
       }))
       .filter((x) => x.question)
@@ -162,7 +169,12 @@ function normalizeNeedsHumanDecision(raw: unknown): NonNullable<PatchSet["needsH
       return [
         {
           cluster: String(o.cluster ?? "（未指定）"),
-          question: String(o.question ?? ""),
+          question: [
+            String(o.question ?? o.verdict ?? "").trim(),
+            ...(Array.isArray(o.reasons) ? (o.reasons as unknown[]).map((r) => `- ${String(r)}`) : []),
+          ]
+            .filter(Boolean)
+            .join("\n"),
           options: Array.isArray(o.options) ? (o.options as unknown[]).map(String) : [],
         },
       ]

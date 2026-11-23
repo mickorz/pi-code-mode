@@ -285,15 +285,24 @@ async function runOptimizeBody(
           r.accepted ? "info" : "warning",
         )
       }
-      return notify(
-        [
-          `发现该目标未完成的优化候选：${open.id}（状态 ${open.status}）`,
-          `审阅：${op.review}`,
+      // 按状态给出**具体**下一步，而不是一句泛泛的「继续处理」。
+      // 否则用户反复重跑同一命令，只会被反复拦住，不知道该怎么办。
+      const nextSteps: string[] = []
+      if (open.status === "analyzed") {
+        nextSteps.push(
+          `该候选的结论：${open.reason ?? "已分析完成"}`,
+          `结论详情（含模型给的分步方案）：${op.review} 第 2 节`,
           "",
-          open.workspace.patchApplied
-            ? `跑真实验证：/workflows optimize ${ref} --benchmark --args '<json>' --verify-cmd '<cmd>'`
-            : "继续处理该候选；如需重新生成请加 --fresh。",
-        ].join("\n"),
+          "换一个规则重试（会新建候选）：加 --fresh 并改 --rules，例如：",
+          `  /workflows optimize ${ref} --rules RETRY-001 --fresh`,
+        )
+      } else if (open.workspace.patchApplied) {
+        nextSteps.push(`跑真实验证：/workflows optimize ${ref} --benchmark --args '<json>' --verify-cmd '<cmd>'`)
+      } else {
+        nextSteps.push("继续处理该候选；如需重新生成请加 --fresh。")
+      }
+      return notify(
+        [`发现该目标已有的优化候选：${open.id}（状态 ${open.status}）`, ...nextSteps].join("\n"),
         "info",
       )
     }
