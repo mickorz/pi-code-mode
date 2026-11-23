@@ -2,6 +2,12 @@
 
 > 面向任务：一个场景一节，步骤化。随功能实现逐步补充。
 
+## 直接用内置角色工作流（改代码 / 评审 / 裁决 / 修复 / 质量闭环）
+
+内置 `coder` / `reviewer` / `judge` / `fixer` / `quality-loop` 五个工作流，用法、参数、档位与排错见 [内置角色工作流使用指南](builtin-workflows.md)。
+
+这五个是**内置**的（随包分发），装上插件即生效、无需注册：直接 `/coder task="..." tier=fast`、`/quality-loop task="..."`。项目自有工作流才需要 `/workflows register <脚本路径>`。
+
 ## 写一个 workflow 脚本
 
 1. 在项目根建 `.pi/workflows/my-flow.js`（或放子目录用路径引用）。

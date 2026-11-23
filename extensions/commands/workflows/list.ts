@@ -1,6 +1,7 @@
 /**
- * /workflows list 子命令：列出注册表工作流与最近运行（含全部 runId）。
- * 注册表来自 .pi/workflows/（及兼容目录），最近运行来自 RunManager 快照。
+ * /workflows list 子命令：列出工作流与最近运行（含全部 runId）。
+ * 来源两处：项目注册表（.pi/workflows/register.json 或兼容目录扫描）与随包内置（包根 workflows/）。
+ * 最近运行来自 RunManager 快照。
  */
 
 import { loadRegistry } from "../../../src/engine/runtime/workflow-registry.js"
@@ -13,11 +14,17 @@ export const listSubcommand: Subcommand = {
     const lines: string[] = []
     try {
       const registry = loadRegistry(cwd)
-      if (registry.size) {
-        lines.push(`已注册工作流（${registry.size}，来源 .pi/workflows/register.json 或兼容目录扫描）:`)
-        for (const [id, wf] of registry) lines.push(`  - ${id}  ${wf.description ?? ""}`)
+      const builtin = [...registry.values()].filter((wf) => wf.builtin)
+      const project = [...registry.values()].filter((wf) => !wf.builtin)
+      if (project.length) {
+        lines.push(`项目注册（${project.length}，来源 .pi/workflows/register.json 或兼容目录扫描）:`)
+        for (const wf of project) lines.push(`  - ${wf.id}  ${wf.description ?? ""}`)
       } else {
-        lines.push("注册表为空（项目内未发现可注册的 workflow 脚本）")
+        lines.push("项目注册：无（/workflows register <脚本路径> 注册项目内脚本）")
+      }
+      if (builtin.length) {
+        lines.push(`内置（${builtin.length}，随包分发，无需注册）:`)
+        for (const wf of builtin) lines.push(`  - ${wf.id}  ${wf.description ?? ""}`)
       }
     } catch (e) {
       lines.push(`注册表读取失败: ${String((e as Error)?.message ?? e)}`)

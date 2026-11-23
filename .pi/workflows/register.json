@@ -7,41 +7,6 @@
       "description": "结构化结果详情展示验收（脱敏/截断/空态）",
       "file": "dev-examples/sample-project-acceptance/G-ui/schema-result-view-test.js",
       "registeredAt": "2026-11-20T02:53:17.615Z"
-    },
-    {
-      "id": "coder",
-      "name": "coder",
-      "description": "按任务修改代码、运行必要验证并如实报告结果",
-      "file": "workflows/coder.js",
-      "registeredAt": "2026-11-20T09:42:56.731Z"
-    },
-    {
-      "id": "reviewer",
-      "name": "reviewer",
-      "description": "独立审查当前工作区改动，输出带证据的可核查 findings",
-      "file": "workflows/reviewer.js",
-      "registeredAt": "2026-11-20T09:42:56.742Z"
-    },
-    {
-      "id": "judge",
-      "name": "judge",
-      "description": "依据任务、变更事实与评审证据裁决通过、继续修复或升级用户决策",
-      "file": "workflows/judge.js",
-      "registeredAt": "2026-11-20T09:42:56.754Z"
-    },
-    {
-      "id": "fixer",
-      "name": "fixer",
-      "description": "按已确认的 findings 在根因处修复并重新验证",
-      "file": "workflows/fixer.js",
-      "registeredAt": "2026-11-20T09:42:56.762Z"
-    },
-    {
-      "id": "quality-loop",
-      "name": "quality_loop",
-      "description": "coder -> reviewer -> judge 的默认质量闭环，continue 时按上限修复后复审复裁",
-      "file": "workflows/quality-loop.js",
-      "registeredAt": "2026-11-20T09:42:56.771Z"
     }
   ]
 }

@@ -47,7 +47,7 @@ test("子命令补全: 敲完整子命令但无空格时不返回 workflowId（�
     assert.ok(items.some((i) => i.value === `${typed} `), `${typed} 应补全自身，实际 ${JSON.stringify(items.map((i) => i.value))}`);
     assert.ok(!items.some((i) => i.label === "smoke_test"), `${typed} 不应返回 workflowId 候选`);
   }
-  // 空格后才进入位置 2
+  // 空格后才进入位置 2；内置不可注销，不进 unreg 候选
   assert.deepEqual(completeWorkflowsArgs("unreg ", deps).map((i) => i.value), ["unreg smoke_test"]);
 });
 
@@ -56,7 +56,12 @@ test("位置 2 补全: value 必须是完整参数串（含已输入的动词）
   // 回归（2026-11-20 线上 bug）：value 曾为裸 workflowId，输入 /workflows unreg smoke_test
   // 按 Tab/回车后变成 /workflows smoke_test（unreg 被整段替换掉）
   assert.deepEqual(completeWorkflowsArgs("run s", deps).map((i) => i.value), ["run smoke_test"]);
-  assert.deepEqual(completeWorkflowsArgs("run ", deps).map((i) => i.value), ["run smoke_test", "run daily_review"]);
+  const runAll = completeWorkflowsArgs("run ", deps).map((i) => i.value);
+  assert.deepEqual(runAll.slice(0, 2), ["run smoke_test", "run daily_review"], "项目条目在前");
+  for (const builtin of ["coder", "reviewer", "judge", "fixer", "quality-loop"]) {
+    assert.ok(runAll.includes(`run ${builtin}`), `内置 ${builtin} 应可补全执行`);
+  }
+  assert.ok(!completeWorkflowsArgs("unreg ", deps).some((i) => i.value === "unreg coder"), "内置不进注销候选");
   assert.deepEqual(completeWorkflowsArgs("reg d", deps).map((i) => i.value), ["reg daily_review"]);
   assert.deepEqual(completeWorkflowsArgs("unreg smoke", deps).map((i) => i.value), ["unreg smoke_test"]);
   assert.deepEqual(completeWorkflowsArgs("unregister smoke", deps).map((i) => i.value), ["unregister smoke_test"]);

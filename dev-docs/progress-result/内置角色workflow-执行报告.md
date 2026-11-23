@@ -15,7 +15,8 @@
 | `workflows/fixer.js` | 修复角色：只处理已确认 findings，缺 findings 直接报错；缺省 `tier=fast` |
 | `workflows/quality-loop.js` | 组合编排（零 agent）：coder → reviewer → judge →（continue 时）fixer → 复审 → 复裁；修复轮数默认 1、可传 2 |
 | `tests/engine/builtin-roles.test.ts` | 12 条断言：解析/唯一性、单角色调用与档位、缺参报错、四条质量闭环路径、按角色档位覆盖 |
-| `.pi/workflows/register.json` | 五个 workflowId 已注册（脚本原位，项目相对路径） |
+| `src/engine/runtime/workflow-registry.ts` | 新增内置来源：包根 `workflows/*.js` 自动并入注册表（`builtin: true`），项目条目优先 |
+| `.pi/workflows/register.json` | 已移除五个内置条目（内置不再需要注册） |
 | `.pi/workflows/reports/builtin-roles-analyze.md` | 静态分析报告 |
 
 ## 2. 契约
@@ -74,7 +75,19 @@
 2. 顶层 `/coder`、`/reviewer`、`/judge`、`/fixer`、`/quality-loop` 直跑命令需重启 pi 会话后出现在补全列表（宿主限制，会话内用 `/workflows run <id>`）。
 3. 组合层暂未做多 reviewer 并行、inspector 发布门禁、collector 外部证据；按计划第 13 节门槛，待真实使用信号再加。
 
+## 5.1 内置区域（2026-11-20 追加）
+
+内置不再靠注册：注册表在项目条目之后自动并入包根 `workflows/*.js`，顶层斜杠命令也无条件注册内置（不再依赖 manifest 存在）。
+
+- 解析：`builtinWorkflowsDir()` 沿 `import.meta.url` 上溯到包根，`src`/`dist` 两种运行形态一致；单文件解析失败带文件名上抛。
+- 优先级：项目条目优先（手工写 manifest 可临时遮蔽内置），内置补缺。
+- 保留 id：`/workflows register` 用内置 id 报"内置 workflow 的保留 id"并拒绝；`/workflows unregister <内置>` 明确提示不可注销。
+- 视图：`/workflows list` 分「项目注册 / 内置（随包分发，无需注册）」两段；`unreg` 补全不再列内置，`run` 补全包含内置。
+- 测试：新增 `tests/contract/builtin-workflows-registry.test.ts` 6 条（零注册可解析 / legacy 模式可见 / 保留 id 拒绝 / 不可注销 / 项目优先 / 不可用 id 判定），并更新直跑注册、补全、registry 相关断言。engine 218/218、contract 239/239 全绿。
+
 ## 6. 后续使用方式
+
+五个都是内置 workflow，装上插件即生效，无需注册：
 
 ```text
 /quality-loop task="修复登录接口超时重试"

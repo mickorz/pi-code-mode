@@ -11,12 +11,18 @@
  *
  * fallback 模式（兼容存量）：manifest 文件不存在时按旧语义扫描 .opencode-workflows/workflows/*.js
  *
+ * 内置 workflow（随包分发，安装即生效，无需注册）：包仓库根 `workflows/*.js`，
+ * 由 builtinWorkflowsDir() 定位（src 与 dist 两种运行形态均解析到包根）。
+ * 合并顺序：项目注册表优先，内置补缺——同 id 时项目条目生效；内置 id 视为保留，
+ * 项目侧再用同 id 注册会被拒绝（避免语义隐式漂移）。
+ *
  * workflowId = meta.id ?? meta.name（与现有脚本格式零冲突）
  * Schedule 只依赖 workflowId，不依赖文件名/LLM 判断（需求文档第 7 节）。
  */
 
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { parseWorkflowScript } from "./vm.js"
 
 export interface RegisteredWorkflow {
@@ -25,6 +31,8 @@ export interface RegisteredWorkflow {
   description?: string
   /** 脚本绝对/项目相对路径 */
   filePath: string
+  /** true = 随包分发的内置 workflow（不可注销、不可被同名项目脚本覆盖注册） */
+  builtin?: true
 }
 
 /** manifest 条目（register.json 内的持久化形态；file 为原位脚本路径，项目相对优先、绝对兑底，/ 分隔） */
@@ -88,7 +96,57 @@ export function removeFromManifest(directory: string, id: string): ManifestEntry
   return removed
 }
 
+/** 包内置 workflow 目录：包根 workflows/（src 与 dist 运行形态均能解析到包根） */
+export function builtinWorkflowsDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..", "workflows")
+}
+
+/** 扫包内置 workflow 目录；单文件解析失败带文件名上抛（内置脚本坏了必须修，不静默跳过） */
+export function loadBuiltinWorkflows(): Map<string, RegisteredWorkflow> {
+  const dir = builtinWorkflowsDir()
+  const result = new Map<string, RegisteredWorkflow>()
+  if (!fs.existsSync(dir)) return result
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".js")) continue
+    const filePath = path.join(dir, entry.name)
+    try {
+      const { meta } = parseWorkflowScript(fs.readFileSync(filePath, "utf-8"))
+      const id = meta.id ?? meta.name
+      const existing = result.get(id)
+      if (existing) {
+        throw new Error(`内置 workflowId "${id}" 重复：${existing.filePath} 与 ${filePath}`)
+      }
+      result.set(id, { id, name: meta.name, description: meta.description, filePath, builtin: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`内置 workflow ${entry.name} 解析失败：${message}`)
+    }
+  }
+  return result
+}
+
+/** 内置 workflowId 集合（懒缓存：内置脚本随包固定，运行期不重扫） */
+let builtinIdsCache: ReadonlySet<string> | undefined
+export function builtinWorkflowIds(): ReadonlySet<string> {
+  builtinIdsCache ??= new Set(loadBuiltinWorkflows().keys())
+  return builtinIdsCache
+}
+
+export function isBuiltinWorkflow(id: string): boolean {
+  return builtinWorkflowIds().has(id)
+}
+
 export function loadRegistry(directory: string): Map<string, RegisteredWorkflow> {
+  const result = loadProjectRegistry(directory)
+  // 内置补缺：项目注册表优先，同名内置被项目条目遮蔽
+  for (const [id, workflow] of loadBuiltinWorkflows()) {
+    if (!result.has(id)) result.set(id, workflow)
+  }
+  return result
+}
+
+/** 项目侧注册表（manifest 排他 / legacy 目录扫描两种模式） */
+function loadProjectRegistry(directory: string): Map<string, RegisteredWorkflow> {
   // manifest 模式：显式注册表为唯一事实源（排他），不做目录扫描
   const manifest = loadManifest(directory)
   if (manifest) {

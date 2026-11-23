@@ -1,6 +1,6 @@
 // workflow 注册表顶层命令直跑契约（无模型、无真实 workflow 执行）：
 //   - 命名与冲突规则
-//   - 仅 manifest 模式注册（legacy 目录扫描不注册）
+//   - manifest 模式注册项目脚本 + 内置 workflow 无条件注册（legacy 目录扫描不注册）
 //   - 注销兜底与非法参数短路（均不触达执行链）
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -13,7 +13,7 @@ import {
   isDirectCommandSafeName,
   registerWorkflowDirectCommands,
 } from "../../extensions/commands/workflows/index.js"
-import { registerJsonPath } from "../../src/engine/runtime/workflow-registry.js"
+import { isBuiltinWorkflow, registerJsonPath } from "../../src/engine/runtime/workflow-registry.js"
 import { RunManager } from "../../src/manager/run-manager.js"
 
 /** fake pi：收集注册的命令；getCommands 可注入已占用名 */
@@ -95,13 +95,14 @@ test("直跑注册: manifest 条目注册为顶层命令并标注等价 run", ()
   const { deps } = makeDepsProbe()
   const r = registerWorkflowDirectCommands(pi, deps as any, dir)
 
-  assert.deepEqual(r.registered, ["smoke_test"])
+  assert.deepEqual(r.registered.filter((id) => !isBuiltinWorkflow(id)), ["smoke_test"])
   assert.deepEqual(r.skipped, [])
+  assert.ok(r.registered.some(isBuiltinWorkflow), "内置 workflow 无 manifest 也应注册为顶层命令")
   assert.match(commands.get("smoke_test").description, /等价 \/workflows run smoke_test/)
   assert.equal(typeof commands.get("smoke_test").handler, "function")
 })
 
-test("直跑注册: legacy 模式（无 manifest）零注册", () => {
+test("直跑注册: legacy 模式（无 manifest）只注册内置，不注册目录扫描脚本", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-direct-legacy-"))
   const legacyDir = path.join(dir, ".opencode-workflows", "workflows")
   fs.mkdirSync(legacyDir, { recursive: true })
@@ -109,8 +110,9 @@ test("直跑注册: legacy 模式（无 manifest）零注册", () => {
 
   const { pi, commands } = makePi()
   const r = registerWorkflowDirectCommands(pi, makeDepsProbe().deps as any, dir)
-  assert.deepEqual(r, { registered: [], skipped: [] })
-  assert.equal(commands.size, 0)
+  assert.ok(r.registered.every(isBuiltinWorkflow))
+  assert.ok(!r.registered.includes("stray_wf"))
+  assert.equal(commands.has("stray_wf"), false)
 })
 
 test("直跑注册: 命名不安全与命令冲突的条目跳过并给出原因", () => {
@@ -121,7 +123,7 @@ test("直跑注册: 命名不安全与命令冲突的条目跳过并给出原因
   const { pi, commands } = makePi()
   const r = registerWorkflowDirectCommands(pi, makeDepsProbe().deps as any, dir)
 
-  assert.deepEqual(r.registered, ["smoke_test"])
+  assert.deepEqual(r.registered.filter((id) => !isBuiltinWorkflow(id)), ["smoke_test"])
   assert.equal(r.skipped.length, 1)
   assert.match(r.skipped[0], /^\/new: .*保留/)
   assert.ok(!commands.has("new"))
@@ -132,7 +134,7 @@ test("直跑注册: 他方扩展占用同名命令时跳过", () => {
   const { pi, commands } = makePi(["taken_wf"])
   const r = registerWorkflowDirectCommands(pi, makeDepsProbe().deps as any, dir)
 
-  assert.deepEqual(r.registered, [])
+  assert.ok(!r.registered.includes("taken_wf"))
   assert.match(r.skipped[0], /其他扩展/)
   assert.ok(!commands.has("taken_wf"))
 })
@@ -203,7 +205,7 @@ test("直跑装配: /workflows 命令与直跑注册器可同时装配且互不�
 
   assert.ok(commands.has("workflows"))
   assert.ok(commands.has("smoke_test"))
-  assert.deepEqual(r.registered, ["smoke_test"])
+  assert.deepEqual(r.registered.filter((id) => !isBuiltinWorkflow(id)), ["smoke_test"])
   // 直跑注册器不得覆盖 /workflows 本身
   assert.equal(typeof commands.get("workflows").handler, "function")
   assert.match(commands.get("workflows").description, /workflow 命令入口/)

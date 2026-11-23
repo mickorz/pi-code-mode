@@ -143,16 +143,16 @@ export function registerWorkflowDirectCommands(
   const skipped: string[] = []
   const registeredNames: string[] = []
 
-  // legacy 目录扫描模式不注册（存量脚本数量不可控，避免污染补全）
+  // legacy 目录扫描模式不注册（存量脚本数量不可控，避免污染补全）；
+  // 内置 workflow 例外：随包分发、数量固定，安装即生效必须能直接 /<id>
   let hasManifest = false
   try {
     hasManifest = loadManifest(cwd) != null
   } catch (error) {
     return { registered: [], skipped: [`读取 workflow 注册表失败: ${errorText(error)}`] }
   }
-  if (!hasManifest) return { registered: [], skipped: [] }
 
-  let registry: Map<string, { name: string; description?: string }>
+  let registry: Map<string, { name: string; description?: string; builtin?: true }>
   try {
     registry = loadRegistry(cwd)
   } catch (error) {
@@ -160,6 +160,7 @@ export function registerWorkflowDirectCommands(
   }
 
   for (const [id, workflow] of registry) {
+    if (!hasManifest && !workflow.builtin) continue
     if (!isDirectCommandSafeName(id)) {
       skipped.push(`/${id}: 名称不适合作为顶层命令（限字母数字、下划线、连字符，且不以连字符开头）`)
       continue

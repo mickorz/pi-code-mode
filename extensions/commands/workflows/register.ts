@@ -52,7 +52,10 @@ export const registerSubcommand: Subcommand = {
     // id 冲突检查：覆盖 manifest 与旧目录两种来源（注册动作阶段就报，不留到扫描/运行时炸）
     const existing = loadRegistry(cwd).get(workflowId)
     if (existing) {
-      ctx.ui.notify(`workflowId "${workflowId}" 已被占用: ${existing.filePath}（改名 meta.id/meta.name 后重试）`, "warning")
+      const reason = existing.builtin
+        ? `是内置 workflow 的保留 id（${existing.filePath}，无需注册也不能同名覆盖）`
+        : `已被占用: ${existing.filePath}`
+      ctx.ui.notify(`workflowId "${workflowId}" ${reason}（改名 meta.id/meta.name 后重试）`, "warning")
       return
     }
     // 不复制：脚本保持原位，file 记录原位路径（项目相对优先，绝对兑底，/ 分隔利于跨机）
@@ -102,7 +105,13 @@ export const unregisterSubcommand: Subcommand = {
         loadManifest(cwd)!.workflows.find((w) => w.id === key) ??
         loadManifest(cwd)!.workflows.find((w) => path.basename(w.file) === path.basename(key))
       if (!entry) {
-        ctx.ui.notify(`未找到 workflow "${key}"（已知 id：${known()}）`, "warning")
+        const builtin = loadRegistry(cwd).get(key)?.builtin
+        ctx.ui.notify(
+          builtin
+            ? `"${key}" 是内置 workflow（随包分发，无需注册也不可注销）；如要改用自定义实现，换个 meta.id 注册`
+            : `未找到 workflow "${key}"（已知 id：${known()}）`,
+          "warning",
+        )
         return
       }
       removeFromManifest(cwd, entry.id)

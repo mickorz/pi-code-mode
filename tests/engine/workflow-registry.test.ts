@@ -102,8 +102,8 @@ test("名字与路径引用同一脚本：自环检查按 canonical 归一命中
   await assert.rejects(run(parent, dir), /不能调用自身或祖先/)
 })
 
-test("registry 为空目录：报错提示目录位置", async () => {
+test("registry 为空目录：报错仍是 WORKFLOW_NOT_FOUND（已知 id 含随包内置）", async () => {
   const dir = tmpProject()
   const parent = `export const meta = { name: 'p' }\nreturn await workflow('anything')`
-  await assert.rejects(run(parent, dir), /WORKFLOW_NOT_FOUND.*目录为空或不存在/s)
+  await assert.rejects(run(parent, dir), /WORKFLOW_NOT_FOUND[\s\S]*已知 id.*coder/s)
 })

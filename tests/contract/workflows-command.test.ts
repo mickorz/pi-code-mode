@@ -160,7 +160,7 @@ test("register: 校验+manifest 记录原位路径(不复制), unregister 按 id
   assert.match(notifications.at(-1)!.text, /已注销/);
   assert.match(notifications.at(-1)!.text, /重启会话后从补全列表消失/); // 运行中不可注销，需提示宿主限制
   assert.match(notifications.at(-1)!.text, /保留不动/);
-  assert.equal(loadRegistry(projectDir).size, 0);
+  assert.equal(loadRegistry(projectDir).has("demo_wf"), false);
   assert.ok(fs.existsSync(src)); // 源文件保留
 
   await unregisterSubcommand.run(["demo_wf"], ctx, deps); // 再删一次 -> 未找到
@@ -200,8 +200,8 @@ test("双模式: manifest 存在即排他, 无 manifest 回退目录扫描", asy
   fs.mkdirSync(legacyDir, { recursive: true });
   fs.writeFileSync(path.join(legacyDir, "stray.js"), DEMO_SCRIPT.replace("demo_wf", "stray_wf"));
   const registry = loadRegistry(projectDir);
-  assert.equal(registry.size, 1);
   assert.ok(registry.has("demo_wf"));
+  assert.equal(registry.get("demo_wf")!.builtin, undefined);
   assert.ok(!registry.has("stray_wf"));
 
   // fallback：无 manifest 的项目仍按旧目录扫描（坏脚本按文件名移除的出口保留）

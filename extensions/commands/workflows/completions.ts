@@ -3,8 +3,8 @@
  *
  * 按位置分级：
  *   - 子命令名：全部子命令按前缀过滤（含同义别名）
- *   - run/register|reg 后：注册表 workflowId（脚本路径不补全——目录枚举过泛，直接粘贴即可）
- *   - unregister|unreg 后：注册表 workflowId
+ *   - run/register|reg 后：注册表 workflowId（含内置；脚本路径不补全——目录枚举过泛，直接粘贴即可）
+ *   - unregister|unreg 后：只补项目注册条目（内置不可注销，不该出现在候选里）
  *   - watch/status/cancel|stop 后：RunManager 里的 runId（在途 + 最近终态，带状态描述）
  *
  * 契约（宿主 CombinedAutocompleteProvider）：prefix 是**整段参数文本**（不含命令名本身），
@@ -68,10 +68,14 @@ export function completeWorkflowsArgs(prefix: string, deps: CompletionDeps): Aut
       case "register":
       case "unreg":
       case "unregister": {
-        const verb = head === "unreg" || head === "unregister" ? "注销" : "执行/注册"
-        return Array.from(loadRegistry(deps.cwd).keys())
-          .filter((id) => id.startsWith(partial))
-          .map((id) => argItem(`${head} ${id}`, id, `注册表工作流（${verb}）`))
+        const unregistering = head === "unreg" || head === "unregister"
+        const entries = Array.from(loadRegistry(deps.cwd).values())
+        return entries
+          .filter((wf) => (unregistering ? !wf.builtin : true))
+          .filter((wf) => wf.id.startsWith(partial))
+          .map((wf) =>
+            argItem(`${head} ${wf.id}`, wf.id, wf.builtin ? "内置工作流（执行）" : `项目工作流（${unregistering ? "注销" : "执行/注册"}）`),
+          )
       }
       case "watch":
       case "status":
