@@ -500,7 +500,16 @@ async function runOptimizeBody(
   const candidates = resolved.sources.filter(
     (s) => touchedFiles.size === 0 || touchedFiles.has(path.basename(s.file)),
   )
-  candidates.sort((a, b) => a.content.split("\n").length - b.content.split("\n").length)
+  // P0 修复：用户显式指定的 target 文件必须优先。
+  // 之前只按「行数最小」排序取首个 —— tree 聚合会把同目录 12 个文件都算进来，
+  // 结果用户指定 1-scan-template.js，补丁却改到了更小的 6-merge-evidence.js。
+  const userTargetBase = resolved.kind === "file" ? path.basename(resolved.ref) : undefined
+  candidates.sort((a, b) => {
+    const aIsTarget = userTargetBase !== undefined && path.basename(a.file) === userTargetBase
+    const bIsTarget = userTargetBase !== undefined && path.basename(b.file) === userTargetBase
+    if (aIsTarget !== bIsTarget) return aIsTarget ? -1 : 1
+    return a.content.split("\n").length - b.content.split("\n").length
+  })
   const editable = candidates.slice(0, 1)
   if (editable.length === 0) {
     updateSession(cwd, id, { status: "failed", reason: "问题簇证据未指向任何可编辑文件" })

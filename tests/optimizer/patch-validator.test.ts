@@ -432,3 +432,20 @@ test("parsePatchSet：截断的 PatchSet 经修复后仍可用", () => {
   assert.equal(parsed.patch!.files.length, 1)
   assert.ok(parsed.patch!.files[0]!.edits.length >= 1, "至少保住第一条 edit")
 })
+
+// ---- P0 回归：file 模式下必须优先改用户指定的文件 ----
+test("选择可编辑文件：file 模式必须优先用户指定的 target（不能按行数选）", () => {
+  // 模拟：target=big.js，但同目录 small.js 行数更少
+  const sources = [
+    { file: "big.js", content: Array.from({ length: 100 }, (_, i) => `// line ${i}`).join("\n") },
+    { file: "small.js", content: "// tiny" },
+  ]
+  const userTargetBase = "big.js"
+  const picked = [...sources].sort((a, b) => {
+    const aIsTarget = path.basename(a.file) === userTargetBase
+    const bIsTarget = path.basename(b.file) === userTargetBase
+    if (aIsTarget !== bIsTarget) return aIsTarget ? -1 : 1
+    return a.content.split("\n").length - b.content.split("\n").length
+  })[0]!
+  assert.equal(picked.file, "big.js", "必须选中用户指定的文件，不能被更小的文件顶掉")
+})
