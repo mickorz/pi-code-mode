@@ -217,6 +217,12 @@ async function runOptimizeBody(
   runtime: { runId: string; stageEmit: (msg: string, n?: number) => void; sealStage: () => void } | undefined,
 ): Promise<string | undefined> {
 
+  /** 后台模式下不碰 TUI；前台才 notify。所有中途提示统一走这里。 */
+  const notify = (text: string, level: "info" | "warning" = "info") => {
+    if (runtime) runtime.stageEmit(text)
+    else ctx.ui.notify(text, level)
+  }
+
   const cwd = ctx.cwd ?? process.cwd()
   const fresh = argv.includes("--fresh")
   const tier = flagValue(argv, "--tier") ?? GENERATOR_TIER
@@ -227,7 +233,7 @@ async function runOptimizeBody(
   if (requested) {
     const unsafeAsked = requested.filter((r) => AUTO_UNSAFE_RULES.has(r))
     if (unsafeAsked.length > 0 && !argv.includes("--unsafe-rules")) {
-      ctx.ui.notify(
+      notify(
         [
           `[拒绝] 以下规则默认不自动改（需人工判断副作用/运行语义）：${unsafeAsked.join(", ")}`,
           "",
@@ -250,7 +256,7 @@ async function runOptimizeBody(
     if (open) {
       const op = sessionPaths(cwd, open.id)
       if (argv.includes("--benchmark") && open.workspace.patchApplied) {
-        ctx.ui.notify(`复用候选 ${open.id}（状态 ${open.status}）跑真实 Benchmark…`, "info")
+        notify(`复用候选 ${open.id}（状态 ${open.status}）跑真实 Benchmark…`, "info")
         const r = await benchmarkSession({
           sessionId: open.id,
           argv,
@@ -268,7 +274,7 @@ async function runOptimizeBody(
           validation: { benchmark: r.accepted ? "pass" : "fail", quality: r.quality },
           reason: r.accepted ? "真实 Benchmark 通过：可申请写回" : "真实 Benchmark 未通过，禁止 apply",
         })
-        ctx.ui.notify(
+        notify(
           [
             r.accepted ? `[验证通过，可写回] ${open.id}` : `[验证未通过] ${open.id}`,
             "",
@@ -280,7 +286,7 @@ async function runOptimizeBody(
         )
         return
       }
-      ctx.ui.notify(
+      notify(
         [
           `发现该目标未完成的优化候选：${open.id}（状态 ${open.status}）`,
           `审阅：${op.review}`,
@@ -297,7 +303,7 @@ async function runOptimizeBody(
 
   const resolved = resolveTarget(cwd, ref)
   if (typeof resolved === "string") {
-    ctx.ui.notify(resolved, "warning")
+    notify(resolved, "warning")
     return
   }
 
@@ -309,8 +315,14 @@ async function runOptimizeBody(
   const stage = (n: number, total: number, msg: string) => {
     const elapsed = ((Date.now() - tStart) / 1000).toFixed(0)
     const text = `[${n}/${total}] ${msg}（已 ${elapsed}s）`
-    ctx.ui.notify(text, "info")
-    runtime?.stageEmit(text, n)
+    if (runtime) {
+      // 后台模式：命令已返回，只在 RunManager 记进度（/workflows status|watch 可见）。
+      // 不再直接调 ctx.ui.notify —— 命令返回后 ctx 可能已失效，或与 TUI 渲染循环冲突，
+      // 是「跑完命令后整个会话输入无响应」的典型成因。
+      runtime.stageEmit(text, n)
+    } else {
+      notify(text, "info")
+    }
   }
   stage(1, 6, `静态分析 ${ref}（${resolved.files.length} 个 js）`)
 
@@ -326,7 +338,7 @@ async function runOptimizeBody(
     format: "md",
   })
   if (!statics.ok || !statics.report) {
-    ctx.ui.notify(`静态分析失败：${statics.error ?? "unknown"}`, "warning")
+    notify(`静态分析失败：${statics.error ?? "unknown"}`, "warning")
     return
   }
   const staticMs = Date.now() - tStatic
@@ -355,7 +367,7 @@ async function runOptimizeBody(
   const aiMs = Date.now() - tAi
   const timings = { staticMs, aiMs }
   if (!before.ok || !before.report) {
-    ctx.ui.notify(`分析失败：${before.error ?? "unknown"}`, "warning")
+    notify(`分析失败：${before.error ?? "unknown"}`, "warning")
     return
   }
 
@@ -426,7 +438,7 @@ async function runOptimizeBody(
   if (selected.length === 0) {
     updateSession(cwd, id, { status: "rejected", reason: "没有可安全自动优化的问题簇" })
     const unsafe = allClusters.filter((c) => AUTO_UNSAFE_RULES.has(c.ruleId)).map((c) => c.ruleId)
-    ctx.ui.notify(
+    notify(
       [
         `[无可自动优化项] ${id}`,
         `静态问题簇 ${allClusters.length} 个，但没有落在可安全自动优化的规则内。`,
@@ -448,7 +460,7 @@ async function runOptimizeBody(
   // P2-7：工作区不完整时，后续所有静态/benchmark 结论都不可信 → 直接拒绝
   if (wsCopy.truncated) {
     updateSession(cwd, id, { status: "rejected", reason: "目标目录文件数超过上限，隔离工作区不完整" })
-    ctx.ui.notify(
+    notify(
       [
         `[拒绝优化] ${id}`,
         `目标目录文件数超过隔离工作区上限（${manifest.files.length} 个已复制），工作区不完整。`,
@@ -490,7 +502,7 @@ async function runOptimizeBody(
   const editable = candidates.slice(0, 1)
   if (editable.length === 0) {
     updateSession(cwd, id, { status: "failed", reason: "问题簇证据未指向任何可编辑文件" })
-    ctx.ui.notify(`[无法定位修改文件] ${id}：问题簇证据里没有可识别的文件`, "warning")
+    notify(`[无法定位修改文件] ${id}：问题簇证据里没有可识别的文件`, "warning")
     return
   }
   const docs = loadRuleDocs()
@@ -547,7 +559,7 @@ async function runOptimizeBody(
   // 但不无限重试——两次都超时就明确报告，不假装成功。
   if ((!gen.ok || !gen.patch) && /超时|timeout/i.test(gen.error ?? "")) {
     genDiag.push(`生成器 "${tier}" 档超时（${gen.error}），已重试 1 次`)
-    ctx.ui.notify(`生成器 "${tier}" 档超时，重试 1 次…`, "info")
+    notify(`生成器 "${tier}" 档超时，重试 1 次…`, "info")
     const retry = await generatePatchSet(
       {
         clusters: selected,
@@ -582,7 +594,7 @@ async function runOptimizeBody(
 
   if (!gen.ok || !gen.patch) {
     updateSession(cwd, id, { status: "failed", reason: `补丁生成失败：${gen.error ?? "unknown"}` })
-    ctx.ui.notify(
+    notify(
       [`[补丁生成失败] ${id}`, `原因：${gen.error ?? "unknown"}`, "", `原文件未修改。分析报告：${p.beforeMd}`].join("\n"),
       "warning",
     )
@@ -614,7 +626,7 @@ async function runOptimizeBody(
         ],
       })
       fs.writeFileSync(p.review, review, "utf8")
-      ctx.ui.notify(
+      notify(
         [
           "[需要人工决策] " + id,
           "",
@@ -640,7 +652,7 @@ async function runOptimizeBody(
       blockers: ["补丁结构校验未通过，未应用到工作区。"],
     })
     fs.writeFileSync(p.review, review, "utf8")
-    ctx.ui.notify(
+    notify(
       [`[补丁被拒绝] ${id}`, `结构校验问题 ${validation.issues.length} 项：`, ...validation.issues.slice(0, 5).map((i) => `- ${i.path}：${i.reason}`), "", `审阅：${p.review}`].join("\n"),
       "warning",
     )
@@ -663,7 +675,7 @@ async function runOptimizeBody(
   const changed = detectSourceChanges(resolved.root, resolved.sourceHashes)
   if (changed.length > 0) {
     updateSession(cwd, id, { status: "stale", validation: { sourceUnchanged: "fail", patchSchema: "pass" }, reason: "优化期间生产文件被改动" })
-    ctx.ui.notify(
+    notify(
       [`[优化中止] ${id}`, "优化期间生产文件发生变化：", ...changed.slice(0, 5).map((c) => `- ${c.path}`), "", "请重新运行 optimize。"].join("\n"),
       "warning",
     )
@@ -802,7 +814,7 @@ async function runOptimizeBody(
     `审阅：${p.review}`,
     `工作区：${p.workspace}（${manifest.files.length} 个文件已复制）`,
   ].join("\n")
-  ctx.ui.notify(summaryText, finalStatus === "rejected" ? "warning" : "info")
+  notify(summaryText, finalStatus === "rejected" ? "warning" : "info")
   // 后台模式下命令已提前返回，需要把摘要 return 出去交给 deliver 回传；
   // 同时把最后一个阶段节点收尾成 ok（否则 status 里永远显示 running）
   runtime?.sealStage()
