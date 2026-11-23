@@ -38,6 +38,11 @@ const AUTO_SAFE_RULES = new Set(["DET-001", "IO-001", "REC-002"])
 /** 明确不自动改：需要运行语义或副作用证明 */
 const AUTO_UNSAFE_RULES = new Set(["SERIAL-002", "CONC-002", "SIDEFX-001", "BUDGET-001"])
 /**
+ * 这些规则是 aiOnly：静态层不产出 finding，因此 `report.clusters` 里**永远没有它们**。
+ * 必须靠 AI Rule Check 的结论来构造候选（否则 --rules REC-002 会判「无可自动优化项」）。
+ */
+const AI_ONLY_SAFE_RULES = new Set(["REC-002"])
+/**
  * 档位分工（CLAUDE.md 已确认，2026-11-20 用户决策）：
  *  - 分析类（AI Rule Check）用 big：强模型看代码，允许 ≤10 分钟
  *  - 执行类（生成补丁 / 审查 diff）用 fast：要快，迭代成本低
@@ -147,10 +152,13 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   const staticMs = Date.now() - tStatic
 
   const preClusters = statics.report.clusters ?? []
-  const preselect = requested
-    ? preClusters.filter((c) => requested.includes(c.ruleId))
-    : preClusters.filter((c) => AUTO_SAFE_RULES.has(c.ruleId))
-  const focusedRules = [...new Set(preselect.map((c) => c.ruleId))]
+  const staticSafe = preClusters.filter((c) => AUTO_SAFE_RULES.has(c.ruleId))
+  // aiOnly 规则必须交给 AI 判定（静态永远不命中）
+  const aiOnlyCandidates = [...AUTO_SAFE_RULES].filter((id) => AI_ONLY_SAFE_RULES.has(id))
+  const focusedRules = requested
+    ? [...new Set(requested)]
+    : [...new Set([...staticSafe.map((c) => c.ruleId), ...aiOnlyCandidates])]
+  void staticSafe
 
   const tAi = Date.now()
   const before = await analyzeWorkflow({
@@ -170,8 +178,27 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     return
   }
 
-  // ② 选问题簇
-  const allClusters = before.report.clusters ?? []
+  // ② 选问题簇：静态簇 + aiOnly 规则由 AI 复核产生的「虚拟簇」
+  const allClusters = [...(before.report.clusters ?? [])]
+  // aiOnly 规则命中时，用 checks[].evidence 构造簇——否则这类规则在 optimize 里不可达
+  for (const c of before.report.aiRuleCheck?.checks ?? []) {
+    if (c.status !== "hit") continue
+    if (!AI_ONLY_SAFE_RULES.has(c.ruleId) && !requested?.includes(c.ruleId)) continue
+    if (allClusters.some((x) => x.ruleId === c.ruleId)) continue
+    const files = [...new Set(c.evidence.map((e) => e.file))]
+    const locations = c.evidence.map((e) => `${e.file}:L${e.startLine}-${e.endLine}`)
+    allClusters.push({
+      key: c.ruleId,
+      ruleId: c.ruleId,
+      severity: "high" as const,
+      count: c.evidence.length,
+      files,
+      locations,
+      moreLocations: 0,
+      evidence: [c.reason, ...c.evidence.map((e) => `${e.file}:L${e.startLine} ${e.quote.slice(0, 120)}`)],
+      confidence: c.confidence,
+    })
+  }
   const selected = requested
     ? allClusters.filter((c) => requested.includes(c.ruleId))
     : allClusters.filter((c) => AUTO_SAFE_RULES.has(c.ruleId))
@@ -467,7 +494,14 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   })
 
   const afterFindings = afterReport.report?.summary.totalFindings ?? -1
-  const targetResolved = selected.every((c) => !(afterReport.report?.clusters ?? []).some((x) => x.ruleId === c.ruleId && x.count >= c.count))
+  // aiOnly 规则（REC-002 等）静态层本来就不产出 cluster，after 又没重跑 AI 复核，
+  // 所以「静态 cluster 消失」不能证明它已解决。必须区分「静态已验证」与「未验证」。
+  const aiOnlySelected = selected.filter((c) => AI_ONLY_SAFE_RULES.has(c.ruleId))
+  const staticTargetResolved = selected
+    .filter((c) => !AI_ONLY_SAFE_RULES.has(c.ruleId))
+    .every((c) => !(afterReport.report?.clusters ?? []).some((x) => x.ruleId === c.ruleId && x.count >= c.count))
+  const targetResolved = staticTargetResolved && aiOnlySelected.length === 0
+  const unresolvedNote = aiOnlySelected.length > 0 ? `${aiOnlySelected.map((c) => c.ruleId).join(",")} 未重新 AI 复核（O1 阶段 after 只跑静态），解决与否待验证` : ""
   const staticPass = afterReport.ok && afterFindings >= 0 && afterFindings <= before.report.summary.totalFindings
   if (afterReport.ok && afterReport.report) {
     fs.writeFileSync(path.join(p.dir, "after.report.json"), JSON.stringify(afterReport.report, null, 2), "utf8")
@@ -511,7 +545,8 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
       `目标：${ref}`,
       `问题簇：${selected.map((c) => c.ruleId).join(", ")}`,
       `修改：${files} 个文件 / ${edits} 处补丁`,
-      `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条${targetResolved ? "（目标规则已解决）" : "（目标规则仍在）"}`,
+      `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条${targetResolved ? "（目标规则已解决）" : staticTargetResolved ? "（静态未新增）" : "（目标规则仍在）"}`,
+      ...(unresolvedNote ? [`注意：${unresolvedNote}`] : []),
       patchReview ? `补丁审查：${patchReview.decision}${patchReview.findings.length ? `（${patchReview.findings.length} 项发现）` : ""}` : "补丁审查：未完成",
       "",
       "原文件未修改。",
