@@ -131,17 +131,52 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     }
   }
 
-  // 同 target 的未完成会话：默认继续，--fresh 才新建（避免用户重复跑丢掉已验证工作）
+  // 同 target 的未完成会话：
+  //  - 带 --benchmark → 复用该会话跑真实验证（否则 benchmark 永远不可达、apply 到不了 ready）
+  //  - 否则提示继续；--fresh 才新建
   if (!fresh) {
     const open = findOpenSession(cwd, ref)
     if (open) {
-      const p = sessionPaths(cwd, open.id)
+      const op = sessionPaths(cwd, open.id)
+      if (argv.includes("--benchmark") && open.workspace.patchApplied) {
+        ctx.ui.notify(`复用候选 ${open.id}（状态 ${open.status}）跑真实 Benchmark…`, "info")
+        const r = await benchmarkSession({
+          sessionId: open.id,
+          argv,
+          ctx,
+          deps,
+          productionRoot: open.target.root,
+          entryName: path.basename(open.target.ref),
+          workspaceDir: open.workspace.path,
+          sessionDir: op.dir,
+        })
+        if (!r) return
+        const nextStatus = r.accepted ? "ready" : "rejected"
+        updateSession(cwd, open.id, {
+          status: nextStatus,
+          validation: { benchmark: r.accepted ? "pass" : "fail", quality: r.quality },
+          reason: r.accepted ? "真实 Benchmark 通过：可申请写回" : "真实 Benchmark 未通过，禁止 apply",
+        })
+        ctx.ui.notify(
+          [
+            r.accepted ? `[验证通过，可写回] ${open.id}` : `[验证未通过] ${open.id}`,
+            "",
+            r.text,
+            "",
+            r.accepted ? `写回：/workflows optimize apply ${open.id}` : `详情：${op.dir}/benchmark.md`,
+          ].join("\n"),
+          r.accepted ? "info" : "warning",
+        )
+        return
+      }
       ctx.ui.notify(
         [
           `发现该目标未完成的优化候选：${open.id}（状态 ${open.status}）`,
-          `审阅：${p.review}`,
+          `审阅：${op.review}`,
           "",
-          "继续处理该候选；如需重新生成请加 --fresh。",
+          open.workspace.patchApplied
+            ? `跑真实验证：/workflows optimize ${ref} --benchmark --args '<json>' --verify-cmd '<cmd>'`
+            : "继续处理该候选；如需重新生成请加 --fresh。",
         ].join("\n"),
         "info",
       )
@@ -565,106 +600,23 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
 
   const reviewDecision = patchReview?.decision ?? "needs-human"
 
-  // ⑨b 真实 Benchmark（O2，显式开启）：--benchmark --args '<json>'
-  // 默认不跑：game-requirement-audit 这类脚本单次 run 几十分钟，before/after 就是 1~2 小时。
-  // 用户必须明确要求并给出 args（多数 workflow 需要 date 等必填参数）。
-  let benchmarkText: string | undefined
-  let verifierResult: VerifierResult | undefined
-  let benchmarkAccepted = false
-  let qualityStatus: "pass" | "fail" | "unavailable" = "unavailable"
-  const benchEnabled = argv.includes("--benchmark")
-  if (benchEnabled && staticPass && reviewDecision !== "reject") {
-    const argsRaw = flagValue(argv, "--args")
-    let benchArgs: Record<string, unknown> = {}
-    if (argsRaw) {
-      try {
-        benchArgs = JSON.parse(argsRaw)
-      } catch {
-        // P2-10：不能停在 patched（会被 findOpenSession 挡住后续重跑）
-        updateSession(cwd, id, { status: "failed", reason: "--args 不是合法 JSON，benchmark 未执行" })
-        ctx.ui.notify(`--args 不是合法 JSON：${argsRaw}`, "warning")
-        return
-      }
-    }
-    const verifierCmd = flagValue(argv, "--verify-cmd")
-    const qualityGate = verifierCmd
-      ? ({ kind: "verifier", command: verifierCmd } as const)
-      : ({ kind: "none" } as const)
-
-    // 复用 workflow 工具真实执行：before 用生产目录，after 用隔离工作区
-    const runOnce = async (label: "before" | "after"): Promise<RealRunOutcome> => {
-      const root = label === "before" ? resolved.root : p.workspace
-      const scriptAbs = path.join(root, path.basename(resolved.ref))
-      const tool = makeWorkflowTool({ ...deps.makeDeps(root), deliver: deps.deliver })
-      const t0 = Date.now()
-      const out: any = await tool.execute("bench", { scriptPath: scriptAbs, args: benchArgs, background: false }, undefined, undefined, undefined)
-      const durationMs = Date.now() - t0
-      const text: string = out?.content?.[0]?.text ?? ""
-      const failed = Boolean(out?.isError) || /\[workflow 失败\]|执行失败/.test(text)
-
-      // P0-4：绝不猜 runId。此前用 runManager.list()[0]，并发时可能拿到别的 run
-      // 的 agents/tokens/failedAgents，before/after 判定建立在错误数据上。
-      const idMatch = /runId=([A-Za-z0-9_-]+)/.exec(text)
-      const runId = idMatch?.[1]
-      const detail = runId ? deps.runManager.status(runId) : undefined
-      if (!runId || !detail) {
-        return {
-          ok: false,
-          durationMs,
-          agents: 0,
-          failedAgents: 0,
-          error: `无法确定本次 runId（${runId ?? "解析失败"}），benchmark 指标不可信，按失败处理`,
-        }
-      }
-      const agents = detail.agents ?? []
-      const tokenSum = agents.reduce((n: number, a: any) => n + (a.tokens ?? 0), 0)
-      return {
-        ok: !failed && detail.status !== "failed",
-        durationMs,
-        agents: agents.length,
-        // AgentRecord 只有 tokens 总量（无 input/output 拆分）：给 inputTokens，
-        // outputTokens 保持 undefined —— 不虚构 0（这正是审计 M8 指出的问题）。
-        inputTokens: tokenSum > 0 ? tokenSum : undefined,
-        failedAgents: agents.filter((a: any) => a.status === "failed" || a.status === "aborted").length,
-        ...(failed ? { error: text.slice(0, 200) } : {}),
-      }
-    }
-
-    // P2-9：before 在生产目录真实执行，可能重复写产物/调外部服务。必须让用户先看到。
-    ctx.ui.notify(
-      [
-        "运行真实 Benchmark：",
-        `  before：生产目录 ${resolved.root}（**会在真实目录执行一次 workflow**）`,
-        `  after ：隔离工作区 ${p.workspace}`,
-        `  args  ：${JSON.stringify(benchArgs)}`,
-        "",
-        "注意：若该 workflow 会写产物/调用外部服务，before 轮会在生产目录重复发生一次。",
-        "如需避免，请改用专门的可重复执行 args，或先备份生产产物目录。",
-      ].join("\n"),
-      "info",
-    )
-    const verdict = await runRealBenchmark({
-      scriptPath: path.join(resolved.root, path.basename(resolved.ref)),
-      cwd,
-      run: ({ label }) => runOnce(label),
-      qualityGate,
-      // P0-1：真实执行 verifier，cwd = after 工作区（不在生产目录跑验证）
-      ...(verifierCmd
-        ? {
-            runVerifier: async (cmd: string) => {
-              const vr = await runVerifierCommand({ command: cmd, cwd: p.workspace })
-              verifierResult = vr
-              return { ok: vr.ok, output: vr.note }
-            },
-          }
-        : {}),
-    })
-    benchmarkAccepted = verdict.accepted
-    qualityStatus = verdict.quality.status
-    benchmarkText = renderBenchmarkVerdict(verdict)
-    const verifierSection = verifierCmd && verifierResult ? `\n\n## Verifier\n\n${renderVerifier(verifierResult, verifierCmd)}\n` : ""
-    fs.writeFileSync(path.join(p.dir, "benchmark.md"), `# Benchmark\n\n${benchmarkText}${verifierSection}\n`, "utf8")
-  }
+  // ⑨b 真实 Benchmark（O2）：只有显式 --benchmark 才跑；复用抽出后的实现
+  const benchResult =
+    argv.includes("--benchmark") && staticPass && reviewDecision !== "reject"
+      ? await benchmarkSession({
+          sessionId: id,
+          argv,
+          ctx,
+          deps,
+          productionRoot: resolved.root,
+          entryName: path.basename(resolved.ref),
+          workspaceDir: p.workspace,
+          sessionDir: p.dir,
+        })
+      : undefined
+  const benchmarkText = benchResult?.text
+  const benchmarkAccepted = benchResult?.accepted ?? false
+  const qualityStatus: "pass" | "fail" | "unavailable" = benchResult?.quality ?? "unavailable"
 
   // ⑩ 状态：O1 阶段没有真实 Benchmark，因此只能到 benchmark-pending，不能 ready
   const finalStatus =
@@ -727,6 +679,98 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     finalStatus === "rejected" ? "warning" : "info",
   )
   void deps
+}
+
+/**
+ * 给指定会话跑真实 Benchmark（before: 生产目录 / after: 隔离工作区）。
+ *
+ * 抽成独立函数的原因：benchmark 必须能作用于**已有候选**。
+ * 之前它内联在 optimize 流程里，导致「第一次生成补丁、第二次想验证」必然新建会话，
+ * benchmark 实际不可达，apply 永远到不了 ready。
+ */
+async function benchmarkSession(input: {
+  sessionId: string
+  argv: string[]
+  ctx: any
+  deps: any
+  productionRoot: string
+  entryName: string
+  workspaceDir: string
+  sessionDir: string
+}): Promise<{ accepted: boolean; quality: "pass" | "fail" | "unavailable"; text: string } | undefined> {
+  const { sessionId, argv, ctx, deps, productionRoot, entryName, workspaceDir, sessionDir } = input
+  const argsRaw = flagValue(argv, "--args")
+  let benchArgs: Record<string, unknown> = {}
+  if (argsRaw) {
+    try {
+      benchArgs = JSON.parse(argsRaw)
+    } catch {
+      updateSession(path.dirname(path.dirname(sessionDir)), sessionId, { status: "failed", reason: "--args 不是合法 JSON，benchmark 未执行" })
+      ctx.ui.notify(`--args 不是合法 JSON：${argsRaw}`, "warning")
+      return undefined
+    }
+  }
+  const verifierCmd = flagValue(argv, "--verify-cmd")
+  const qualityGate = verifierCmd ? ({ kind: "verifier", command: verifierCmd } as const) : ({ kind: "none" } as const)
+
+  let verifierResult: VerifierResult | undefined
+  const runOnce = async (label: "before" | "after"): Promise<RealRunOutcome> => {
+    const root = label === "before" ? productionRoot : workspaceDir
+    const scriptAbs = path.join(root, entryName)
+    const tool = makeWorkflowTool({ ...deps.makeDeps(root), deliver: deps.deliver })
+    const t0 = Date.now()
+    const out: any = await tool.execute("bench", { scriptPath: scriptAbs, args: benchArgs, background: false }, undefined, undefined, undefined)
+    const durationMs = Date.now() - t0
+    const text: string = out?.content?.[0]?.text ?? ""
+    const failed = Boolean(out?.isError) || /\[workflow 失败\]|执行失败/.test(text)
+    const idMatch = /runId=([A-Za-z0-9_-]+)/.exec(text)
+    const runId = idMatch?.[1]
+    const detail = runId ? deps.runManager.status(runId) : undefined
+    if (!runId || !detail) {
+      return { ok: false, durationMs, agents: 0, failedAgents: 0, error: `无法确定本次 runId（${runId ?? "解析失败"}），指标不可信` }
+    }
+    const agents = detail.agents ?? []
+    const tokenSum = agents.reduce((n: number, a: any) => n + (a.tokens ?? 0), 0)
+    return {
+      ok: !failed && detail.status !== "failed",
+      durationMs,
+      agents: agents.length,
+      inputTokens: tokenSum > 0 ? tokenSum : undefined,
+      failedAgents: agents.filter((a: any) => a.status === "failed" || a.status === "aborted").length,
+      ...(failed ? { error: text.slice(0, 200) } : {}),
+    }
+  }
+
+  ctx.ui.notify(
+    [
+      "运行真实 Benchmark：",
+      `  before：生产目录 ${productionRoot}（**会在真实目录执行一次 workflow**）`,
+      `  after ：隔离工作区 ${workspaceDir}`,
+      `  args  ：${JSON.stringify(benchArgs)}`,
+      "",
+      "注意：若该 workflow 会写产物/调用外部服务，before 轮会在生产目录重复发生一次。",
+    ].join("\n"),
+    "info",
+  )
+  const verdict = await runRealBenchmark({
+    scriptPath: path.join(productionRoot, entryName),
+    cwd: productionRoot,
+    run: ({ label }) => runOnce(label),
+    qualityGate,
+    ...(verifierCmd
+      ? {
+          runVerifier: async (cmd: string) => {
+            const vr = await runVerifierCommand({ command: cmd, cwd: workspaceDir })
+            verifierResult = vr
+            return { ok: vr.ok, output: vr.note }
+          },
+        }
+      : {}),
+  })
+  const text = renderBenchmarkVerdict(verdict)
+  const verifierSection = verifierCmd && verifierResult ? `\n\n## Verifier\n\n${renderVerifier(verifierResult, verifierCmd)}\n` : ""
+  fs.writeFileSync(path.join(sessionDir, "benchmark.md"), `# Benchmark\n\n${text}${verifierSection}\n`, "utf8")
+  return { accepted: verdict.accepted, quality: verdict.quality.status, text }
 }
 
 // ---------------------------------------------------------------- apply / rollback（O3）
