@@ -30,6 +30,7 @@ const subcommands: Record<string, Subcommand> = {
   resume: resumeSubcommand,
   analyze: analyzeSubcommand,
   anal: analyzeSubcommand,
+  optimize: optimizeSubcommand,
   plan: planSubcommand,
   status: statusSubcommand,
   cancel: cancelSubcommand,
