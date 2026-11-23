@@ -2,6 +2,7 @@
 
 - 日期：2026-11-23
 - 类型：调研笔记（架构对比）
+- 姊妹篇：`2026-11-23-pibot-目录结构设计详解.md`（PiBot 目录结构逐层解剖，本文不重复展开）
 - 对比对象：
   - **PiBot**（`thirdparties/PiBot`，REF-023，锁定 commit `008198f`，Apache-2.0）：基于 pi agent kernel 的本地优先桌面多 Agent 团队应用
   - **pi-code-mode**（本项目）：面向 Pi Agent 的代码式工作流编排插件（Workflow Engineering Framework）
