@@ -22,9 +22,17 @@ test("run 参数: 值中含等号时按首个等号切分", () => {
   assert.deepEqual(r.args, { q: "a=b" });
 });
 
-test("run 参数: 缺路径或非法 token 返回 error", () => {
+test("run 参数: 整段无等号 -> 自然语言指令落到 args.task", () => {
+  const r = parseWorkflowsRunArgs(["coder", "修复", "登录", "超时"]);
+  assert.equal(r.scriptPath, "coder");
+  assert.deepEqual(r.args, { task: "修复 登录 超时" });
+  assert.equal(r.error, undefined);
+});
+
+test("run 参数: 缺路径 / key=value 混用裸词 / 过短裸词 返回 error", () => {
   assert.match(parseWorkflowsRunArgs([]).error!, /缺少/);
-  assert.match(parseWorkflowsRunArgs(["a.js", "flag"]).error!, /key=value/);
+  assert.match(parseWorkflowsRunArgs(["a.js", "task=x", "flag"]).error!, /key=value/);
+  assert.match(parseWorkflowsRunArgs(["a.js", "x"]).error!, /既不是 key=value 也不是指令文本/);
 });
 
 test("斜杠参数切分: 双引号/单引号包裹含空格的值, 引号丢弃", () => {

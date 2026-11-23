@@ -11,8 +11,10 @@
  *
  * fallback 模式（兼容存量）：manifest 文件不存在时按旧语义扫描 .opencode-workflows/workflows/*.js
  *
- * 内置 workflow（随包分发，安装即生效，无需注册）：包仓库根 `workflows/*.js`，
- * 由 builtinWorkflowsDir() 定位（src 与 dist 两种运行形态均解析到包根）。
+ * 内置 workflow（随包分发，安装即生效，无需注册）：包仓库根 `workflows/` 下按分类子目录存放
+ * （如 `workflows/roles/*.js`、`workflows/flows/*.js`），递归扫描、按 meta.id 寻址；
+ * 目录只用于人类分类，不参与 id 解析。由 builtinWorkflowsDir() 定位
+ * （src 与 dist 两种运行形态均解析到包根）。
  * 合并顺序：项目注册表优先，内置补缺——同 id 时项目条目生效；内置 id 视为保留，
  * 项目侧再用同 id 注册会被拒绝（避免语义隐式漂移）。
  *
@@ -96,19 +98,33 @@ export function removeFromManifest(directory: string, id: string): ManifestEntry
   return removed
 }
 
-/** 包内置 workflow 目录：包根 workflows/（src 与 dist 运行形态均能解析到包根） */
+/** 包内置 workflow 根目录：包根 workflows/（其下按分类分子目录；src 与 dist 运行形态均能解析到包根） */
 export function builtinWorkflowsDir(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..", "workflows")
 }
 
-/** 扫包内置 workflow 目录；单文件解析失败带文件名上抛（内置脚本坏了必须修，不静默跳过） */
+/** 递归收集目录下的 .js 脚本（跳过 . 开头目录与 node_modules；分类目录层级不限） */
+function collectScriptFiles(dir: string): string[] {
+  const out: string[] = []
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...collectScriptFiles(full))
+    else if (entry.isFile() && entry.name.endsWith(".js")) out.push(full)
+  }
+  return out.sort()
+}
+
+/**
+ * 扫包内置 workflow 目录（递归，分类子目录只是人类组织方式）。
+ * 单文件解析失败带相对路径上抛（内置脚本坏了必须修，不静默跳过）。
+ */
 export function loadBuiltinWorkflows(): Map<string, RegisteredWorkflow> {
   const dir = builtinWorkflowsDir()
   const result = new Map<string, RegisteredWorkflow>()
   if (!fs.existsSync(dir)) return result
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".js")) continue
-    const filePath = path.join(dir, entry.name)
+  for (const filePath of collectScriptFiles(dir)) {
+    const rel = path.relative(dir, filePath).split(path.sep).join("/")
     try {
       const { meta } = parseWorkflowScript(fs.readFileSync(filePath, "utf-8"))
       const id = meta.id ?? meta.name
@@ -119,7 +135,7 @@ export function loadBuiltinWorkflows(): Map<string, RegisteredWorkflow> {
       result.set(id, { id, name: meta.name, description: meta.description, filePath, builtin: true })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`内置 workflow ${entry.name} 解析失败：${message}`)
+      throw new Error(`内置 workflow workflows/${rel} 解析失败：${message}`)
     }
   }
   return result

@@ -43,12 +43,12 @@ const RESULT_SCHEMA = {
   },
 }
 
-const task = String(args.task ?? "").trim()
+const task = (typeof args === "string" ? args : String(args?.task ?? "")).trim()
 if (!task) throw new Error("reviewer 需要 args.task：本次评审对应的任务目标")
 
-const tier = String(args.tier ?? "").trim() || "big"
-const focus = String(args.focus ?? "").trim()
-const base = String(args.base ?? "").trim()
+const tier = String(args?.tier ?? "").trim() || "big"
+const focus = String(args?.focus ?? "").trim()
+const base = String(args?.base ?? "").trim()
 
 const focusBlock = focus ? `额外关注点：${focus}` : "额外关注点：（未指定，按正确性、边界条件、复杂度、测试质量通盘检查）"
 const baseBlock = base

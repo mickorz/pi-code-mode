@@ -2,7 +2,22 @@
 
 本包内置五个可直接运行的 workflow：四个单角色工作流（`coder` / `reviewer` / `judge` / `fixer`）和一个组合闭环（`quality-loop`）。它们把“实施、独立评审、裁决、修复”拆成互不隐式调用的独立环节，由你决定每次跑哪些、用什么模型。
 
-这五个是**内置**工作流：脚本随包分发（包仓库根的 `workflows/`），装好插件就能用，**不需要注册**。它们和"项目自有工作流"是两个独立区域，见第 2 节。
+这五个是**内置**工作流：脚本随包分发，装好插件就能用，**不需要注册**。它们和"项目自有工作流"是两个独立区域，见第 2 节。
+
+内置脚本按分类放在包内 `workflows/` 的子目录里，目录只用于人类组织，**不参与 id 解析**（寻址一律用 `meta.id`）：
+
+```text
+workflows/
+  roles/           # 单角色：一个脚本一个职责
+    coder.js
+    reviewer.js
+    judge.js
+    fixer.js
+  flows/           # 组合流程：编排角色，自身不调模型
+    quality-loop.js
+```
+
+后续新增的内置工作流按类别继续开子目录（如 `flows/`、`checks/`），扫描是递归的。
 
 ## 1. 五个工作流一览
 
@@ -22,7 +37,7 @@
 
 | 区域 | 位置 | 是否需要注册 | 说明 |
 | --- | --- | --- | --- |
-| **内置** | 插件包的 `workflows/` 目录（随包分发） | **不需要**，装上即生效 | `coder` / `reviewer` / `judge` / `fixer` / `quality-loop` |
+| **内置** | 插件包的 `workflows/<分类>/` 目录（随包分发） | **不需要**，装上即生效 | `coder` / `reviewer` / `judge` / `fixer` / `quality-loop` |
 | **项目注册** | `.pi/workflows/register.json` + 你项目里的脚本 | 需要 `/workflows register` | 你自己的业务工作流 |
 
 ### 2.1 内置：零配置
@@ -30,15 +45,17 @@
 插件加载时自动把包内 `workflows/*.js` 并入注册表，并按 `meta.id` 直接注册为顶层斜杠命令。所以装好插件、启动会话后直接可用：
 
 ```text
-/coder task="修复 xx 问题" tier=fast
-/quality-loop task="..." maxRepairRounds=2
+/coder 修复登录接口的超时重试问题
+/quality-loop 在 calc.js 新增 mul(a,b) 并补一条断言
 ```
+
+第一段文字就是任务描述，不需要 `task=`；模型档位用各角色缺省值，不用传 `tier=`。
 
 补充约定：
 
 - 内置 id 是**保留 id**：项目侧再用同 `meta.id` 注册会被拒绝（避免同名两套实现语义漂移）。想自定义就换个 id。
 - 内置**不可注销**：`/workflows unregister coder` 会明确提示这是内置；`/workflows unreg` 的补全里也不列内置。
-- 内置脚本坏掉时会带文件名报解析错误（不静默跳过）——那是包自身缺陷，应修包。
+- 内置脚本坏掉时会带 `workflows/<分类>/<文件>` 报解析错误（不静默跳过）——那是包自身缺陷，应修包。
 - 手工把某个 id 写进项目 `register.json` 时，**项目条目优先**（用于临时替换实现），但正常路径不需要这么做。
 
 ### 2.2 项目自有工作流：按需注册
@@ -69,11 +86,24 @@
 
 ## 3. 参数与调用语法
 
-斜杠命令的参数一律 `key=value`；值支持 JSON 字面量（`true`、`2`、`["a","b"]`），非 JSON 按字符串处理。**值里有空格时必须加引号**：
+两种写法，任选其一：
 
-```text
-/coder task="修复 登录接口 超时重试 问题" tier=fast
-```
+1. **自然语言（推荐日常用）**：命令后整段文字就是任务，落到 `args.task`。
+
+   ```text
+   /coder 修复登录接口的超时重试问题
+   /reviewer 评审当前工作区里登录超时的改动
+   /quality-loop 在 calc.js 新增 mul(a,b) 并补一条断言
+   ```
+
+2. **显式参数**：`key=value`，值支持 JSON 字面量（`true`、`2`、`["a","b"]`），非 JSON 按字符串处理；值里有空格要加引号。
+
+   ```text
+   /coder task="修复 登录接口 超时重试" tier=big
+   /quality-loop task="实现支付回调幂等" maxRepairRounds=2 judgeTier=ultra
+   ```
+
+**不要混用**：同一行里既有 `key=value` 又有裸词会报错（歧义不猜）。模型档位平时不用传，各角色有缺省值（第 1 节表格）；只有想临时换档时才写 `tier=...`。
 
 ### 3.1 `coder`
 
@@ -84,8 +114,9 @@
 | `tier` | 否 | 缺省 `fast` |
 
 ```text
-/coder task="修复 dev-examples/calc.js 里 add 的错误实现，并新增 node:assert 自检脚本" tier=fast
-/workflows run coder task="修复 add 的错误实现" validation=["npm run build","npm test"] tier=fast
+/coder 修复 dev-examples/calc.js 里 add 的错误实现，并新增 node:assert 自检脚本
+/coder 修复 add 的错误实现 validation=["npm run build","npm test"]
+/workflows run coder 修复 add 的错误实现
 ```
 
 输出 `status`：`completed`（已改并报告验证）或 `escalate`（缺授权、需求不清、缺资源）。
@@ -100,8 +131,8 @@
 | `tier` | 否 | 缺省 `big` |
 
 ```text
-/reviewer task="评审当前工作区里 add 修复与自检脚本" focus=correctness tier=big
-/reviewer task="评审本分支改动" base=main tier=big
+/reviewer 评审当前工作区里 add 修复与自检脚本
+/reviewer task="评审本分支改动" base=main
 ```
 
 输出 `status`：`completed`（findings 可为空）或 `escalate`。`findings[]` 每项含 `severity` / `location` / `evidence` / `recommendation`。
@@ -116,8 +147,8 @@
 | `tier` | 否 | 缺省 `big` |
 
 ```text
-/judge task="裁决 add 修复是否可接受" tier=big
-/judge task="裁决改动" materials=["<coder 输出 JSON>","<reviewer 输出 JSON>"] tier=big
+/judge 裁决 add 修复是否可接受
+/judge task="裁决改动" materials=["<coder 输出 JSON>","<reviewer 输出 JSON>"]
 ```
 
 输出 `status`：`converged` / `continue` / `escalate`。
@@ -134,8 +165,10 @@
 缺 `findings` 直接报错（不会跑一次空修复）。
 
 ```text
-/fixer task="修复评审提出的问题" findings=[{"severity":"low","location":".gitignore:22","evidence":"logs 未被忽略","recommendation":"追加忽略规则"}] tier=fast
+/fixer task="修复评审提出的问题" findings=[{"severity":"low","location":".gitignore:22","evidence":"logs 未被忽略","recommendation":"追加忽略规则"}]
 ```
+
+`fixer` 的 findings 是结构化数组，必须用 `key=value` 形态传，不适合自然语言简写。
 
 输出 `status`：`completed` 或 `escalate`（需要用户决策 / 前提不成立）。
 
@@ -152,7 +185,7 @@
 | `fixerTier` | 否 | 缺省 `fast` |
 
 ```text
-/quality-loop task="在 calc.js 新增 mul(a,b) 并在自检脚本加断言 mul(3,4)===12"
+/quality-loop 在 calc.js 新增 mul(a,b) 并在自检脚本加断言 mul(3,4)===12
 /quality-loop task="实现支付回调幂等" coderTier=big judgeTier=ultra maxRepairRounds=2
 ```
 
@@ -184,15 +217,17 @@ coder → reviewer → judge
 ### 4.1 只想让它改代码
 
 ```text
-/coder task="修复 xx 问题" tier=fast
+/coder 修复 xx 问题
 ```
 
 ### 4.2 快模型改、强模型评（不自动修）
 
 ```text
-/coder task="修复 xx 问题" tier=fast
-/reviewer task="评审当前工作区改动" tier=big
+/coder 修复 xx 问题
+/reviewer 评审当前工作区改动
 ```
+
+档位默认就是 coder=fast、reviewer=big，什么都不用传。
 
 评审意见回到你手里，是否修由你决定。
 
@@ -200,21 +235,22 @@ coder → reviewer → judge
 
 ```text
 /coder task="实现支付回调幂等" tier=big
-/reviewer task="审查支付回调改动" focus="correctness,security" tier=big
+/reviewer task="审查支付回调改动" focus="correctness,security"
 /judge task="裁决支付回调改动是否可接受" tier=ultra
 ```
 
 ### 4.4 全自动收敛到通过
 
 ```text
+/quality-loop 实现 xx 功能
 /quality-loop task="..." maxRepairRounds=2
 ```
 
 ### 4.5 评审后按你的取舍修复
 
 ```text
-/reviewer task="评审当前工作区改动" tier=big
-/fixer task="只修我确认的问题" findings=[...] tier=fast
+/reviewer 评审当前工作区改动
+/fixer task="只修我确认的问题" findings=[...]
 ```
 
 ## 5. 怎么读结果
@@ -266,7 +302,8 @@ coder → reviewer → judge
 | --- | --- |
 | `/coder` 不存在 | 插件未加载（会话没带本扩展）或宿主占用了同名命令；`/workflows list` 看内置区是否有它 |
 | `WORKFLOW_NOT_FOUND：... coder` | 包内 `workflows/` 缺文件或被删；重装插件，不要用项目注册兜 |
-| 报 `不是 key=value 形式` | 参数值含空格却未加引号；写成 `task="两个 词"` |
+| 报 `不是 key=value 形式（与 key=value 混用时不允许裸词）` | 一行里混用了裸词和 `key=value`；要么整段自然语言，要么全用 `key=value` |
+| 报 `既不是 key=value 也不是指令文本` | 只敲了一个字符；补全任务描述 |
 | `xxx 需要 args.task` | 缺必填参数；按第 3 节补齐 |
 | `fixer 需要 args.findings` | fixer 不接受空 findings；先把 judge/reviewer 的 findings 传进来 |
 | 档位 warning 后仍能跑 | 档位名不在 `model-tiers.json` 里，已回退会话默认模型；补配置或换档位名 |
@@ -275,8 +312,9 @@ coder → reviewer → judge
 ## 9. 自定义
 
 - **换档不换脚本**：调用时传 `tier` / `coderTier` 等即可。
-- **改提示词**：直接编辑 `workflows/<role>.js` 里的 prompt 常量；改完跑一次语法自检 `node skills/workflow-authoring/scripts/wf-syntax-check.cjs workflows/*.js`。
+- **改提示词**：直接编辑 `workflows/roles/<role>.js` 里的 prompt 常量；改完跑一次语法自检 `node skills/workflow-authoring/scripts/wf-syntax-check.cjs workflows/*/*.js`。
 - **加新角色**：项目里新建脚本（如 `.pi/workflows/<name>.js`），`meta.id` 唯一，返回同形状 JSON，再 `/workflows register`。是否组合进自己的闭环由你决定，不要塞进角色内部。
+- **给包加内置**：放到 `workflows/<分类>/<name>.js`，`meta.id` 全局唯一；分类目录随流程族扩展，不需要改扫描代码。
 - **组合方式变化**：另写一个组合脚本用 `workflow('<id>', args)` 串联，不要让角色互相调用。
 
 ## 参考

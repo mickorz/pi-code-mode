@@ -23,8 +23,14 @@ const REPO = path.resolve(import.meta.dirname, "../..")
 const WORKFLOWS_DIR = path.join(REPO, "workflows")
 const BUILTIN_IDS = ["coder", "reviewer", "judge", "fixer", "quality-loop"]
 
+/** 分类目录下的脚本路径（roles/ 单角色，flows/ 组合） */
+function workflowPath(id: string): string {
+  const role = path.join(WORKFLOWS_DIR, "roles", `${id}.js`)
+  return fs.existsSync(role) ? role : path.join(WORKFLOWS_DIR, "flows", `${id}.js`)
+}
+
 function readWorkflow(id: string): string {
-  return fs.readFileSync(path.join(WORKFLOWS_DIR, `${id}.js`), "utf-8")
+  return fs.readFileSync(workflowPath(id), "utf-8")
 }
 
 /** 临时项目：把五个脚本拷进 registry 扫描目录，按 meta.id 解析（模拟真实注册后状态） */
@@ -33,7 +39,7 @@ function tmpProjectWithBuiltins(): string {
   const target = path.join(dir, ".opencode-workflows", "workflows")
   fs.mkdirSync(target, { recursive: true })
   for (const id of ["coder", "reviewer", "judge", "fixer"]) {
-    fs.copyFileSync(path.join(WORKFLOWS_DIR, `${id}.js`), path.join(target, `${id}.js`))
+    fs.copyFileSync(workflowPath(id), path.join(target, `${id}.js`))
   }
   return dir
 }
@@ -88,6 +94,25 @@ test("coder：一次 agent 调用，缺省 tier=fast，输出原样返回", asyn
   assert.equal(result.agentCount, 1)
   assert.equal(calls[0]!.model, "fake/fast")
   assert.equal((result.result as { summary: string }).summary, "改好了")
+})
+
+test("字符串 args：整段即 task（/coder 修复 xxx 形态）", async () => {
+  const { result, calls } = await run("coder", "修复 登录 超时", [resultOf("completed", "ok")])
+  assert.equal(result.agentCount, 1)
+  assert.equal(calls[0]!.model, "fake/fast")
+  assert.equal((result.result as { status: string }).status, "completed")
+})
+
+test("字符串 args：quality-loop 也接受整段指令，档位走缺省", async () => {
+  const cwd = tmpProjectWithBuiltins()
+  const { result, calls } = await run(
+    "quality-loop",
+    "做点事",
+    [resultOf("completed"), resultOf("completed"), resultOf("converged")],
+    cwd,
+  )
+  assert.equal((result.result as { status: string }).status, "converged")
+  assert.deepEqual(calls.map((c) => c.model), ["fake/fast", "fake/big", "fake/big"])
 })
 
 test("reviewer：一次 agent 调用，缺省 tier=big，空 findings 合法", async () => {

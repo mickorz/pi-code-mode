@@ -3,11 +3,7 @@
  *
  * 拓扑：coder -> reviewer -> judge ->（judge=continue 时）fixer -> reviewer -> judge
  *
- * 前置：四个角色 workflow 必须已注册（按注册名解析，不按路径）：
- *   /workflows register <本仓>/workflows/coder.js
- *   /workflows register <本仓>/workflows/reviewer.js
- *   /workflows register <本仓>/workflows/judge.js
- *   /workflows register <本仓>/workflows/fixer.js
+ * 前置：按注册名调用角色（内置角色随包分发，无需注册）。
  *
  * 输入 args：
  *   task            必填：任务目标
@@ -30,18 +26,18 @@ export const meta = {
   description: "coder -> reviewer -> judge 的默认质量闭环，continue 时按上限修复后复审复裁",
 }
 
-const task = String(args.task ?? "").trim()
+const task = (typeof args === "string" ? args : String(args?.task ?? "")).trim()
 if (!task) throw new Error("quality-loop 需要 args.task：要完成的任务描述")
 
 const tierOf = (value, fallback) => String(value ?? "").trim() || fallback
 
-const coderTier = tierOf(args.coderTier, "fast")
-const reviewerTier = tierOf(args.reviewerTier, "big")
-const judgeTier = tierOf(args.judgeTier, "big")
-const fixerTier = tierOf(args.fixerTier, "fast")
+const coderTier = tierOf(args?.coderTier, "fast")
+const reviewerTier = tierOf(args?.reviewerTier, "big")
+const judgeTier = tierOf(args?.judgeTier, "big")
+const fixerTier = tierOf(args?.fixerTier, "fast")
 
-const maxRepairRounds = args.maxRepairRounds === 2 ? 2 : 1
-const validation = Array.isArray(args.validation)
+const maxRepairRounds = args?.maxRepairRounds === 2 ? 2 : 1
+const validation = Array.isArray(args?.validation)
   ? args.validation.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
   : []
 

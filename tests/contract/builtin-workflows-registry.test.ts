@@ -50,12 +50,26 @@ test("内置目录：包根 workflows/ 且含五个内置 workflow", () => {
   assert.deepEqual([...builtinWorkflowIds()].sort(), EXPECTED_BUILTINS)
 })
 
+test("内置按分类子目录存放（递归扫描，目录不参与 id 解析）", () => {
+  const builtins = loadBuiltinWorkflows()
+  for (const wf of builtins.values()) {
+    const rel = path.relative(builtinWorkflowsDir(), wf.filePath).split(path.sep)
+    assert.ok(rel.length >= 2, `${wf.id} 应在分类子目录内，实际 ${rel.join("/")}`)
+    assert.equal(rel[rel.length - 1], `${wf.id}.js`, "文件名与 id 一致（仅组织用，解析仍按 meta.id）")
+  }
+  // 现有分类：单角色在 roles/，组合在 flows/
+  assert.equal(path.relative(builtinWorkflowsDir(), builtins.get("coder")!.filePath).split(path.sep)[0], "roles")
+  assert.equal(path.relative(builtinWorkflowsDir(), builtins.get("quality-loop")!.filePath).split(path.sep)[0], "flows")
+})
+
 test("注册表：空 manifest 的项目也能解析内置 workflow（无需注册）", () => {
   const dir = emptyProject()
   const registry = loadRegistry(dir)
   for (const id of EXPECTED_BUILTINS) {
     assert.equal(registry.get(id)?.builtin, true, `${id} 应可直接解析`)
-    assert.equal(registry.get(id)?.filePath, path.join(builtinWorkflowsDir(), `${id}.js`))
+    const filePath = registry.get(id)!.filePath
+    assert.ok(filePath.startsWith(builtinWorkflowsDir() + path.sep), `${id} 应来自内置根目录之下`)
+    assert.ok(fs.existsSync(filePath))
   }
 })
 

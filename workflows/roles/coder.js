@@ -42,11 +42,11 @@ const RESULT_SCHEMA = {
   },
 }
 
-const task = String(args.task ?? "").trim()
+const task = (typeof args === "string" ? args : String(args?.task ?? "")).trim()
 if (!task) throw new Error("coder 需要 args.task：要实施的任务描述")
 
-const tier = String(args.tier ?? "").trim() || "fast"
-const validation = Array.isArray(args.validation)
+const tier = String(args?.tier ?? "").trim() || "fast"
+const validation = Array.isArray(args?.validation)
   ? args.validation.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
   : []
 

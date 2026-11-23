@@ -9,11 +9,11 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `workflows/coder.js` | 实施角色：改代码、构建与测试、如实报告；缺省 `tier=fast` |
-| `workflows/reviewer.js` | 评审角色：只读独立评审，findings 带 location/evidence；缺省 `tier=big` |
-| `workflows/judge.js` | 裁决角色：`converged / continue / escalate` 三态；缺省 `tier=big` |
-| `workflows/fixer.js` | 修复角色：只处理已确认 findings，缺 findings 直接报错；缺省 `tier=fast` |
-| `workflows/quality-loop.js` | 组合编排（零 agent）：coder → reviewer → judge →（continue 时）fixer → 复审 → 复裁；修复轮数默认 1、可传 2 |
+| `workflows/roles/coder.js` | 实施角色：改代码、构建与测试、如实报告；缺省 `tier=fast` |
+| `workflows/roles/reviewer.js` | 评审角色：只读独立评审，findings 带 location/evidence；缺省 `tier=big` |
+| `workflows/roles/judge.js` | 裁决角色：`converged / continue / escalate` 三态；缺省 `tier=big` |
+| `workflows/roles/fixer.js` | 修复角色：只处理已确认 findings，缺 findings 直接报错；缺省 `tier=fast` |
+| `workflows/flows/quality-loop.js` | 组合编排（零 agent）：coder → reviewer → judge →（continue 时）fixer → 复审 → 复裁；修复轮数默认 1、可传 2 |
 | `tests/engine/builtin-roles.test.ts` | 12 条断言：解析/唯一性、单角色调用与档位、缺参报错、四条质量闭环路径、按角色档位覆盖 |
 | `src/engine/runtime/workflow-registry.ts` | 新增内置来源：包根 `workflows/*.js` 自动并入注册表（`builtin: true`），项目条目优先 |
 | `.pi/workflows/register.json` | 已移除五个内置条目（内置不再需要注册） |
@@ -79,7 +79,7 @@
 
 内置不再靠注册：注册表在项目条目之后自动并入包根 `workflows/*.js`，顶层斜杠命令也无条件注册内置（不再依赖 manifest 存在）。
 
-- 解析：`builtinWorkflowsDir()` 沿 `import.meta.url` 上溯到包根，`src`/`dist` 两种运行形态一致；单文件解析失败带文件名上抛。
+- 解析：`builtinWorkflowsDir()` 沿 `import.meta.url` 上溯到包根 `workflows/`，递归扫描分类子目录（`roles/`、`flows/`…），按 `meta.id` 寻址、目录不参与 id；`src`/`dist` 两种运行形态一致；单文件解析失败带 `workflows/<分类>/<文件>` 上抛。
 - 优先级：项目条目优先（手工写 manifest 可临时遮蔽内置），内置补缺。
 - 保留 id：`/workflows register` 用内置 id 报"内置 workflow 的保留 id"并拒绝；`/workflows unregister <内置>` 明确提示不可注销。
 - 视图：`/workflows list` 分「项目注册 / 内置（随包分发，无需注册）」两段；`unreg` 补全不再列内置，`run` 补全包含内置。

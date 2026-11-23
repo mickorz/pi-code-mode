@@ -43,14 +43,14 @@ const RESULT_SCHEMA = {
   },
 }
 
-const task = String(args.task ?? "").trim()
+const task = (typeof args === "string" ? args : String(args?.task ?? "")).trim()
 if (!task) throw new Error("fixer 需要 args.task：本次修复对应的任务目标")
 
-const findings = Array.isArray(args.findings) ? args.findings : []
+const findings = Array.isArray(args?.findings) ? args.findings : []
 if (!findings.length) throw new Error("fixer 需要 args.findings：待修复的问题清单（来自 judge 裁决）")
 
-const tier = String(args.tier ?? "").trim() || "fast"
-const validation = Array.isArray(args.validation)
+const tier = String(args?.tier ?? "").trim() || "fast"
+const validation = Array.isArray(args?.validation)
   ? args.validation.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
   : []
 

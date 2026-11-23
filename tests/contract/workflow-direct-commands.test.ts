@@ -174,9 +174,22 @@ test("直跑 handler: 参数非法时短路，不执行", async () => {
   registerWorkflowDirectCommands(pi, probe.deps as any, dir)
   const { ctx, notes } = makeCtx(dir)
 
-  await commands.get("smoke_test").handler("flag", ctx) // 非 key=value
-  assert.match(notes[0].text, /key=value/)
+  await commands.get("smoke_test").handler("x", ctx) // 过短裸词：既非 k=v 也非指令
+  assert.match(notes[0].text, /既不是 key=value 也不是指令文本/)
   assert.equal(probe.calls(), 0)
+})
+
+test("直跑 handler: 自然语言参数不被当成非法参数（放行到执行链）", async () => {
+  const dir = makeProject([{ id: "smoke_test", file: "smoke-test.js" }])
+  const { pi, commands } = makePi()
+  const probe = makeDepsProbe() // makeDeps 故意抛错：证明解析已通过、进到执行链
+  registerWorkflowDirectCommands(pi, probe.deps as any, dir)
+  const { ctx, notes } = makeCtx(dir)
+
+  await commands.get("smoke_test").handler("修复 登录 超时", ctx)
+  assert.equal(notes.length, 1)
+  assert.match(notes[0].text, /执行失败/)
+  assert.equal(probe.calls(), 1)
 })
 
 test("直跑 handler: 注册表不可读时提示原始错误，不执行", async () => {

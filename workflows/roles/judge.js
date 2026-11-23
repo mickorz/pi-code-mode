@@ -43,14 +43,14 @@ const RESULT_SCHEMA = {
   },
 }
 
-const task = String(args.task ?? "").trim()
+const task = (typeof args === "string" ? args : String(args?.task ?? "")).trim()
 if (!task) throw new Error("judge 需要 args.task：本次裁决对应的任务目标")
 
-const tier = String(args.tier ?? "").trim() || "big"
-const materials = Array.isArray(args.materials)
+const tier = String(args?.tier ?? "").trim() || "big"
+const materials = Array.isArray(args?.materials)
   ? args.materials.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
   : []
-const findings = Array.isArray(args.findings) ? args.findings : []
+const findings = Array.isArray(args?.findings) ? args.findings : []
 
 const materialsBlock = materials.length ? materials.map((item, index) => `材料 ${index + 1}：\n${item}`).join("\n\n") : "（未提供上游结论）"
 const findingsBlock = findings.length
