@@ -218,9 +218,10 @@ async function runOptimizeBody(
 ): Promise<string | undefined> {
 
   /** 后台模式下不碰 TUI；前台才 notify。所有中途提示统一走这里。 */
-  const notify = (text: string, level: "info" | "warning" = "info") => {
+  const notify = (text: string, level: "info" | "warning" = "info"): string => {
     if (runtime) runtime.stageEmit(text)
     else ctx.ui.notify(text, level)
+    return text
   }
 
   const cwd = ctx.cwd ?? process.cwd()
@@ -233,7 +234,7 @@ async function runOptimizeBody(
   if (requested) {
     const unsafeAsked = requested.filter((r) => AUTO_UNSAFE_RULES.has(r))
     if (unsafeAsked.length > 0 && !argv.includes("--unsafe-rules")) {
-      notify(
+      return notify(
         [
           `[拒绝] 以下规则默认不自动改（需人工判断副作用/运行语义）：${unsafeAsked.join(", ")}`,
           "",
@@ -244,7 +245,6 @@ async function runOptimizeBody(
         ].join("\n"),
         "warning",
       )
-      return
     }
   }
 
@@ -274,7 +274,7 @@ async function runOptimizeBody(
           validation: { benchmark: r.accepted ? "pass" : "fail", quality: r.quality },
           reason: r.accepted ? "真实 Benchmark 通过：可申请写回" : "真实 Benchmark 未通过，禁止 apply",
         })
-        notify(
+        return notify(
           [
             r.accepted ? `[验证通过，可写回] ${open.id}` : `[验证未通过] ${open.id}`,
             "",
@@ -284,9 +284,8 @@ async function runOptimizeBody(
           ].join("\n"),
           r.accepted ? "info" : "warning",
         )
-        return
       }
-      notify(
+      return notify(
         [
           `发现该目标未完成的优化候选：${open.id}（状态 ${open.status}）`,
           `审阅：${op.review}`,
@@ -297,14 +296,12 @@ async function runOptimizeBody(
         ].join("\n"),
         "info",
       )
-      return
     }
   }
 
   const resolved = resolveTarget(cwd, ref)
   if (typeof resolved === "string") {
-    notify(resolved, "warning")
-    return
+    return notify(resolved, "warning")
   }
 
   /**
@@ -338,8 +335,7 @@ async function runOptimizeBody(
     format: "md",
   })
   if (!statics.ok || !statics.report) {
-    notify(`静态分析失败：${statics.error ?? "unknown"}`, "warning")
-    return
+    return notify(`静态分析失败：${statics.error ?? "unknown"}`, "warning")
   }
   const staticMs = Date.now() - tStatic
 
@@ -367,8 +363,7 @@ async function runOptimizeBody(
   const aiMs = Date.now() - tAi
   const timings = { staticMs, aiMs }
   if (!before.ok || !before.report) {
-    notify(`分析失败：${before.error ?? "unknown"}`, "warning")
-    return
+    return notify(`分析失败：${before.error ?? "unknown"}`, "warning")
   }
 
   // ② 选问题簇：静态簇 + aiOnly 规则由 AI 复核产生的「虚拟簇」
@@ -438,7 +433,7 @@ async function runOptimizeBody(
   if (selected.length === 0) {
     updateSession(cwd, id, { status: "rejected", reason: "没有可安全自动优化的问题簇" })
     const unsafe = allClusters.filter((c) => AUTO_UNSAFE_RULES.has(c.ruleId)).map((c) => c.ruleId)
-    notify(
+    return notify(
       [
         `[无可自动优化项] ${id}`,
         `静态问题簇 ${allClusters.length} 个，但没有落在可安全自动优化的规则内。`,
@@ -450,7 +445,6 @@ async function runOptimizeBody(
         .join("\n"),
       "warning",
     )
-    return
   }
 
   // ④ 复制隔离工作区
@@ -460,7 +454,7 @@ async function runOptimizeBody(
   // P2-7：工作区不完整时，后续所有静态/benchmark 结论都不可信 → 直接拒绝
   if (wsCopy.truncated) {
     updateSession(cwd, id, { status: "rejected", reason: "目标目录文件数超过上限，隔离工作区不完整" })
-    notify(
+    return notify(
       [
         `[拒绝优化] ${id}`,
         `目标目录文件数超过隔离工作区上限（${manifest.files.length} 个已复制），工作区不完整。`,
@@ -470,7 +464,6 @@ async function runOptimizeBody(
       ].join("\n"),
       "warning",
     )
-    return
   }
 
   // ⑤ 生成补丁
@@ -502,8 +495,7 @@ async function runOptimizeBody(
   const editable = candidates.slice(0, 1)
   if (editable.length === 0) {
     updateSession(cwd, id, { status: "failed", reason: "问题簇证据未指向任何可编辑文件" })
-    notify(`[无法定位修改文件] ${id}：问题簇证据里没有可识别的文件`, "warning")
-    return
+    return notify(`[无法定位修改文件] ${id}：问题簇证据里没有可识别的文件`, "warning")
   }
   const docs = loadRuleDocs()
   const ruleDocs = docs.rules
@@ -594,11 +586,10 @@ async function runOptimizeBody(
 
   if (!gen.ok || !gen.patch) {
     updateSession(cwd, id, { status: "failed", reason: `补丁生成失败：${gen.error ?? "unknown"}` })
-    notify(
+    return notify(
       [`[补丁生成失败] ${id}`, `原因：${gen.error ?? "unknown"}`, "", `原文件未修改。分析报告：${p.beforeMd}`].join("\n"),
       "warning",
     )
-    return
   }
   fs.writeFileSync(p.patchset, JSON.stringify(gen.patch, null, 2), "utf8")
   // 模型原始输出必须落盘：空补丁时只有它能说明模型为什么没改
@@ -626,7 +617,7 @@ async function runOptimizeBody(
         ],
       })
       fs.writeFileSync(p.review, review, "utf8")
-      notify(
+      return notify(
         [
           "[需要人工决策] " + id,
           "",
@@ -641,7 +632,6 @@ async function runOptimizeBody(
         ].join("\n"),
         "warning",
       )
-      return
     }
     updateSession(cwd, id, { status: "rejected", validation: { patchSchema: "fail" }, reason: "补丁结构校验未通过" })
     const review = renderReview({
@@ -652,11 +642,10 @@ async function runOptimizeBody(
       blockers: ["补丁结构校验未通过，未应用到工作区。"],
     })
     fs.writeFileSync(p.review, review, "utf8")
-    notify(
+    return notify(
       [`[补丁被拒绝] ${id}`, `结构校验问题 ${validation.issues.length} 项：`, ...validation.issues.slice(0, 5).map((i) => `- ${i.path}：${i.reason}`), "", `审阅：${p.review}`].join("\n"),
       "warning",
     )
-    return
   }
 
   const applied = applyPatchSet(validation.normalized, p.workspace)
@@ -675,11 +664,10 @@ async function runOptimizeBody(
   const changed = detectSourceChanges(resolved.root, resolved.sourceHashes)
   if (changed.length > 0) {
     updateSession(cwd, id, { status: "stale", validation: { sourceUnchanged: "fail", patchSchema: "pass" }, reason: "优化期间生产文件被改动" })
-    notify(
+    return notify(
       [`[优化中止] ${id}`, "优化期间生产文件发生变化：", ...changed.slice(0, 5).map((c) => `- ${c.path}`), "", "请重新运行 optimize。"].join("\n"),
       "warning",
     )
-    return
   }
   updateSession(cwd, id, { validation: { sourceUnchanged: "pass" } })
 
