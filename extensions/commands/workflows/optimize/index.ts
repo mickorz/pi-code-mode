@@ -668,122 +668,25 @@ async function runApply(argv: string[], ctx: any, deps: any): Promise<void> {
     ctx.ui.notify(`找不到优化会话：${id}`, "warning")
     return
   }
-
-  // 只有 ready 才能写回：benchmark-pending / analyzed / rejected 一律拒绝。
-  // 这是「无真实质量验证不得改生产文件」的最终闸门。
-  if (s.status !== "ready") {
-    const why: Record<string, string> = {
-      "benchmark-pending": "尚未通过真实 Benchmark 与质量门",
-      analyzed: "只完成分析（或需要人工决策）",
-      rejected: "候选已被拒绝",
-      applied: "已经应用过（如需重放请先 rollback）",
-      stale: "源文件已变化，请重新运行 optimize",
-    }
-    ctx.ui.notify(
-      [
-        `[拒绝写回] ${id}`,
-        `当前状态：${s.status}（${why[s.status] ?? "不可写回"}）`,
-        "",
-        s.status === "benchmark-pending"
-          ? `先运行：/workflows optimize ${s.target.ref} --benchmark --args '<json>' --verify-cmd '<cmd>'`
-          : `审阅：${sessionPaths(cwd, id).review}`,
-      ].join("\n"),
-      "warning",
-    )
-    return
-  }
-
-  const p = sessionPaths(cwd, id)
-  const patchsetPath = p.patchset
-  if (!fs.existsSync(patchsetPath)) {
-    ctx.ui.notify(`缺少 patchset.json，无法写回：${patchsetPath}`, "warning")
-    return
-  }
-  const patch = JSON.parse(fs.readFileSync(patchsetPath, "utf8")) as PatchSet
-
-  // 待写回内容取自工作区（patch 已应用），期望 hash 取自会话快照
-  const items = patch.files.map((f) => {
-    const wsFile = path.join(p.workspace, f.path)
-    return {
-      path: f.path,
-      content: fs.readFileSync(wsFile, "utf8"),
-      expectedSourceHash: s.target.sourceHashes[f.path] ?? f.expectedSourceHash,
-    }
-  })
-
-  const r = applyToProduction({
-    sessionDir: p.dir,
-    optimizationId: id,
-    targetRoot: s.target.root,
-    items,
-  })
-
-  if (!r.ok) {
-    const staleNow = Boolean(r.stale?.length)
-    if (staleNow) updateSession(cwd, id, { status: "stale", reason: r.error })
-    ctx.ui.notify(
-      [
-        `[写回失败] ${id}`,
-        r.error ?? "unknown",
-        ...(r.stale ? r.stale.map((x) => `- ${x.path}：期望 ${x.expected.slice(0, 15)}… 实际 ${x.actual?.slice(0, 15) ?? "(缺失)"}`) : []),
-        "",
-        staleNow ? "源文件已变化，请重新运行 optimize。" : `已备份的文件可用 rollback 恢复：${p.dir}`,
-      ].join("\n"),
-      "warning",
-    )
-    return
-  }
-
-  updateSession(cwd, id, { status: "applied", appliedFiles: r.applied.length })
-
-  // 应用后重新分析（I6）：失败不自动回滚，保留新状态 + backup 供用户决定
-  let afterNote = ""
-  try {
-    const after = await analyzeWorkflow({
-      dirPath: s.target.kind === "directory" ? s.target.root : undefined,
-      ...(s.target.kind !== "directory" ? { scriptPath: path.join(s.target.root, path.basename(s.target.ref)) } : {}),
-      cwd,
-      includeRuleCheck: false,
-      includeSuggestions: false,
-      format: "md",
-    })
-    if (after.ok && after.report) {
-      fs.writeFileSync(path.join(p.dir, "applied.report.json"), JSON.stringify(after.report, null, 2), "utf8")
-      fs.writeFileSync(path.join(p.dir, "applied.report.md"), after.rendered ?? "", "utf8")
-      afterNote = `应用后重分析：${after.report.summary.totalFindings} 条 finding（已落盘 applied.report.md）`
-    } else {
-      afterNote = `应用后重分析失败（不自动回滚）：${after.error ?? "unknown"}`
-    }
-  } catch (e) {
-    afterNote = `应用后重分析异常（不自动回滚）：${String((e as Error)?.message ?? e).slice(0, 120)}`
-  }
-
-  fs.writeFileSync(
-    p.result,
-    JSON.stringify({ appliedAt: new Date().toISOString(), files: r.applied, note: afterNote }, null, 2),
-    "utf8",
-  )
-
+  // P0 安全闸门（2026-11-23 审计）：
+  // verifier 当前是假执行、patch 仍可能错位替换。修复前任何 ready 都不能写生产。
   ctx.ui.notify(
     [
-      `[已写回] ${id}`,
+      `[写回已暂停] ${id}`,
+      "Optimize O2/O3 安全审计发现 P0 问题，生产写回暂时禁用：",
+      "- --verify-cmd 当前未真实执行，质量门可能假通过",
+      "- patch 行号定位仍可能按内容第一次出现改错位置",
       "",
-      `修改文件：${r.applied.length} 个`,
-      ...r.applied.map((x) => `- ${x.path}`),
-      "",
-      afterNote,
-      "",
-      `备份：${path.join(p.backup, "manifest.json")}`,
-      `回滚：/workflows optimize rollback ${id}`,
+      `审阅：${sessionPaths(cwd, id).review}`,
+      "P0 修复完成并重新验收后才会开放 apply。",
     ].join("\n"),
-    "info",
+    "warning",
   )
   void deps
 }
 
 async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
   const id = argv.find((a) => !a.startsWith("--"))
-  const force = argv.includes("--force")
   const cwd = ctx.cwd ?? process.cwd()
   if (!id) {
     ctx.ui.notify("用法：/workflows optimize rollback <优化编号> [--force]", "warning")
@@ -794,55 +697,14 @@ async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
     ctx.ui.notify(`找不到优化会话：${id}`, "warning")
     return
   }
-  if (s.status !== "applied") {
-    ctx.ui.notify(`[拒绝回滚] ${id}：当前状态 ${s.status}（只有已应用过的会话才能回滚）`, "warning")
-    return
-  }
-  const p = sessionPaths(cwd, id)
-  const manifest = readBackupManifest(p.dir)
-  if (!manifest) {
-    ctx.ui.notify(`缺少 backup/manifest.json，无法回滚：${p.backup}`, "warning")
-    return
-  }
-
-  const r = rollbackFromBackup({ sessionDir: p.dir, manifest, force })
-  if (!r.ok) {
-    ctx.ui.notify(
-      [
-        `[回滚失败] ${id}`,
-        r.error ?? "unknown",
-        ...(r.drifted ? r.drifted.map((x) => `- ${x.path}：apply 后已被改动`) : []),
-      ].join("\n"),
-      "warning",
-    )
-    return
-  }
-
-  updateSession(cwd, id, { status: "rolled-back", reason: `回滚 ${r.restored.length} 个文件` })
-
-  let afterNote = ""
-  try {
-    const after = await analyzeWorkflow({
-      dirPath: s.target.kind === "directory" ? s.target.root : undefined,
-      ...(s.target.kind !== "directory" ? { scriptPath: path.join(s.target.root, path.basename(s.target.ref)) } : {}),
-      cwd,
-      includeRuleCheck: false,
-      includeSuggestions: false,
-      format: "md",
-    })
-    if (after.ok && after.report) {
-      fs.writeFileSync(path.join(p.dir, "rolledback.report.md"), after.rendered ?? "", "utf8")
-      afterNote = `回滚后重分析：${after.report.summary.totalFindings} 条 finding`
-    }
-  } catch {
-    /* 回滚后重分析失败不影响回滚结果 */
-  }
-
   ctx.ui.notify(
-    [`[已回滚] ${id}`, "", `恢复文件：${r.restored.length} 个`, ...r.restored.map((x) => `- ${x}`), "", afterNote]
-      .filter(Boolean)
-      .join("\n"),
-    "info",
+    [
+      `[回滚已暂停] ${id}`,
+      "apply 安全修复期间，rollback 与 apply 一起暂停，避免备份状态不完整时误覆盖。",
+      `当前状态：${s.status}`,
+      `审阅：${sessionPaths(cwd, id).review}`,
+    ].join("\n"),
+    "warning",
   )
   void deps
 }
