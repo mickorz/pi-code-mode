@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1.0",
+  "id": "opt-20261123-001",
+  "createdAt": "2026-11-23T07:04:16.626Z",
+  "updatedAt": "2026-11-23T07:04:57.056Z",
+  "status": "failed",
+  "target": {
+    "kind": "file",
+    "ref": "E:/WorkProjects/pi-code-mode/dev-examples/apply-e2e/worker.js",
+    "root": "E:\\WorkProjects\\pi-code-mode\\dev-examples\\apply-e2e",
+    "sourceHashes": {
+      "verify.mjs": "sha256:dd46471c7686fefa9f466a8bb2b3f6f88d173b5e72d6b7e9d7a22d5ab19b051e",
+      "worker.js": "sha256:da790bd1074e2e9ab7672560354f81657cd9889d05ee9f6c34f5dadaee23cf5a"
+    },
+    "files": [
+      "verify.mjs",
+      "worker.js"
+    ]
+  },
+  "selectedClusters": [
+    "RETRY-001"
+  ],
+  "model": {
+    "analyzerTier": "big",
+    "generatorTier": "fast",
+    "reviewerTier": "fast"
+  },
+  "workspace": {
+    "path": "E:\\WorkProjects\\pi-code-mode\\dev-examples\\apply-e2e\\.pi\\workflows\\optimizations\\opt-20261123-001\\workspace",
+    "patchApplied": false
+  },
+  "validation": {
+    "sourceUnchanged": "pass"
+  },
+  "reason": "补丁生成失败：JSON 解析失败：Expected ',' or ']' after array element in JSON at position 606 (line 17 column 3)"
+}

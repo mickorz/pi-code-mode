@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "1.0",
+  "id": "opt-20261123-001",
+  "createdAt": "2026-11-23T06:48:17.477Z",
+  "updatedAt": "2026-11-23T06:49:06.715Z",
+  "status": "analyzed",
+  "target": {
+    "kind": "file",
+    "ref": "E:\\WorkProjects\\PrdGameSkill\\.opencode-workflows\\workflows\\game-requirement-audit\\1-scan-template.js",
+    "root": "E:\\WorkProjects\\PrdGameSkill\\.opencode-workflows\\workflows\\game-requirement-audit",
+    "sourceHashes": {
+      "1-scan-template.js": "sha256:182a6f5ba18b708c8140ffa014e43ddfdcb0091fbfbd849decf57b8a0adaff17",
+      "10-unified-spec.js": "sha256:2737f7a0c8b34ac41baf8590dd62ae1bc7521626483da7d96e330a6c6d3715ae",
+      "11-human-review.js": "sha256:27935f787b3c5654b68b0e5dcb8bd4b0fbd97adea353a411d965637498947976",
+      "2-atomize-requirements.js": "sha256:5b1e13f4113f6a9b8b75854992f35ceb265b880b79c0a3e86debc1fd2a0d8fd0",
+      "3-build-registry.js": "sha256:45228f1adea03be848372b42c34d4326d8b5a7b94462bbab145e33395f1213ca",
+      "4-client-verify.js": "sha256:5114d9d197cff8bd045497f4d742e43853edfab4f9dd5affd9f669ed220602e3",
+      "5-server-verify.js": "sha256:2e1e670e782ddf452d7b3c26df9edcb7cd68db975782b4cf57446b656dfd2478",
+      "6-merge-evidence.js": "sha256:5d00b74079a067ab65964fb4d6dd22abd401e14b4c707a55072053f7148cae66",
+      "7-business-behavior.js": "sha256:5c3deb335124bdbaeb4c289658fa7466177619932f5ede2d2dba25c547018f87",
+      "8-difference-review.js": "sha256:43b00ff22cdc091acfaacf0e3794eadd027eb893dc218bad4268b6d240dd0d0a",
+      "9-classify-l7.js": "sha256:b7a98d7ccdda5937495a3fa5d54c50adddbe0d0b2a69054549eba7a57f0541ba",
+      "game-requirement-audit.js": "sha256:5f238f9a3cdc59c8a3630e5d96d6f65bc12f101dce849ecaf8f239e382966d5c"
+    },
+    "files": [
+      "1-scan-template.js",
+      "10-unified-spec.js",
+      "11-human-review.js",
+      "2-atomize-requirements.js",
+      "3-build-registry.js",
+      "4-client-verify.js",
+      "5-server-verify.js",
+      "6-merge-evidence.js",
+      "7-business-behavior.js",
+      "8-difference-review.js",
+      "9-classify-l7.js",
+      "game-requirement-audit.js"
+    ]
+  },
+  "selectedClusters": [
+    "DET-001"
+  ],
+  "model": {
+    "analyzerTier": "big",
+    "generatorTier": "fast",
+    "generatorModel": "cc-switch-zhipu-glm-copy/deepseek-v4.1-flash-official",
+    "reviewerTier": "fast",
+    "reviewerModel": "cc-switch-zhipu-glm-copy/deepseek-v4.1-flash-official"
+  },
+  "workspace": {
+    "path": "E:\\WorkProjects\\pi-code-mode\\.pi\\workflows\\optimizations\\opt-20261123-001\\workspace",
+    "patchApplied": false
+  },
+  "validation": {
+    "sourceUnchanged": "pass",
+    "patchSchema": "unavailable"
+  },
+  "reason": "模型判定无法在不改变行为的前提下自动修改，需要人工决策"
+}

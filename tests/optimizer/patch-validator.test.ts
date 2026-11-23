@@ -408,3 +408,27 @@ test("P2-4 findOpenSession：./wf 与 wf 视为同一目标", () => {
   writeSession(cwd, mk("./wf"))
   assert.ok(findOpenSession(cwd, "wf"), "./wf 建的会话应能被 wf 找到")
 })
+
+// ---- parsePatchSet 截断容错（实测 fast 档会在数组元素处被截断）----
+test("parsePatchSet：截断的 PatchSet 经修复后仍可用", () => {
+  const full = JSON.stringify({
+    schemaVersion: "1.0",
+    targetRoot: ".",
+    files: [
+      {
+        path: "demo.js",
+        expectedSourceHash: sha256(WF),
+        edits: [
+          { startLine: 2, endLine: 2, newText: "const a = 1", rationale: "r", relatedCluster: "RETRY-001" },
+          { startLine: 3, endLine: 3, newText: "const b = 2", rationale: "r", relatedCluster: "RETRY-001" },
+        ],
+      },
+    ],
+  })
+  // 截在第二个 edit 的 newText 值中间（模型输出被 token 上限截断的真实形态）
+  const cut = full.lastIndexOf("const b = 2") + 8
+  const parsed = parsePatchSet(full.slice(0, cut))
+  assert.equal(parsed.ok, true, parsed.error)
+  assert.equal(parsed.patch!.files.length, 1)
+  assert.ok(parsed.patch!.files[0]!.edits.length >= 1, "至少保住第一条 edit")
+})

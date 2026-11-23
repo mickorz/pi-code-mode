@@ -1,0 +1,21 @@
+{
+ "schemaVersion": "1.0",
+ "targetRoot": ".",
+ "files": [],
+ "needsHumanDecision": {
+  "cluster": "DET-001",
+  "verdict": "无法在允许的文件范围内生成满足硬性约束的补丁（不是生成失败，是约束冲突）",
+  "reasons": [
+   "工作流脚本运行在 VM 沙箱里，只注入 agent/workflow/parallel/check/fileExists/commandSuccess/runTool/phase/log/args/setConcurrency/verify/judgePanel/retry/checkpoint/budget/mcp —— **没有 fs、没有 read/glob 工具**（src/engine/runtime/workflow-runtime.ts:1983 globals 清单；tools Proxy 明确拒绝非 mcp__ 工具）。因此『读目录/读文件 → JSON.parse → 去重』这类确定性实现无法写在脚本体内。",
+   "把 4-client-verify.js / 5-server-verify.js 的『证据文件归集』改成确定性，唯一符合运行时约定的做法是新增脚本 .opencode-workflows/scripts/list-evidence-files.mjs（读分片 + 提取 evidence[].file 与 dependencyFiles[].file + repoId 去重 → 输出 {files:[...]}），再用 runTool(scriptPath, { parseJson: true }) 取回结果。这需要**新增文件**，违反本次补丁约束第 4 条（只改列出文件、不得新增文件）。",
+   "1-scan-template.js 的『模板结构扫描器』更重：命中 DET-001 只是因为规则关键词『编号』出现在 stageId 连续编号说明里，实质任务是 Markdown 标题层级解析 + 容器折入 + 行号覆盖全文。它同样需要读模板文件（沙箱无 fs），且改成确定性实现会改变行为面（intro/terms/container/sourceTitle 语义、覆盖全文闸门 gap<=3 的判定），不是局部等价替换。",
+   "另：本簇只给出了 1-scan-template.js 的 expectedSourceHash；4-client-verify.js / 5-server-verify.js 的 hash 未提供，按约束不能猜填。"
+  ],
+  "options": [
+   "选项 A（推荐，分两步）：\n  步骤1：批准新增 .opencode-workflows/scripts/list-evidence-files.mjs（约 35 行，node:fs 读目录 + 正则 /-cp|\\-p/ 过滤 + Set 去重，支持 --dir/--branch/--out）；随后一次性补丁 4-client-verify.js L339-358、5-server-verify.js L319-333，改为 runTool('.../list-evidence-files.mjs', {args:{dir: OUTPUT_DIR, branch:'client'}, parseJson:true})，保留原有 `if (!fileList || !Array.isArray(fileList.files)) throw` 与空证据分支不变（每处改动 ≤6 行，合计约 12 行 + 脚本 35 行）。\n  步骤2：把 1-scan-template.js L101-120 的扫描 agent 单独作为一个子任务处理（先落一份当前 agent 输出作为 golden，再写确定性切片解析，用 golden 做等价性回归），因为它属于『重构 + 行为校验』而不是 DET-001 的『纯统计去重』。",
+   "选项 B（更保守）：只处理 4-client-verify.js 与 5-server-verify.js，1-scan-template.js 的 DET-001 判定按误报登记（关键词『编号』误命中，实际是文档结构解析，属于语义任务）。这样仍需选项 A 步骤 1 的脚本新增许可。",
+   "选项 C：若不允许新增脚本，则可改为在脚本内用 check(() => commandSuccess('node -e \"...\"')) 写 evidence-files.txt 再 fileExists 判定空分支——但 node -e 长内联脚本要经 cmd/sh 双重引号转义、跨 Windows/Linux 不可移植、且丢失 runTool 的结构化输出与失败语义，属于以可维护性换文件数，不建议。"
+  ],
+  "blockingConstraint": "允许修改的文件仅三个，且不得新增文件；而确定性实现必须有运行时 fs 能力 → 需要 runTool + 新脚本文件。"
+ }
+}

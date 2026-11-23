@@ -106,6 +106,117 @@ function flagValue(argv: string[], name: string): string | undefined {
 // ---------------------------------------------------------------- optimize
 
 async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Promise<void> {
+  /**
+   * 后台化（2026-11-23）：与 /workflows run 保持一致。
+   *
+   * 之前是整个方法体同步 await —— 1~3 分钟 AI 复核期间 TUI 卡死、无法取消，
+   * ctrl+b 也看不到东西（optimize 不是 RunManager 的 run，没有节点快照）。
+   *
+   * 现在：register 一个 run 后立刻返回，主体逻辑在后台跑，
+   * 阶段进度 emit 给 RunManager（widget / status 可见），完成后 deliver 回传。
+   */
+  const cwd0 = ctx.cwd ?? process.cwd()
+  const isBenchmarkOnly = argv.includes("--benchmark") && !argv.includes("--fresh")
+
+  let runId = ""
+  let run: any
+  try {
+    const probe = findOpenSession(cwd0, ref)
+    if (isBenchmarkOnly && probe) {
+      runId = `opt-bench-${probe.id}`
+    } else {
+      runId = `opt-run-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    }
+    run = deps.runManager.register(runId, { label: `optimize:${ref}` })
+  } catch {
+    // RunManager 不可用（如测试 fake）：退化为前台执行
+    await runOptimizeBody(ref, argv, ctx, deps, undefined)
+    return
+  }
+
+  // 阶段进度上报：notify 给用户看，attach 给 status/widget 看。
+  // 每个阶段独立节点，开始下一个时把上一个置 ok —— 否则 status 里永远显示最后一项 running。
+  let lastStageNo = 0
+  const emitStage = (n: number, msg: string) => {
+    try {
+      if (lastStageNo > 0 && lastStageNo !== n) {
+        deps.runManager.attach(runId, {
+          id: `${runId}:stage-${lastStageNo}`,
+          label: `[${lastStageNo}/6]`,
+          status: "ok",
+          startedAt: Date.now(),
+          durationMs: 0,
+        } as any)
+      }
+      lastStageNo = n
+      deps.runManager.attach(runId, {
+        id: `${runId}:stage-${n}`,
+        label: msg.slice(0, 80),
+        status: "running",
+        startedAt: Date.now(),
+      } as any)
+    } catch {
+      /* 快照失败不影响主流程 */
+    }
+  }
+  const sealStage = () => {
+    if (lastStageNo === 0) return
+    try {
+      deps.runManager.attach(runId, {
+        id: `${runId}:stage-${lastStageNo}`,
+        label: `[${lastStageNo}/6]`,
+        status: "ok",
+        startedAt: Date.now(),
+        durationMs: 0,
+      } as any)
+    } catch {
+      /* ignore */
+    }
+  }
+  const stageEmit = (msg: string, n?: number) => emitStage(n ?? lastStageNo + 1, msg)
+  void sealStage
+
+  ctx.ui.notify(
+    [
+      `optimize 已转入后台：runId=${runId}`,
+      `实时进度：/workflows watch ${runId}`,
+      `查询：/workflows status ${runId} ｜ 停止：/workflows cancel ${runId}`,
+      "",
+      "完成后结果会自动回传本会话。",
+    ].join("\n"),
+    "info",
+  )
+
+  // 后台执行（不阻塞命令返回）
+  void (async () => {
+    try {
+      const summary = await runOptimizeBody(ref, argv, ctx, deps, { runId, stageEmit, sealStage })
+      deps.runManager.finish(runId, { status: "completed", resultPreview: (summary ?? "optimize 完成").slice(0, 200) })
+      // 成功也要回传：命令已提前返回，用户否则看不到结果
+      await deps.deliver?.(`[optimize 完成] runId=${runId}\n${(summary ?? "详见会话 review.md").slice(0, 1200)}`)
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      const cancelled = run?.controller?.signal?.aborted
+      deps.runManager.finish(runId, { status: cancelled ? "cancelled" : "failed", error: msg })
+      await deps.deliver?.(
+        `[optimize ${cancelled ? "已停止" : "失败"}] runId=${runId}\n${msg.slice(0, 600)}\n\n已生成的候选仍在 .pi/workflows/optimizations/ 下。`,
+      )
+    }
+  })()
+}
+
+/**
+ * optimize 的实际主体（原 runOptimize 内容）。
+ * @param runtime 后台模式下携带 runId 与阶段回调；前台模式为 undefined
+ */
+async function runOptimizeBody(
+  ref: string,
+  argv: string[],
+  ctx: any,
+  deps: any,
+  runtime: { runId: string; stageEmit: (msg: string, n?: number) => void; sealStage: () => void } | undefined,
+): Promise<string | undefined> {
+
   const cwd = ctx.cwd ?? process.cwd()
   const fresh = argv.includes("--fresh")
   const tier = flagValue(argv, "--tier") ?? GENERATOR_TIER
@@ -190,7 +301,18 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     return
   }
 
-  ctx.ui.notify(`分析中…\n${ref}\n（${resolved.files.length} 个 js 文件）`, "info")
+  /**
+   * 阶段打点：optimize 是前台同步执行（不是后台 run），中间 1~3 分钟 AI 复核期间
+   * 如果没有进度提示，用户会以为卡死，ctrl+b 也看不到任何东西（它不是 RunManager 的 run）。
+   */
+  const tStart = Date.now()
+  const stage = (n: number, total: number, msg: string) => {
+    const elapsed = ((Date.now() - tStart) / 1000).toFixed(0)
+    const text = `[${n}/${total}] ${msg}（已 ${elapsed}s）`
+    ctx.ui.notify(text, "info")
+    runtime?.stageEmit(text, n)
+  }
+  stage(1, 6, `静态分析 ${ref}（${resolved.files.length} 个 js）`)
 
   // ① 分析（静态 + AI Rule Check，默认开启；Planner 建议这里不需要，避免重复耗时）
   // 两段式：先纯静态拿问题簇（百毫秒），再只对选中规则做 big 档 AI 复核。
@@ -218,6 +340,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     : [...new Set([...staticSafe.map((c) => c.ruleId), ...aiOnlyCandidates])]
   void staticSafe
 
+  stage(2, 6, `AI 复核选中规则 ${focusedRules.join(", ") || "无"}（${ANALYZER_TIER} 档，可能要 1~3 分钟，请等待）`)
   const tAi = Date.now()
   const before = await analyzeWorkflow({
     ...(resolved.kind === "directory" ? { dirPath: resolved.root } : { scriptPath: path.join(resolved.root, path.basename(resolved.ref)) }),
@@ -319,6 +442,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   }
 
   // ④ 复制隔离工作区
+  stage(3, 6, `创建隔离工作区（复制 ${resolved.root} 下的文本文件）`)
   const wsCopy = copyWorkspace(resolved.root, p.workspace)
   const manifest = wsCopy.manifest
   // P2-7：工作区不完整时，后续所有静态/benchmark 结论都不可信 → 直接拒绝
@@ -386,6 +510,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
     }
   }
   const WINDOW = 40
+  stage(4, 6, `生成补丁（${tier} 档，最多 1~4 分钟）`)
   let gen = await generatePatchSet(
     {
       clusters: selected,
@@ -560,6 +685,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
 
   let patchReview: PatchReview | undefined
   try {
+    stage(5, 6, "补丁审查（fast 档）")
     const rv = await reviewPatch(
       {
         patch: validation.normalized,
@@ -575,6 +701,7 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   }
 
   // ⑨ 工作区静态复检（确认目标规则已解决，且未新增严重问题）
+  stage(6, 6, "工作区静态复检")
   const afterReport = await analyzeWorkflow({
     ...(resolved.kind === "directory" ? { dirPath: p.workspace } : { scriptPath: path.join(p.workspace, path.basename(resolved.ref)) }),
     cwd,
@@ -659,26 +786,27 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
 
   const files = validation.normalized.files.length
   const edits = validation.normalized.files.reduce((n, f) => n + f.edits.length, 0)
-  ctx.ui.notify(
-    [
-      finalStatus === "rejected" ? `[候选被拒绝] ${id}` : `[优化候选待验证] ${id}`,
-      "",
-      `目标：${ref}`,
-      `问题簇：${selected.map((c) => c.ruleId).join(", ")}`,
-      `修改：${files} 个文件 / ${edits} 处补丁`,
-      `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条${targetResolved ? "（目标规则已解决）" : staticTargetResolved ? "（静态未新增）" : "（目标规则仍在）"}`,
-      ...(unresolvedNote ? [`注意：${unresolvedNote}`] : []),
-      patchReview ? `补丁审查：${patchReview.decision}${patchReview.findings.length ? `（${patchReview.findings.length} 项发现）` : ""}` : "补丁审查：未完成",
-      "",
-      "原文件未修改。",
-      ...(blockers.length ? ["", ...blockers.map((b) => `- ${b}`)] : []),
-      "",
-      `审阅：${p.review}`,
-      `工作区：${p.workspace}（${manifest.files.length} 个文件已复制）`,
-    ].join("\n"),
-    finalStatus === "rejected" ? "warning" : "info",
-  )
-  void deps
+  const summaryText = [
+    finalStatus === "rejected" ? `[候选被拒绝] ${id}` : `[优化候选待验证] ${id}`,
+    "",
+    `目标：${ref}`,
+    `问题簇：${selected.map((c) => c.ruleId).join(", ")}`,
+    `修改：${files} 个文件 / ${edits} 处补丁`,
+    `静态：${before.report.summary.totalFindings} 条 → ${afterFindings} 条${targetResolved ? "（目标规则已解决）" : staticTargetResolved ? "（静态未新增）" : "（目标规则仍在）"}`,
+    ...(unresolvedNote ? [`注意：${unresolvedNote}`] : []),
+    patchReview ? `补丁审查：${patchReview.decision}${patchReview.findings.length ? `（${patchReview.findings.length} 项发现）` : ""}` : "补丁审查：未完成",
+    "",
+    "原文件未修改。",
+    ...(blockers.length ? ["", ...blockers.map((b) => `- ${b}`)] : []),
+    "",
+    `审阅：${p.review}`,
+    `工作区：${p.workspace}（${manifest.files.length} 个文件已复制）`,
+  ].join("\n")
+  ctx.ui.notify(summaryText, finalStatus === "rejected" ? "warning" : "info")
+  // 后台模式下命令已提前返回，需要把摘要 return 出去交给 deliver 回传；
+  // 同时把最后一个阶段节点收尾成 ok（否则 status 里永远显示 running）
+  runtime?.sealStage()
+  return summaryText
 }
 
 /**
@@ -771,6 +899,7 @@ async function benchmarkSession(input: {
   const verifierSection = verifierCmd && verifierResult ? `\n\n## Verifier\n\n${renderVerifier(verifierResult, verifierCmd)}\n` : ""
   fs.writeFileSync(path.join(sessionDir, "benchmark.md"), `# Benchmark\n\n${text}${verifierSection}\n`, "utf8")
   return { accepted: verdict.accepted, quality: verdict.quality.status, text }
+
 }
 
 // ---------------------------------------------------------------- apply / rollback（O3）

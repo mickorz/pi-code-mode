@@ -1,0 +1,429 @@
+{
+  "schemaVersion": "1.0",
+  "ruleInventory": [
+    {
+      "id": "INPUT-001",
+      "severity": "high",
+      "description": "同一个输入对象被多次注入不同 agent → 重复序列化与 token 浪费",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "CONC-001",
+      "severity": "medium",
+      "description": "并行任务数超过并发上限 → 多波次执行（要求任务数静态可确定）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "CONC-002",
+      "severity": "medium",
+      "description": "并行任务数是运行时动态决定的分片（静态不可知，需人工确认分片数/并发/超时）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "SERIAL-001",
+      "severity": "low",
+      "description": "多个 agent 构成明确数据依赖链（合理串行，但可能是墙钟瓶颈）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "SERIAL-002",
+      "severity": "medium",
+      "description": "源码相邻但无数据引用的 agent 调用 → 可并行候选（需语义确认）",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "TIMEOUT-001",
+      "severity": "medium",
+      "description": "agent 调用缺少 timeoutMs 且无 run 级超时 → 单点挂起会拖垮整阶段",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "RETRY-001",
+      "severity": "low",
+      "description": "retries 放大失败场景下的调用量与 token 消耗",
+      "hits": 1,
+      "status": "hit"
+    },
+    {
+      "id": "DET-001",
+      "severity": "low",
+      "description": "prompt 语义看起来可用确定性 JS 完成（统计/校验），交给 LLM 是浪费",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "REC-001",
+      "severity": "high",
+      "description": "大规模任务且无 phase 边界 → 失败后只能整 run 重跑",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "REC-002",
+      "severity": "high",
+      "description": "恢复模式（retry/resume/from-stage）读取的收窄集合没有沿调用链传给下游 workflow → 恢复退化为全量重跑",
+      "hits": 0,
+      "status": "ai-only"
+    },
+    {
+      "id": "IO-001",
+      "severity": "medium",
+      "description": "agent prompt 要求用 read/write 工具处理文件 → 确定性 IO 走了模型往返",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "INPUT-002",
+      "severity": "medium",
+      "description": "阶段起点分支要求了该阶段并不需要的输入 → 阶段级恢复被无关输入阻断",
+      "hits": 0,
+      "status": "pass"
+    },
+    {
+      "id": "BUDGET-001",
+      "severity": "high",
+      "description": "入口并行调度子 workflow，子流程内部又动态并行，但并发预算未显式切分 → 实际在途数可能翻倍",
+      "hits": 0,
+      "status": "ai-only"
+    },
+    {
+      "id": "SIDEFX-001",
+      "severity": "high",
+      "description": "SERIAL-002 报出的并行候选实际通过文件路径或共享状态存在隐式依赖 → 不能并行化",
+      "hits": 0,
+      "status": "ai-only"
+    }
+  ],
+  "analyzerVersion": "1.0.0",
+  "ruleSetVersion": "1.0.0",
+  "sourceHash": "sha256:da790bd1074e2e9ab7672560354f81657cd9889d05ee9f6c34f5dadaee23cf5a",
+  "generatedAt": "2026-11-23T07:02:59.456Z",
+  "file": "E:\\WorkProjects\\pi-code-mode\\dev-examples\\apply-e2e\\worker.js",
+  "summary": {
+    "riskScore": 2,
+    "counts": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 1
+    },
+    "totalFindings": 1
+  },
+  "executionEstimate": {
+    "callSites": 1,
+    "agentCallSites": 1,
+    "workflowCallSites": 0,
+    "estimatedTasks": 1,
+    "determined": true,
+    "dynamicNodes": 0
+  },
+  "callGraph": {
+    "nodes": [
+      {
+        "id": "call-1",
+        "kind": "agent",
+        "line": 14,
+        "label": "agent(\"只回复数字 \")",
+        "dynamic": false
+      }
+    ],
+    "edges": [],
+    "counts": {
+      "agent": 1
+    }
+  },
+  "dependencies": {
+    "serialChains": [],
+    "candidates": [],
+    "unknowns": []
+  },
+  "findings": [
+    {
+      "ruleId": "RETRY-001",
+      "severity": "low",
+      "confidence": 0.8,
+      "location": {
+        "startLine": 14,
+        "endLine": 14,
+        "file": "E:\\WorkProjects\\pi-code-mode\\dev-examples\\apply-e2e\\worker.js"
+      },
+      "evidence": [
+        "retries 最高 2 次",
+        "agent 调用点 1 个",
+        "失败场景最坏调用量 ≈ 3"
+      ],
+      "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+      "snippet": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+    }
+  ],
+  "clusters": [
+    {
+      "key": "RETRY-001",
+      "ruleId": "RETRY-001",
+      "severity": "low",
+      "count": 1,
+      "files": [
+        "E:\\WorkProjects\\pi-code-mode\\dev-examples\\apply-e2e\\worker.js"
+      ],
+      "locations": [
+        "E:\\WorkProjects\\pi-code-mode\\dev-examples\\apply-e2e\\worker.js:L14-14"
+      ],
+      "moreLocations": 0,
+      "evidence": [
+        "retries 最高 2 次",
+        "agent 调用点 1 个",
+        "失败场景最坏调用量 ≈ 3"
+      ],
+      "confidence": 0.8,
+      "suggestion": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+      "snippet": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "OPT-001",
+      "title": "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
+      "ruleIds": [
+        "RETRY-001"
+      ],
+      "severity": "low",
+      "expectedImpact": "待 Benchmark 验证（静态估算不提供数值收益）",
+      "qualityRisk": "low",
+      "validation": [
+        "重新运行 Analyzer 确认风险消除",
+        "Benchmark 对比耗时与 Token 不劣化"
+      ]
+    }
+  ],
+  "diagnostics": [],
+  "aiRuleCheck": {
+    "status": "completed",
+    "durationMs": 77143,
+    "checks": [
+      {
+        "ruleId": "CONC-002",
+        "status": "pass",
+        "confidence": 0.97,
+        "reason": "worker.js 全文 19 行中不存在任何 parallel( 或 pipeline( 调用，也没有 标识符.map(...) / 标识符.flatMap(...) 形态的动态并行分片；唯一的执行面是单个串行 await agent(...) 调用，分片数/并发度不存在运行时动态决定的情况，与静态分析 CONC-002=pass 一致",
+        "evidence": [
+          {
+            "file": "worker.js",
+            "startLine": 14,
+            "endLine": 14,
+            "quote": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+          }
+        ]
+      },
+      {
+        "ruleId": "SERIAL-002",
+        "status": "pass",
+        "confidence": 0.95,
+        "reason": "worker.js 全文仅 1 处 agent() 调用（line 14），不存在源码相邻的 agent/workflow 调用对，『同组 ≥2 个调用』的命中前提不成立，不构成可并行候选组",
+        "evidence": [
+          {
+            "file": "worker.js",
+            "startLine": 14,
+            "endLine": 14,
+            "quote": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+          }
+        ]
+      },
+      {
+        "ruleId": "DET-001",
+        "status": "pass",
+        "confidence": 0.95,
+        "reason": "全仓唯一的 agent() 调用（worker.js:14）prompt 开头为「只回复数字」，不含「统计/计数/去重/排序/编号/汇总数量」也不含「校验/核对格式/字段是否齐全」任一关键词；第 16 行注释中的「校验」属于注释文本而非 agent prompt，不构成命中",
+        "evidence": [
+          {
+            "file": "worker.js",
+            "startLine": 14,
+            "endLine": 14,
+            "quote": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+          }
+        ]
+      },
+      {
+        "ruleId": "REC-002",
+        "status": "pass",
+        "confidence": 0.96,
+        "reason": "worker.js 全文（19 行）不存在恢复模式分支：无 mode === 'retry'/'resume'/'from-stage' 等条件判断，也未读取 impact-set.json/impactSet 等收窄集合；唯一的 agent() 调用只传 timeoutMs 与 retries，不涉及收窄集合参数，三条命中条件均不满足",
+        "evidence": []
+      },
+      {
+        "ruleId": "BUDGET-001",
+        "status": "pass",
+        "confidence": 0.95,
+        "reason": "worker.js 全文无 parallel(...) 调用，也无 workflow({ scriptPath }) 嵌套子流程调用，无任何 concurrency 设置；整个流程为单 phase 内一次串行 agent 调用，不构成「入口并行 + 子流程内部并行」的双层结构，规则要求的第一层证据即不存在，并发预算翻倍问题无从发生",
+        "evidence": [
+          {
+            "file": "worker.js",
+            "startLine": 14,
+            "endLine": 14,
+            "quote": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+          }
+        ]
+      },
+      {
+        "ruleId": "SIDEFX-001",
+        "status": "not-applicable",
+        "confidence": 0.95,
+        "reason": "规则前置条件不成立：SERIAL-002 判定为 pass，本 workflow 仅有单个 agent() 调用（line 14），不存在任何并行候选组，因此没有可检查隐式依赖的候选对；源码中也无文件写入/读取、runDir/state/manifest 引用或 git/shell 副作用",
+        "evidence": [
+          {
+            "file": "worker.js",
+            "startLine": 14,
+            "endLine": 14,
+            "quote": "const r = await agent(`只回复数字 ${n}`, { timeoutMs: 60000, retries: 2 })"
+          }
+        ]
+      }
+    ],
+    "diagnostics": []
+  },
+  "ruleMerge": [
+    {
+      "ruleId": "INPUT-001",
+      "severity": "high",
+      "description": "同一个输入对象被多次注入不同 agent → 重复序列化与 token 浪费",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "CONC-001",
+      "severity": "medium",
+      "description": "并行任务数超过并发上限 → 多波次执行（要求任务数静态可确定）",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "CONC-002",
+      "severity": "medium",
+      "description": "并行任务数是运行时动态决定的分片（静态不可知，需人工确认分片数/并发/超时）",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiStatus": "pass",
+      "aiConfidence": 0.97,
+      "aiEvidenceCount": 1,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "SERIAL-001",
+      "severity": "low",
+      "description": "多个 agent 构成明确数据依赖链（合理串行，但可能是墙钟瓶颈）",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "SERIAL-002",
+      "severity": "medium",
+      "description": "源码相邻但无数据引用的 agent 调用 → 可并行候选（需语义确认）",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiStatus": "pass",
+      "aiConfidence": 0.95,
+      "aiEvidenceCount": 1,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "TIMEOUT-001",
+      "severity": "medium",
+      "description": "agent 调用缺少 timeoutMs 且无 run 级超时 → 单点挂起会拖垮整阶段",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "RETRY-001",
+      "severity": "low",
+      "description": "retries 放大失败场景下的调用量与 token 消耗",
+      "staticStatus": "hit",
+      "staticHits": 1,
+      "aiEvidenceCount": 0,
+      "finalStatus": "static-hit"
+    },
+    {
+      "ruleId": "DET-001",
+      "severity": "low",
+      "description": "prompt 语义看起来可用确定性 JS 完成（统计/校验），交给 LLM 是浪费",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiStatus": "pass",
+      "aiConfidence": 0.95,
+      "aiEvidenceCount": 1,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "REC-001",
+      "severity": "high",
+      "description": "大规模任务且无 phase 边界 → 失败后只能整 run 重跑",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "REC-002",
+      "severity": "high",
+      "description": "恢复模式（retry/resume/from-stage）读取的收窄集合没有沿调用链传给下游 workflow → 恢复退化为全量重跑",
+      "staticStatus": "ai-only",
+      "staticHits": 0,
+      "aiStatus": "pass",
+      "aiConfidence": 0.96,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "IO-001",
+      "severity": "medium",
+      "description": "agent prompt 要求用 read/write 工具处理文件 → 确定性 IO 走了模型往返",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "INPUT-002",
+      "severity": "medium",
+      "description": "阶段起点分支要求了该阶段并不需要的输入 → 阶段级恢复被无关输入阻断",
+      "staticStatus": "pass",
+      "staticHits": 0,
+      "aiEvidenceCount": 0,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "BUDGET-001",
+      "severity": "high",
+      "description": "入口并行调度子 workflow，子流程内部又动态并行，但并发预算未显式切分 → 实际在途数可能翻倍",
+      "staticStatus": "ai-only",
+      "staticHits": 0,
+      "aiStatus": "pass",
+      "aiConfidence": 0.95,
+      "aiEvidenceCount": 1,
+      "finalStatus": "pass"
+    },
+    {
+      "ruleId": "SIDEFX-001",
+      "severity": "high",
+      "description": "SERIAL-002 报出的并行候选实际通过文件路径或共享状态存在隐式依赖 → 不能并行化",
+      "staticStatus": "ai-only",
+      "staticHits": 0,
+      "aiStatus": "not-applicable",
+      "aiConfidence": 0.95,
+      "aiEvidenceCount": 1,
+      "finalStatus": "pass"
+    }
+  ]
+}

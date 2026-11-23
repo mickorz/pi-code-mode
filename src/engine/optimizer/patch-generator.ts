@@ -11,6 +11,7 @@
  *
  * 模型档位由调用方传入（已确认：generator=big / reviewer=fast）。
  */
+import { repairTruncatedJson } from "../analyzer/optimization-planner.js"
 import type { AnalysisReport, FindingCluster } from "../analyzer/report-builder.js"
 import type { PatchSet } from "./session-types.js"
 
@@ -181,8 +182,20 @@ export function parsePatchSet(raw: string): { ok: boolean; patch?: PatchSet; err
   let parsed: unknown
   try {
     parsed = JSON.parse(candidate.slice(start, end + 1))
-  } catch (e) {
-    return { ok: false, error: `JSON 解析失败：${String((e as Error)?.message ?? e)}` }
+  } catch (firstErr) {
+    // 严格解析 → 截断修复：实测 fast 档生成 PatchSet 时会在数组元素分隔处被截断
+    // （Expected ',' or ']' after array element），一失败就丢掉整个候选太浪费。
+    // 复用 Planner 的修复器：补齐未闭合字符串/括号 + 修剪残缺 key。
+    // 即使修出不完整内容也没关系——validatePatchSet 会二次校验后拒绝。
+    const repaired = repairTruncatedJson(candidate.slice(start))
+    if (!repaired) {
+      return { ok: false, error: `JSON 解析失败：${String((firstErr as Error)?.message ?? firstErr)}` }
+    }
+    try {
+      parsed = JSON.parse(repaired)
+    } catch (e) {
+      return { ok: false, error: `JSON 解析失败（截断修复后仍失败）：${String((e as Error)?.message ?? e)}` }
+    }
   }
   const obj = parsed as Record<string, unknown>
   const rawNhd = obj.needsHumanDecision
