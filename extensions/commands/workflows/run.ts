@@ -15,7 +15,7 @@ export const runSubcommand: Subcommand = {
     const cwd = ctx.cwd ?? process.cwd()
     const parsed = parseWorkflowsRunArgs(argv)
     if (parsed.error || !parsed.scriptPath) {
-      ctx.ui.notify(parsed.error ?? "用法: /workflows run <脚本路径|注册表名> [key=value ...]", "warning")
+      ctx.ui.notify(parsed.error ?? "用法: /workflows run <脚本路径|注册表名> <指令文本> 或 ... key=value ...", "warning")
       return
     }
     const tool = makeWorkflowTool({ ...deps.makeDeps(cwd), deliver: deps.deliver })

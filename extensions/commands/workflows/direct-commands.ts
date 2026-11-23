@@ -117,7 +117,7 @@ function makeDirectHandler(id: string, deps: WorkflowsCommandDeps) {
     const tokens = splitCommandArgs(args)
     const parsed = parseWorkflowsRunArgs([id, ...tokens])
     if (parsed.error || !parsed.scriptPath) {
-      ctx.ui.notify(parsed.error ?? `用法: /${id} [key=value ...]`, "warning")
+      ctx.ui.notify(parsed.error ?? `用法: /${id} <指令文本> 或 /${id} key=value ...`, "warning")
       return
     }
 

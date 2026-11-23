@@ -95,8 +95,13 @@ export function splitCommandArgs(text: string): string[] {
 }
 
 /**
- * /workflows run 子命令参数解析：首个 token 为脚本路径或注册表工作流名，
- * 其余 token 按 key=value 收进 args（值能 JSON.parse 则转类型，否则保持字符串）。
+ * /workflows run 与 /<workflowId> 参数解析：首个 token 为脚本路径或注册表工作流名。
+ *
+ * 其余 token 两种形态（互斥）：
+ *   - 全部 key=value：收进 args（值能 JSON.parse 则转类型，否则保持字符串）
+ *   - 一个等号都没有：整段当自然语言指令，落到 args.task（`/coder 修复登录超时` 的形态）
+ *   - 混用：报错（歧义不猜，让人写清）
+ *
  * 纯函数，命令层与测试共用。
  */
 export function parseWorkflowsRunArgs(
@@ -104,10 +109,16 @@ export function parseWorkflowsRunArgs(
 ): { scriptPath?: string; args?: Record<string, unknown>; error?: string } {
   const [scriptPath, ...rest] = argv
   if (!scriptPath) return { error: "缺少脚本路径或注册表工作流名" }
+  // 自然语言形态：整段无等号 -> 作为 args.task（不足 3 字符的裸词仍按非法参数报错，避免手滑）
+  if (rest.length && !rest.some((token) => token.includes("="))) {
+    const instruction = rest.join(" ").trim()
+    if (instruction.length < 2) return { error: `参数 "${instruction}" 既不是 key=value 也不是指令文本` }
+    return { scriptPath, args: { task: instruction } }
+  }
   const args: Record<string, unknown> | undefined = rest.length ? {} : undefined
   for (const token of rest) {
     const eq = token.indexOf("=")
-    if (eq <= 0) return { error: `参数 "${token}" 不是 key=value 形式` }
+    if (eq <= 0) return { error: `参数 "${token}" 不是 key=value 形式（与 key=value 混用时不允许裸词）` }
     const key = token.slice(0, eq)
     const raw = token.slice(eq + 1)
     let value: unknown = raw
