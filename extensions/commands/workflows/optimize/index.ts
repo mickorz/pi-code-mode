@@ -922,6 +922,13 @@ async function runOptimizeBody(
         hunks,
         ...(patchReview ? { patchReview } : {}),
         blockers,
+        // 下一步命令：让用户在报告里直接看到怎么继续，不用回查文档
+        nextStep:
+          finalStatus === "benchmark-pending"
+            ? `/workflows optimize ${ref} --benchmark --args {"runDir":"spec-workflow/bench"} --verify-cmd "node verify.mjs"   # 换成该 workflow 要求的必填 args（如 runDir / date）`
+            : finalStatus === "ready"
+              ? `/workflows optimize apply ${id}`
+              : `查看 ${p.review} 了解拒绝原因；调整 --rules 或目标后重跑`,
       },
     })
   } catch {

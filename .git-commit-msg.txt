@@ -1,29 +1,23 @@
-feat(optimize): optimize 报告改为「完整分析 Dashboard + 优化 Tab」
+feat(optimize): 报告里直接给出「下一步」命令（按状态生成，可复制）
 
-用户反馈：optimize 报告比 anal 的 dashboard 少太多内容，optimize 应该包含 anal 才对。
+用户看到报告 KPI 显示「候选状态：待验证」后不知道该怎么继续 ——
+原因写在结论卡片底部一行「加 --benchmark --args '<json>' 触发」，太抽象。
 
-确实如此 —— optimize 本来就跑完了完整分析（afterReport），却只渲染了优化信息：
-- 缺 全量规则检查清单（14 条 × 静态/AI/最终）
-- 缺 问题列表（只显示选中的簇，其他问题看不到）
-- 缺 子 Workflow 明细
-- 缺 严重度分布 / AI 建议 / 静态不可判定
+改动：
+- DashboardView.optimize 增加 nextStep 字段
+- 按 finalStatus 生成完整命令：
+  · benchmark-pending → /workflows optimize <target> --benchmark --args {...} --verify-cmd "..."
+  · ready            → /workflows optimize apply <id>
+  · rejected         → 查看 review 了解原因；调整 --rules 或目标后重跑
+- 优化 Tab 顶部 note 用代码块展示 nextStep（便于复制）
+- 示例里不带外层引号（pi 命令行不是 shell，带引号会被当值的一部分；
+  虽然 flagValue 已做容错，但示例应该写对）
 
-改法：复用 dashboard 视图模型与模板，加第 6 个 Tab「优化」。
-- DashboardView 增加 optimize 字段（id/status/files/clusters 处理情况/hunks/
-  patchReview/blockers/前后问题数/AI 耗时）
-- template.html 加 optimize Tab（仅当 D.optimize 存在时显示），
-  KPI 卡片 + 簇处理情况表 + 修改文件表 + 按 hunk 精确渲染的代码差异 + 审查 + 结论
-- writeOptimizeReport 改为 buildDashboardView(afterReport) + view.optimize +
-  renderDashboardHtml，不再自己拼一套精简 HTML
+关于「待验证」状态本身：这是设计如此 —— benchmark 会在真实目录跑一遍 workflow
+（before/after 两轮），默认不跑以免误触发 10 分钟级任务，必须显式 --benchmark。
 
-顺带修 diff 渲染：原来用「首尾相同行剥离」的近似 diff，3 处改动会显示成
-@@ -5,15 +5,15 @@ 整块增删（看起来像整个文件被重写）。改为按 edit 的 startLine/endLine
-构造 hunk（每处 ±2 行上下文），因为我们本来就知道改动位置，比 LCS 近似更准。
-
-pi -p 端到端实测（apply-e2e/worker.js，2 簇 3 处补丁）：
-- 报告 6 KB → 42 KB，Tab 数 6
-- 含规则检查清单 / 问题列表 / 子 Workflow / AI 建议（anal 的全部内容）
-- optimize 数据：2 簇（handled 1 / skipped 1）、3 个 hunk、status benchmark-pending
-- explorer 打开 ok
+pi -p 实测：
+status: benchmark-pending
+nextStep: /workflows optimize E:/.../worker.js --benchmark --args {"runDir":"spec-workflow/bench"} --verify-cmd "node verify.mjs"   # 换成该 workflow 要求的必填 args
 
 测试：optimizer 65/65

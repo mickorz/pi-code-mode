@@ -500,7 +500,7 @@
     var STAT = { ready: '可写回', 'benchmark-pending': '待验证', rejected: '已拒绝', applied: '已应用', analyzed: '需人工决策', failed: '失败' };
     var CLS = { handled: 'pass', skipped: 'hit', 'needs-human': 'err' };
 
-    var h = '<div class="note">原文件未做任何修改。写回需 <code>optimize apply</code>，且必须先通过真实 Benchmark 与质量门。</div>';
+    var h = '<div class="note">原文件未做任何修改。写回需 <code>optimize apply</code>，且必须先通过真实 Benchmark 与质量门。' + (O.nextStep ? '<div style="margin-top:10px"><b>下一步：</b><pre style="margin:6px 0 0">' + esc(O.nextStep) + '</pre></div>' : '') + '</div>';
 
     // KPI
     h += '<div class="kpis">' +

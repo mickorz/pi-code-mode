@@ -91,6 +91,12 @@ export interface DashboardView {
     }>
     patchReview?: { decision: string; findings: Array<{ severity: string; file: string; reason: string; evidence: string }> }
     blockers: string[]
+    /**
+     * 下一步要执行的命令（按状态生成，可直接复制）。
+     * 必要性：用户看到「待验证」不知道怎么继续 —— blockers 里那句
+     * 「加 --benchmark --args」太抽象，需要带具体 id/target 的完整命令。
+     */
+    nextStep?: string
   }
   /** AI Rule Check 摘要（状态、耗时、诊断） */
   aiRuleCheck?: {
