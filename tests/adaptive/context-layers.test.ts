@@ -5,7 +5,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { LayeredContext } from "../../src/engine/adaptive/context-layers.js"
+import { LayeredContext } from "../../packages/engine/src/adaptive/context-layers.js"
 
 test("注册共享上下文：只有摘要没有证据 → 拒绝（防摘要替代原文）", () => {
   const ctx = new LayeredContext()

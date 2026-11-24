@@ -13,13 +13,13 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { buildPatchGeneratorPrompt, normalizeNeedsHumanDecision, parsePatchSet } from "../../src/engine/optimizer/patch-generator.js"
-import { parsePatchReview } from "../../src/engine/optimizer/patch-reviewer.js"
-import { applyPatchSet, validatePatchSet } from "../../src/engine/optimizer/patch-validator.js"
-import { listSessions, nextSessionId, readSession, writeSession } from "../../src/engine/optimizer/session-store.js"
-import type { OptimizationSession, PatchSet } from "../../src/engine/optimizer/session-types.js"
-import { isAllowedPatchPath, resolveTarget, sha256 } from "../../src/engine/optimizer/target-resolver.js"
-import { copyWorkspace, detectSourceChanges } from "../../src/engine/optimizer/workspace.js"
+import { buildPatchGeneratorPrompt, normalizeNeedsHumanDecision, parsePatchSet } from "../../packages/engine/src/optimizer/patch-generator.js"
+import { parsePatchReview } from "../../packages/engine/src/optimizer/patch-reviewer.js"
+import { applyPatchSet, validatePatchSet } from "../../packages/engine/src/optimizer/patch-validator.js"
+import { listSessions, nextSessionId, readSession, writeSession } from "../../packages/engine/src/optimizer/session-store.js"
+import type { OptimizationSession, PatchSet } from "../../packages/engine/src/optimizer/session-types.js"
+import { isAllowedPatchPath, resolveTarget, sha256 } from "../../packages/engine/src/optimizer/target-resolver.js"
+import { copyWorkspace, detectSourceChanges } from "../../packages/engine/src/optimizer/workspace.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "opt-"))
 
@@ -281,9 +281,9 @@ test("buildPatchGeneratorPrompt：包含硬约束与文件 hash", () => {
 })
 
 // ---- P0-2 回归：行号 splice 必须只改 startLine 指向的位置 ----
-import { applyEditsByLine } from "../../src/engine/optimizer/patch-validator.js"
-import { applyToProduction, writeBackupFile } from "../../src/engine/optimizer/apply-service.js"
-import { findOpenSession } from "../../src/engine/optimizer/session-store.js"
+import { applyEditsByLine } from "../../packages/engine/src/optimizer/patch-validator.js"
+import { applyToProduction, writeBackupFile } from "../../packages/engine/src/optimizer/apply-service.js"
+import { findOpenSession } from "../../packages/engine/src/optimizer/session-store.js"
 
 test("applyEditsByLine：相同文本出现多次时只改行号指向的那一处", () => {
   const src = ["const a = 1", "const dup = 1", "const b = 2", "const dup = 1", "const c = 3"].join("\n")
@@ -514,7 +514,7 @@ test("flagValue 语义：JSON 含空格时被 split 拆开也能拼回", () => {
 
 // ---- review 必须说明「选中几个簇 / 处理了几个 / 没处理的为什么」----
 test("renderReview：未处理的簇必须标注原因（不能静默丢弃）", async () => {
-  const { renderReview } = await import("../../src/engine/optimizer/review-renderer.js")
+  const { renderReview } = await import("../../packages/engine/src/optimizer/review-renderer.js")
   const s: OptimizationSession = {
     schemaVersion: "1.0",
     id: "opt-t-001",

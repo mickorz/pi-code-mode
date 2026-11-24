@@ -17,11 +17,11 @@ import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
 import { writeFileSync, mkdirSync, symlinkSync } from "node:fs"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { WorkflowError, WorkflowErrorCode } from "../../src/engine/runtime/errors.js"
-import { JournalStore } from "../../src/engine/persistence/journal.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
-import type { JournalEntry } from "../../src/engine/types/index.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { WorkflowError, WorkflowErrorCode } from "../../packages/engine/src/runtime/errors.js"
+import { JournalStore } from "../../packages/engine/src/persistence/journal.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
+import type { JournalEntry } from "../../packages/engine/src/types/index.js"
 
 function withTempDir(fn: (dir: string) => Promise<void>) {
   return async () => {

@@ -13,8 +13,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { applyToProduction, readBackupManifest, rollbackFromBackup } from "../../src/engine/optimizer/apply-service.js"
-import { sha256 } from "../../src/engine/optimizer/target-resolver.js"
+import { applyToProduction, readBackupManifest, rollbackFromBackup } from "../../packages/engine/src/optimizer/apply-service.js"
+import { sha256 } from "../../packages/engine/src/optimizer/target-resolver.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "opt-apply-"))
 

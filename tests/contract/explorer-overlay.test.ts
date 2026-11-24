@@ -8,10 +8,10 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { openExplorer, closeExplorer } from "../../extensions/explorer/index.js"
-import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { ExplorerController } from "../../src/explorer/controller/explorer-controller.js"
+import { openExplorer, closeExplorer } from "../../apps/plugin/extensions/explorer/index.js"
+import { RuntimeEventBus } from "../../packages/engine/src/events/runtime-event-bus.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { ExplorerController } from "../../packages/explorer/src/controller/explorer-controller.js"
 
 /** fake 宿主 ui.custom：捕获 factory + options，返回可驱动的 component */
 function fakeUi() {

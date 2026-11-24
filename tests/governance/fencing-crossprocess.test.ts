@@ -10,9 +10,9 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { TaskRegistry } from "../../src/engine/governance/task-registry.js"
-import { computeTaskFingerprint, contentHash } from "../../src/engine/governance/task-fingerprint.js"
-import { withFileLock, writeFileAtomic } from "../../src/engine/governance/file-lock.js"
+import { TaskRegistry } from "../../packages/engine/src/governance/task-registry.js"
+import { computeTaskFingerprint, contentHash } from "../../packages/engine/src/governance/task-fingerprint.js"
+import { withFileLock, writeFileAtomic } from "../../packages/engine/src/governance/file-lock.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m6-fence-"))
 const fp = (key = "t1") =>
@@ -74,7 +74,7 @@ test("真正的子进程并发：10 个进程抢同一任务，只有 1 个成�
   const f = fp()
   const { spawnSync } = await import("node:child_process")
   const { pathToFileURL } = await import("node:url")
-  const moduleUrl = pathToFileURL(path.resolve("src/engine/governance/task-registry.ts")).href
+  const moduleUrl = pathToFileURL(path.resolve("packages/engine/src/governance/task-registry.ts")).href
   const script = `
 import { TaskRegistry } from ${JSON.stringify(moduleUrl)};
 const [dir, fingerprint, runId] = process.argv.slice(-3);

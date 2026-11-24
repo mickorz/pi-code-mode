@@ -9,8 +9,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { McpToolCallSummary } from "../../src/engine/types/index.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { McpToolCallSummary } from "../../packages/engine/src/types/index.js"
 
 const FIXTURE_SERVER = path.join(import.meta.dirname, "..", "fixtures", "echo-mcp-server.mjs")
 

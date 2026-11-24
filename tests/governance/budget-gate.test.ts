@@ -4,8 +4,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { BudgetGate } from "../../src/engine/governance/budget-gate.js"
-import { nextDegradeTarget } from "../../src/engine/governance/policy-state.js"
+import { BudgetGate } from "../../packages/engine/src/governance/budget-gate.js"
+import { nextDegradeTarget } from "../../packages/engine/src/governance/policy-state.js"
 
 function gate(over: Partial<ConstructorParameters<typeof BudgetGate>[0]> = {}) {
   return new BudgetGate({

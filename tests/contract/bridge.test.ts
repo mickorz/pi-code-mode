@@ -3,9 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MockAgentAdapter } from "./mock-adapter.js";
-import { agentAdapterToRunner } from "../../src/adapter/agent-adapter.js";
-import { wrapError } from "../../src/engine/runtime/errors.js";
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js";
+import { agentAdapterToRunner } from "../../packages/adapter/src/agent-adapter.js";
+import { wrapError } from "../../packages/engine/src/runtime/errors.js";
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js";
 
 function makeRunner(script: ConstructorParameters<typeof MockAgentAdapter>[0]): {
   runner: AgentSessionRunner;

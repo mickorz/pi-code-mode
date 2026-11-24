@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { createWorkflowBenchmarkTool } from "../../src/tools/workflow-analyze-tool.js"
+import { createWorkflowBenchmarkTool } from "../../packages/tools/src/workflow-analyze-tool.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m6-bmtool-"))
 

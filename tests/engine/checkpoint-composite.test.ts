@@ -12,9 +12,9 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runWorkflow, type WorkflowRunOptions } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
-import type { JournalEntry } from "../../src/engine/types/index.js"
+import { runWorkflow, type WorkflowRunOptions } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
+import type { JournalEntry } from "../../packages/engine/src/types/index.js"
 
 function makeRunner() {
   const prompts: string[] = []

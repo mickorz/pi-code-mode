@@ -3,11 +3,11 @@
 // 用法: npx tsx smoke.ts
 import fs from "node:fs"
 import path from "node:path"
-import { PiAgentAdapter } from "../../src/adapter/pi-agent-adapter.js"
-import { agentAdapterToRunner } from "../../src/adapter/agent-adapter.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { JournalStore } from "../../src/engine/persistence/journal.js"
-import { renderWorkflowRunResult } from "../../src/tools/render-text.js"
+import { PiAgentAdapter } from "../../packages/adapter/src/pi-agent-adapter.js"
+import { agentAdapterToRunner } from "../../packages/adapter/src/agent-adapter.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { JournalStore } from "../../packages/engine/src/persistence/journal.js"
+import { renderWorkflowRunResult } from "../../packages/tools/src/render-text.js"
 
 const cwd = path.resolve(import.meta.dirname ?? ".", "../..")
 const script = `export const meta = { name: 'm1_smoke', description: 'M1 冒烟: 1 发现 + 2 并行' }

@@ -4,7 +4,7 @@
  * 测试里的 fake runner 统一用这两个工厂包装返回值。
  */
 
-import type { AgentExecutionResult } from "../../src/engine/agent/session-runner.js"
+import type { AgentExecutionResult } from "../../packages/engine/src/agent/session-runner.js"
 
 /** 文本路径结果包装 */
 export function textResult(value: string, sessionId = "sess-fake"): AgentExecutionResult {

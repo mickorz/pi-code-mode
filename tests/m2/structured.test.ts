@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { Type } from "typebox"
-import { validateStructured } from "../../src/adapter/structured.js"
+import { validateStructured } from "../../packages/adapter/src/structured.js"
 
 const SCHEMA = Type.Object({ ok: Type.Boolean(), n: Type.Number() })
 

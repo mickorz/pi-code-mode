@@ -4,9 +4,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { BudgetGate } from "../../src/engine/governance/budget-gate.js"
-import { estimateTokens } from "../../src/engine/governance/budget-tracker.js"
-import { nextDegradeTarget } from "../../src/engine/governance/policy-state.js"
+import { BudgetGate } from "../../packages/engine/src/governance/budget-gate.js"
+import { estimateTokens } from "../../packages/engine/src/governance/budget-tracker.js"
+import { nextDegradeTarget } from "../../packages/engine/src/governance/policy-state.js"
 
 test("降级整体替换 policy：target 未声明的旧字段不残留", () => {
   const gate = new BudgetGate({

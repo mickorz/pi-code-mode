@@ -10,7 +10,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { lenientJsonParse, parsePlannerResponse, repairTruncatedJson, salvageProposals } from "../../src/engine/analyzer/optimization-planner.js"
+import { lenientJsonParse, parsePlannerResponse, repairTruncatedJson, salvageProposals } from "../../packages/engine/src/analyzer/optimization-planner.js"
 
 const GOOD_PROPOSAL = {
   id: "OPT-001",

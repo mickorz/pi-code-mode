@@ -14,9 +14,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { parseWorkflowScript } from "../../src/engine/runtime/vm.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { parseWorkflowScript } from "../../packages/engine/src/runtime/vm.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "./helpers.js"
 
 const REPO = path.resolve(import.meta.dirname, "../..")

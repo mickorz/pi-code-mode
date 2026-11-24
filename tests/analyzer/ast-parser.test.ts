@@ -7,8 +7,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 
-import { analyzeAst } from "../../src/engine/analyzer/ast-parser.js"
-import { analyzeDependencies, buildCallGraph } from "../../src/engine/analyzer/call-graph.js"
+import { analyzeAst } from "../../packages/engine/src/analyzer/ast-parser.js"
+import { analyzeDependencies, buildCallGraph } from "../../packages/engine/src/analyzer/call-graph.js"
 
 const FIX = path.join(import.meta.dirname, "fixtures", "atomic")
 const read = (f: string) => fs.readFileSync(path.join(FIX, f), "utf8")

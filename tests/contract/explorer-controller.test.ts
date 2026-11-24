@@ -11,9 +11,9 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { ExplorerController } from "../../src/explorer/controller/explorer-controller.js"
+import { RuntimeEventBus } from "../../packages/engine/src/events/runtime-event-bus.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { ExplorerController } from "../../packages/explorer/src/controller/explorer-controller.js"
 
 /** 构造一个已注册 run + 一条 workflow/phase/agent 事件链 */
 function seedRun(rm: RunManager, bus: RuntimeEventBus, runId: string, agentLabels = ["A1"]) {

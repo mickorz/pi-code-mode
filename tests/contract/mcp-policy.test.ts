@@ -5,7 +5,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { filterMcpConfig, splitToolSpec } from "../../src/mcp/mcp-policy.js"
+import { filterMcpConfig, splitToolSpec } from "../../packages/mcp/src/mcp-policy.js"
 
 function makeBase() {
   return {

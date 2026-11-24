@@ -13,11 +13,11 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { agentAdapterToRunner } from "../../src/adapter/agent-adapter.js"
-import { PiAgentAdapter } from "../../src/adapter/pi-agent-adapter.js"
-import { JournalStore } from "../../src/engine/persistence/journal.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { JournalEntry, McpToolCallSummary } from "../../src/engine/types/index.js"
+import { agentAdapterToRunner } from "../../packages/adapter/src/agent-adapter.js"
+import { PiAgentAdapter } from "../../packages/adapter/src/pi-agent-adapter.js"
+import { JournalStore } from "../../packages/engine/src/persistence/journal.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { JournalEntry, McpToolCallSummary } from "../../packages/engine/src/types/index.js"
 
 const HOST_AGENT_DIR = process.env.PI_CODING_AGENT_DIR_ORIGINAL ?? path.join(os.homedir(), ".pi", "agent")
 const MARKER = "m2-e2e-marker"

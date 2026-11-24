@@ -2,9 +2,9 @@
  * 验证结构化 HTML 报告：跑一次 optimize（会生成 optimize-report.html），检查渲染结果
  */
 import fs from "node:fs"
-import { optimizeSubcommand } from "../extensions/commands/workflows/optimize/index.js"
-import { PiAgentAdapter } from "../src/adapter/pi-agent-adapter.js"
-import { RunManager } from "../src/manager/run-manager.js"
+import { optimizeSubcommand } from "../apps/plugin/extensions/commands/workflows/optimize/index.js"
+import { PiAgentAdapter } from "../packages/adapter/src/pi-agent-adapter.js"
+import { RunManager } from "../packages/manager/src/run-manager.js"
 
 const ROOT = "E:/WorkProjects/pi-code-mode/dev-examples/apply-e2e"
 fs.rmSync(`${ROOT}/.pi`, { recursive: true, force: true })

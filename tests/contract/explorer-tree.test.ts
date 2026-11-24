@@ -11,12 +11,12 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
+import { RuntimeEventBus } from "../../packages/engine/src/events/runtime-event-bus.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "../engine/helpers.js"
-import { WorkflowTreeModel, makeNodeKey } from "../../src/explorer/model/workflow-tree-model.js"
-import type { WorkflowRuntimeEvent } from "../../src/engine/events/workflow-events.js"
+import { WorkflowTreeModel, makeNodeKey } from "../../packages/explorer/src/model/workflow-tree-model.js"
+import type { WorkflowRuntimeEvent } from "../../packages/engine/src/events/workflow-events.js"
 
 function tmpProject(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wf-tree-"))

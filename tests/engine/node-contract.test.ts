@@ -5,8 +5,8 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createNodeExecutor } from "../../src/engine/runtime/node-contract.js"
-import { WorkflowError, WorkflowErrorCode } from "../../src/engine/runtime/errors.js"
+import { createNodeExecutor } from "../../packages/engine/src/runtime/node-contract.js"
+import { WorkflowError, WorkflowErrorCode } from "../../packages/engine/src/runtime/errors.js"
 
 const structural = (message: string) =>
   new WorkflowError(message, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })

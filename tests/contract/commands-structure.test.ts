@@ -9,8 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const COMMANDS_DIR = path.resolve(HERE, "../../extensions/commands");
-const MAIN_ENTRY = path.resolve(HERE, "../../extensions/pi-code-mode.ts");
+const COMMANDS_DIR = path.resolve(HERE, "../../apps/plugin/extensions/commands");
+const MAIN_ENTRY = path.resolve(HERE, "../../apps/plugin/extensions/pi-code-mode.ts");
 
 /** 豁免文件：目录的路由入口与共享契约，不要求被路由引用 */
 const EXEMPT = new Set(["index.ts", "types.ts"]);
@@ -60,7 +60,7 @@ test("命令规范: 目录内每个子命令文件都被该目录 index 路由�
 
 // ---- optimize 子命令必须被路由（曾出现「导入但未注册」导致 /workflows optimize 报未知子命令）----
 test("optimize 子命令已注册到 /workflows 路由表", () => {
-  const src = fs.readFileSync(path.join(import.meta.dirname, "../../extensions/commands/workflows/index.ts"), "utf8")
+  const src = fs.readFileSync(path.join(import.meta.dirname, "../../apps/plugin/extensions/commands/workflows/index.ts"), "utf8")
   assert.match(src, /import\s*\{\s*optimizeSubcommand\s*\}/, "必须导入 optimizeSubcommand")
   assert.match(src, /optimize:\s*optimizeSubcommand/, "必须注册到 subcommands 路由表（否则命令不可达）")
 })

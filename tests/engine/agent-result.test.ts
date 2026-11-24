@@ -10,7 +10,7 @@ import {
   truncateUtf8ByBytes,
   redactValue,
   OUTPUT_PREVIEW_LIMIT_BYTES,
-} from "../../src/engine/runtime/agent-result.js"
+} from "../../packages/engine/src/runtime/agent-result.js"
 
 test("truncateUtf8ByBytes：中文与 emoji 截断不产生半个字符", () => {
   // 中文每字 3 字节：截 7 字节应保留 2 个完整汉字（6 字节）而非 2 个汉字 + 1 字节残缺

@@ -7,13 +7,13 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { checkValidationNotWeakened, resolveModePolicy } from "../../src/engine/adaptive/mode-policy.js"
-import { planShardedTasks, shardItems, verifyShards } from "../../src/engine/adaptive/sharder.js"
-import { LayeredContext } from "../../src/engine/adaptive/context-layers.js"
-import { buildProfiles, planSchedule, samplesFromCheckpoints } from "../../src/engine/adaptive/adaptive-scheduler.js"
-import { BatchExecutor, type BatchTask } from "../../src/engine/governance/batch-executor.js"
-import { contentHash } from "../../src/engine/governance/task-fingerprint.js"
-import type { WorkflowPlan } from "../../src/engine/plan/schema.js"
+import { checkValidationNotWeakened, resolveModePolicy } from "../../packages/engine/src/adaptive/mode-policy.js"
+import { planShardedTasks, shardItems, verifyShards } from "../../packages/engine/src/adaptive/sharder.js"
+import { LayeredContext } from "../../packages/engine/src/adaptive/context-layers.js"
+import { buildProfiles, planSchedule, samplesFromCheckpoints } from "../../packages/engine/src/adaptive/adaptive-scheduler.js"
+import { BatchExecutor, type BatchTask } from "../../packages/engine/src/governance/batch-executor.js"
+import { contentHash } from "../../packages/engine/src/governance/task-fingerprint.js"
+import type { WorkflowPlan } from "../../packages/engine/src/plan/schema.js"
 
 function plan(over: Partial<WorkflowPlan> = {}): WorkflowPlan {
   return {

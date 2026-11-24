@@ -8,9 +8,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { visibleWidth } from "@earendil-works/pi-tui"
-import { renderExplorerBox, renderExplorerFrame, wrapByWidth } from "../../extensions/explorer/render.js"
-import type { ExplorerViewState } from "../../src/explorer/controller/explorer-controller.js"
-import type { WorkflowTreeNode } from "../../src/explorer/model/workflow-tree-model.js"
+import { renderExplorerBox, renderExplorerFrame, wrapByWidth } from "../../apps/plugin/extensions/explorer/render.js"
+import type { ExplorerViewState } from "../../packages/explorer/src/controller/explorer-controller.js"
+import type { WorkflowTreeNode } from "../../packages/explorer/src/model/workflow-tree-model.js"
 
 const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s }
 

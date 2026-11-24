@@ -22,9 +22,9 @@ import {
   themeLikeOf,
   type FixedPanelConfig,
   type WidgetSide,
-} from "../../extensions/explorer/fixed-panel.js"
-import type { ExplorerViewState, NodeDetailView } from "../../src/explorer/controller/explorer-controller.js"
-import type { WorkflowTreeNode } from "../../src/explorer/model/workflow-tree-model.js"
+} from "../../apps/plugin/extensions/explorer/fixed-panel.js"
+import type { ExplorerViewState, NodeDetailView } from "../../packages/explorer/src/controller/explorer-controller.js"
+import type { WorkflowTreeNode } from "../../packages/explorer/src/model/workflow-tree-model.js"
 
 const identityTheme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s }
 

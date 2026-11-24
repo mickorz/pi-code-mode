@@ -9,7 +9,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { renderBenchmarkVerdict, runRealBenchmark, toBenchmarkMetrics, type RealRunOutcome } from "../../src/engine/optimizer/benchmark-adapter.js"
+import { renderBenchmarkVerdict, runRealBenchmark, toBenchmarkMetrics, type RealRunOutcome } from "../../packages/engine/src/optimizer/benchmark-adapter.js"
 
 function outcome(over: Partial<RealRunOutcome> = {}): RealRunOutcome {
   return { ok: true, durationMs: 100_000, agents: 10, inputTokens: 50_000, outputTokens: 8000, failedAgents: 0, ...over }

@@ -2,9 +2,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { mapKey } from "../../extensions/commands/workflows/navigator/keys.js";
-import { NavigatorModel } from "../../extensions/commands/workflows/navigator/model.js";
-import { renderNavigatorFrame, renderOverlayBox, type ThemeLike } from "../../extensions/commands/workflows/navigator/render.js";
+import { mapKey } from "../../apps/plugin/extensions/commands/workflows/navigator/keys.js";
+import { NavigatorModel } from "../../apps/plugin/extensions/commands/workflows/navigator/model.js";
+import { renderNavigatorFrame, renderOverlayBox, type ThemeLike } from "../../apps/plugin/extensions/commands/workflows/navigator/render.js";
 
 const RUNS = [
   {

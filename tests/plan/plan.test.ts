@@ -7,10 +7,10 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { hashPlan, hashScript, canonicalJSON } from "../../src/engine/plan/source-fingerprint.js"
-import { validatePlan } from "../../src/engine/plan/plan-validator.js"
-import { loadPlan, planCandidates, resolveEffectivePolicy } from "../../src/engine/plan/plan-loader.js"
-import { DEFAULT_PROFILE } from "../../src/engine/plan/schema.js"
+import { hashPlan, hashScript, canonicalJSON } from "../../packages/engine/src/plan/source-fingerprint.js"
+import { validatePlan } from "../../packages/engine/src/plan/plan-validator.js"
+import { loadPlan, planCandidates, resolveEffectivePolicy } from "../../packages/engine/src/plan/plan-loader.js"
+import { DEFAULT_PROFILE } from "../../packages/engine/src/plan/schema.js"
 
 function basePlan(overrides: Record<string, unknown> = {}) {
   return {

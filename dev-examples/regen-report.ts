@@ -1,5 +1,5 @@
-import { analyzeWorkflow, createPlannerAgent } from "../src/tools/workflow-analyze-tool.js"
-import { writeDashboard } from "../src/engine/analyzer/dashboard/build-dashboard.js"
+import { analyzeWorkflow, createPlannerAgent } from "../packages/tools/src/workflow-analyze-tool.js"
+import { writeDashboard } from "../packages/engine/src/analyzer/dashboard/build-dashboard.js"
 import fs from "node:fs"
 
 const CWD = "E:/WorkProjects/PrdGameSkill"

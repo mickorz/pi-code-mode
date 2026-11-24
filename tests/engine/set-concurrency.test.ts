@@ -9,10 +9,10 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createLimiter } from "../../src/engine/runtime/semaphore.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { WorkflowError } from "../../src/engine/runtime/errors.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
+import { createLimiter } from "../../packages/engine/src/runtime/semaphore.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { WorkflowError } from "../../packages/engine/src/runtime/errors.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "./helpers.js"
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5))

@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { loadModelTiers } from "../../src/engine/agent/model-tiers.js"
+import { loadModelTiers } from "../../packages/engine/src/agent/model-tiers.js"
 
 function writeTiers(dir: string, body: object, which: "pi" | "compat" = "pi"): void {
   const file =

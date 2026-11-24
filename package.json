@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "面向 Pi Agent 的代码式工作流编排插件：JavaScript DSL 调度多个 Agent、管理执行状态、恢复工作流",
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/packages/api/src/index.js",
   "bin": {
     "pi-code-mode": "bin/pi-code-mode.js"
   },
@@ -11,7 +11,7 @@
     "pi-package"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.extensions.json && node -e \"const fs=require('node:fs');fs.cpSync('src/engine/analyzer/dashboard/template.html','dist/engine/analyzer/dashboard/template.html');fs.cpSync('src/engine/analyzer/rules/definitions','dist/engine/analyzer/rules/definitions',{recursive:true})\"",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.extensions.json && node -e \"const fs=require('node:fs');const s='packages/engine/src/analyzer/';const d='dist/packages/engine/src/analyzer/';fs.mkdirSync(d+'dashboard',{recursive:true});fs.cpSync(s+'dashboard/template.html',d+'dashboard/template.html');fs.cpSync(s+'rules/definitions',d+'rules/definitions',{recursive:true})\"",
     "test:engine": "tsx --test tests/engine/*.test.ts",
     "test:contract": "tsx --test tests/contract/*.test.ts",
     "test:analyzer": "tsx --test tests/analyzer/*.test.ts",
@@ -24,7 +24,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/pi-code-mode.ts"
+      "./apps/plugin/extensions/pi-code-mode.ts"
     ],
     "skills": [
       "./skills/workflow-authoring"

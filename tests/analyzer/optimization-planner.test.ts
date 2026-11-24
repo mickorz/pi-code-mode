@@ -11,8 +11,8 @@ import {
   mergeRecommendations,
   parsePlannerResponse,
   validatePlannerOutput,
-} from "../../src/engine/analyzer/optimization-planner.js"
-import { buildReport } from "../../src/engine/analyzer/report-builder.js"
+} from "../../packages/engine/src/analyzer/optimization-planner.js"
+import { buildReport } from "../../packages/engine/src/analyzer/report-builder.js"
 
 const FIX = path.join(import.meta.dirname, "fixtures", "atomic")
 const read = (f: string) => fs.readFileSync(path.join(FIX, f), "utf8")

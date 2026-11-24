@@ -19,10 +19,10 @@ import {
   renderDashboardHtml,
   validateView,
   writeDashboard,
-} from "../../src/engine/analyzer/dashboard/build-dashboard.js"
-import { analyzeWorkflowTree } from "../../src/engine/analyzer/tree-analyzer.js"
-import { analyzeWorkflow } from "../../src/tools/workflow-analyze-tool.js"
-import { openCommandFor, shouldAutoOpen } from "../../src/utils/open-browser.js"
+} from "../../packages/engine/src/analyzer/dashboard/build-dashboard.js"
+import { analyzeWorkflowTree } from "../../packages/engine/src/analyzer/tree-analyzer.js"
+import { analyzeWorkflow } from "../../packages/tools/src/workflow-analyze-tool.js"
+import { openCommandFor, shouldAutoOpen } from "../../packages/utils/src/open-browser.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "wf-dash-"))
 

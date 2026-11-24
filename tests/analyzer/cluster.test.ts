@@ -7,8 +7,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { clusterFindings, clusterKeyOf } from "../../src/engine/analyzer/report-builder.js"
-import type { AnalysisFindingWithSnippet } from "../../src/engine/analyzer/report-builder.js"
+import { clusterFindings, clusterKeyOf } from "../../packages/engine/src/analyzer/report-builder.js"
+import type { AnalysisFindingWithSnippet } from "../../packages/engine/src/analyzer/report-builder.js"
 
 function f(over: Partial<AnalysisFindingWithSnippet> & { ruleId: string }): AnalysisFindingWithSnippet {
   return {
@@ -101,7 +101,7 @@ test("clusterFindings：空输入返回空数组", () => {
 })
 
 // ---- 置信度的人话解释（用户反馈「置信度很难理解」）----
-import { confidenceText, describeConfidence } from "../../src/engine/analyzer/report-builder.js"
+import { confidenceText, describeConfidence } from "../../packages/engine/src/analyzer/report-builder.js"
 
 test("describeConfidence：四档语义与应用指引", () => {
   assert.equal(describeConfidence(0.95).label, "确定")

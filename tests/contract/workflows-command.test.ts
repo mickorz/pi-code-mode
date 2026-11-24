@@ -1,8 +1,8 @@
 // /workflows run 子命令参数解析契约（命令层与 workflow 工具共用）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseWorkflowsRunArgs, renderRunStatus, splitCommandArgs } from "../../src/tools/workflow-tools.js";
-import { RunManager } from "../../src/manager/run-manager.js";
+import { parseWorkflowsRunArgs, renderRunStatus, splitCommandArgs } from "../../packages/tools/src/workflow-tools.js";
+import { RunManager } from "../../packages/manager/src/run-manager.js";
 
 test("run 参数: 仅脚本路径", () => {
   const r = parseWorkflowsRunArgs(["scripts/smoke.js"]);
@@ -83,9 +83,9 @@ test("status 渲染: 未知 runId 自防御, 已知 runId 含状态行", () => {
 
 // ---- /workflows 路由层（fake pi + 真 RunManager，无模型） ----
 
-import { registerWorkflowsCommand } from "../../extensions/commands/workflows/index.js";
-import { registerSubcommand, unregisterSubcommand } from "../../extensions/commands/workflows/register.js";
-import { workflowsDir, loadRegistry } from "../../src/engine/runtime/workflow-registry.js";
+import { registerWorkflowsCommand } from "../../apps/plugin/extensions/commands/workflows/index.js";
+import { registerSubcommand, unregisterSubcommand } from "../../apps/plugin/extensions/commands/workflows/register.js";
+import { workflowsDir, loadRegistry } from "../../packages/engine/src/runtime/workflow-registry.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -138,7 +138,7 @@ test("路由: dispatch 到子命令（status 缺参 / cancel 无在途）", asyn
 
 // ---- register / unregister 子命令（真实临时目录文件系统，无模型） ----
 
-import { registerJsonPath } from "../../src/engine/runtime/workflow-registry.js";
+import { registerJsonPath } from "../../packages/engine/src/runtime/workflow-registry.js";
 
 const DEMO_SCRIPT = `export const meta = { id: "demo_wf", name: "demo_wf", description: "demo" }\nreturn { ok: true }`;
 
@@ -230,7 +230,7 @@ test("双模式: manifest 存在即排他, 无 manifest 回退目录扫描", asy
 // 教训（2026-11-18 线上崩溃）：getArgumentCompletions 引用了作用域外的裸 runManager，
 // 按 Tab 补全即抛 ReferenceError 打死宿主 TUI。单测只测纯函数 completeWorkflowsArgs 时漏掉了这层。
 test("命令装配: /workflows 的 getArgumentCompletions 可真实调用（不抛 ReferenceError）", async () => {
-  const { registerWorkflowsCommand } = await import("../../extensions/commands/workflows/index.js");
+  const { registerWorkflowsCommand } = await import("../../apps/plugin/extensions/commands/workflows/index.js");
   const rm = new RunManager(4);
   rm.register("run-abc", { label: "smoke" });
   const registered = new Map<string, any>();
@@ -256,9 +256,9 @@ test("命令装配: /workflows 的 getArgumentCompletions 可真实调用（不�
 });
 
 test("命令装配: /explorer 的 getArgumentCompletions 可真实调用", async () => {
-  const { registerExplorerCommand } = await import("../../extensions/commands/explorer.js");
-  const { RuntimeEventBus } = await import("../../src/engine/events/runtime-event-bus.js");
-  const { ExplorerController } = await import("../../src/explorer/controller/explorer-controller.js");
+  const { registerExplorerCommand } = await import("../../apps/plugin/extensions/commands/explorer.js");
+  const { RuntimeEventBus } = await import("../../packages/engine/src/events/runtime-event-bus.js");
+  const { ExplorerController } = await import("../../packages/explorer/src/controller/explorer-controller.js");
   const bus = new RuntimeEventBus();
   const explorer = new ExplorerController({ runManager: new RunManager(2, bus), eventBus: bus, journalDir: "/tmp/none" });
   const registered = new Map<string, any>();

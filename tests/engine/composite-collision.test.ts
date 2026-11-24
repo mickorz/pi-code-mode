@@ -13,9 +13,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
-import type { CompositeRecord } from "../../src/engine/types/index.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
+import type { CompositeRecord } from "../../packages/engine/src/types/index.js"
 
 function makeRunner(): AgentSessionRunner {
   return {

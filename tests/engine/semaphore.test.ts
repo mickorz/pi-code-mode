@@ -4,7 +4,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createLimiter } from "../../src/engine/runtime/semaphore.js"
+import { createLimiter } from "../../packages/engine/src/runtime/semaphore.js"
 
 test("limiter 限制最大并发并在完成后放行队列", async () => {
   const limiter = createLimiter(2)

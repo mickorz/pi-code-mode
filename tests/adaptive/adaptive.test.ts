@@ -9,8 +9,8 @@ import {
   planSchedule,
   samplesFromCheckpoints,
   suggestTier,
-} from "../../src/engine/adaptive/adaptive-scheduler.js"
-import { AdaptiveModelPool } from "../../src/engine/adaptive/adaptive-model-pool.js"
+} from "../../packages/engine/src/adaptive/adaptive-scheduler.js"
+import { AdaptiveModelPool } from "../../packages/engine/src/adaptive/adaptive-model-pool.js"
 
 test("buildProfiles：P50/P90/max 计算正确", () => {
   const p = buildProfiles([

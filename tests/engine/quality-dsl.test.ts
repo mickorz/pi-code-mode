@@ -4,8 +4,8 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult, structuredResult } from "./helpers.js"
 
 /** schema 型 fake：按 prompt 前缀返回固定结构化结果 */

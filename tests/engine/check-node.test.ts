@@ -6,8 +6,8 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
 
 function makeRunner() {
   const prompts: string[] = []
@@ -153,7 +153,7 @@ test("fileExists 相对 cwd 解析；不存在返回 false 不抛错", async () 
   const { runner } = makeRunner()
   const result = await runWorkflow(
     `export const meta = { name: 'helper_file2' }
-const a = fileExists('src/engine/runtime/node-contract.ts')
+const a = fileExists('packages/engine/src/runtime/node-contract.ts')
 const b = fileExists('definitely/not/here.void')
 const c = fileExists('')
 await agent('bookkeeping')

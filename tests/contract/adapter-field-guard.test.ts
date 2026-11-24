@@ -13,8 +13,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 
-const ADAPTER = path.join(import.meta.dirname, "..", "..", "src", "adapter", "pi-agent-adapter.ts")
-const TYPES = path.join(import.meta.dirname, "..", "..", "src", "adapter", "types.ts")
+const ADAPTER = path.join(import.meta.dirname, "..", "..", "packages", "adapter", "src", "pi-agent-adapter.ts")
+const TYPES = path.join(import.meta.dirname, "..", "..", "packages", "adapter", "src", "types.ts")
 
 /** 从 AgentRequest 接口体里抽出字段名（只取顶层 `name?:` / `name:`） */
 function requestFields(): string[] {
@@ -51,7 +51,7 @@ test("AgentRequest 每个字段都被 PiAgentAdapter 消费（防死配置）", 
 test("禁止用 as any 传 AgentRequest 配置（审计用：记录当前违规点，防新增）", () => {
   // 该检查只针对「构造 AgentRequest 的地方」，避免新增 as any 绕过类型
   const files = [
-    path.join(import.meta.dirname, "..", "..", "src", "tools", "workflow-analyze-tool.ts"),
+    path.join(import.meta.dirname, "..", "..", "packages", "tools", "src", "workflow-analyze-tool.ts"),
   ]
   const offenders: string[] = []
   for (const file of files) {

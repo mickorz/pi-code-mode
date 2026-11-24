@@ -11,11 +11,11 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { PiAgentAdapter } from "../../src/adapter/pi-agent-adapter.js"
-import { agentAdapterToRunner } from "../../src/adapter/agent-adapter.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { JournalStore } from "../../src/engine/persistence/journal.js"
-import type { WorkflowRunResult } from "../../src/engine/types/index.js"
+import { PiAgentAdapter } from "../../packages/adapter/src/pi-agent-adapter.js"
+import { agentAdapterToRunner } from "../../packages/adapter/src/agent-adapter.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { JournalStore } from "../../packages/engine/src/persistence/journal.js"
+import type { WorkflowRunResult } from "../../packages/engine/src/types/index.js"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, "../..")

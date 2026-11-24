@@ -7,9 +7,9 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { parsePlanArgs, resolvePlanContext, scriptFromPlanPath, toRunConfig } from "../../src/engine/plan/plan-runner.js"
-import { hashScript } from "../../src/engine/plan/source-fingerprint.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
+import { parsePlanArgs, resolvePlanContext, scriptFromPlanPath, toRunConfig } from "../../packages/engine/src/plan/plan-runner.js"
+import { hashScript } from "../../packages/engine/src/plan/source-fingerprint.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
 
 function setup(planOver: Record<string, unknown> = {}, scriptBody = "await agent('a')\nawait agent('b')\nreturn 'done'") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m2-plan-"))

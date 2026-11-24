@@ -4,9 +4,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { makeWorkflowTool, makeWorkflowControlTool } from "../../src/tools/workflow-tools.js"
-import type { AgentAdapter, AgentResult } from "../../src/adapter/types.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { makeWorkflowTool, makeWorkflowControlTool } from "../../packages/tools/src/workflow-tools.js"
+import type { AgentAdapter, AgentResult } from "../../packages/adapter/src/types.js"
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wftools-"))

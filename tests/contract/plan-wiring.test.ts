@@ -8,10 +8,10 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { makeWorkflowTool } from "../../src/tools/workflow-tools.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { hashScript } from "../../src/engine/plan/source-fingerprint.js"
-import type { AgentAdapter, AgentRequest } from "../../src/adapter/types.js"
+import { makeWorkflowTool } from "../../packages/tools/src/workflow-tools.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { hashScript } from "../../packages/engine/src/plan/source-fingerprint.js"
+import type { AgentAdapter, AgentRequest } from "../../packages/adapter/src/types.js"
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "m6-wire-"))

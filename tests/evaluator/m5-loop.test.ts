@@ -7,10 +7,10 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { renderReview, reviewSuggestions, type SuggestionClaim } from "../../src/engine/evaluator/suggestion-review.js"
-import { renderLoopResult, runOptimizationLoop } from "../../src/engine/evaluator/optimization-loop.js"
-import { buildReport } from "../../src/engine/analyzer/report-builder.js"
-import type { AnalysisReport, Recommendation } from "../../src/engine/analyzer/report-builder.js"
+import { renderReview, reviewSuggestions, type SuggestionClaim } from "../../packages/engine/src/evaluator/suggestion-review.js"
+import { renderLoopResult, runOptimizationLoop } from "../../packages/engine/src/evaluator/optimization-loop.js"
+import { buildReport } from "../../packages/engine/src/analyzer/report-builder.js"
+import type { AnalysisReport, Recommendation } from "../../packages/engine/src/analyzer/report-builder.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m5-case-"))
 

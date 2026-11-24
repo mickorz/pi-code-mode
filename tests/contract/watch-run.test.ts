@@ -1,8 +1,8 @@
 // watchRun 单 run 专注视图契约：状态行事件驱动更新/终态清理/幂等/防泄漏（无模型）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RunManager } from "../../src/manager/run-manager.js";
-import { watchRun, resetWatchState } from "../../extensions/commands/workflows/watch.js";
+import { RunManager } from "../../packages/manager/src/run-manager.js";
+import { watchRun, resetWatchState } from "../../apps/plugin/extensions/commands/workflows/watch.js";
 
 interface Capture {
   lines: Map<string, string | undefined>;

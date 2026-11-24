@@ -14,16 +14,16 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { createPartialBuffer } from "../../src/adapter/partial-buffer.js"
-import { agentAdapterToRunner } from "../../src/adapter/agent-adapter.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
-import type { AgentAdapter } from "../../src/adapter/types.js"
-import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { createRunJournal } from "../../src/manager/run-journal.js"
-import { ExplorerController } from "../../src/explorer/controller/explorer-controller.js"
-import { renderExplorerBox } from "../../extensions/explorer/render.js"
+import { createPartialBuffer } from "../../packages/adapter/src/partial-buffer.js"
+import { agentAdapterToRunner } from "../../packages/adapter/src/agent-adapter.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
+import type { AgentAdapter } from "../../packages/adapter/src/types.js"
+import { RuntimeEventBus } from "../../packages/engine/src/events/runtime-event-bus.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { createRunJournal } from "../../packages/manager/src/run-journal.js"
+import { ExplorerController } from "../../packages/explorer/src/controller/explorer-controller.js"
+import { renderExplorerBox } from "../../apps/plugin/extensions/explorer/render.js"
 import { textResult } from "../engine/helpers.js"
 
 const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s }
@@ -190,7 +190,7 @@ test("渲染: 树行 running 节点按 startedAt 现算耗时（秒表）", () =
 })
 
 test("tick: 有运行中节点时周期重绘；全部终态后不再重绘（空闲零渲染）", async () => {
-  const { openExplorer, closeExplorer } = await import("../../extensions/explorer/index.js")
+  const { openExplorer, closeExplorer } = await import("../../apps/plugin/extensions/explorer/index.js")
   const bus = new RuntimeEventBus()
   const rm = new RunManager(4, bus)
   const explorer = new ExplorerController({ runManager: rm, eventBus: bus, journalDir: "/tmp/none" })

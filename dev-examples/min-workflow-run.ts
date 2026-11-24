@@ -3,12 +3,12 @@
  *
  * 直接调子命令实现（与 /workflows 路由走同一对象），验证命令行链路而非绕过。
  */
-import { analyzeSubcommand } from "../extensions/commands/workflows/analyze.js"
-import { runSubcommand } from "../extensions/commands/workflows/run.js"
-import { statusSubcommand } from "../extensions/commands/workflows/status.js"
-import { PiAgentAdapter } from "../src/adapter/pi-agent-adapter.js"
-import { RunManager } from "../src/manager/run-manager.js"
-import type { WorkflowsCommandDeps } from "../extensions/commands/workflows/types.js"
+import { analyzeSubcommand } from "../apps/plugin/extensions/commands/workflows/analyze.js"
+import { runSubcommand } from "../apps/plugin/extensions/commands/workflows/run.js"
+import { statusSubcommand } from "../apps/plugin/extensions/commands/workflows/status.js"
+import { PiAgentAdapter } from "../packages/adapter/src/pi-agent-adapter.js"
+import { RunManager } from "../packages/manager/src/run-manager.js"
+import type { WorkflowsCommandDeps } from "../apps/plugin/extensions/commands/workflows/types.js"
 
 const notes: Array<{ text: string; level: string }> = []
 const ctx: any = {

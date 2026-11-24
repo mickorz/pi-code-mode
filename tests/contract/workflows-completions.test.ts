@@ -7,9 +7,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { completeWorkflowsArgs } from "../../extensions/commands/workflows/completions.js";
-import { registerJsonPath } from "../../src/engine/runtime/workflow-registry.js";
-import { RunManager } from "../../src/manager/run-manager.js";
+import { completeWorkflowsArgs } from "../../apps/plugin/extensions/commands/workflows/completions.js";
+import { registerJsonPath } from "../../packages/engine/src/runtime/workflow-registry.js";
+import { RunManager } from "../../packages/manager/src/run-manager.js";
 
 function makeProject(opts?: { manifest?: { id: string }[]; brokenLegacy?: boolean }) {
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-cmpl-test-"));

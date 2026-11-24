@@ -7,9 +7,9 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { evaluate, renderEvaluation } from "../../src/engine/evaluator/evaluator.js"
-import { BaselineStore } from "../../src/engine/evaluator/baseline-store.js"
-import type { WorkflowPlan } from "../../src/engine/plan/schema.js"
+import { evaluate, renderEvaluation } from "../../packages/engine/src/evaluator/evaluator.js"
+import { BaselineStore } from "../../packages/engine/src/evaluator/baseline-store.js"
+import type { WorkflowPlan } from "../../packages/engine/src/plan/schema.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m5-eval-"))
 

@@ -1,8 +1,8 @@
 // RunManager 与全局并发闸测试（无 LLM）
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { RunManager, withGlobalGate } from "../../src/manager/run-manager.js"
-import type { AgentAdapter, AgentResult } from "../../src/adapter/types.js"
+import { RunManager, withGlobalGate } from "../../packages/manager/src/run-manager.js"
+import type { AgentAdapter, AgentResult } from "../../packages/adapter/src/types.js"
 
 test("RunManager: 生命周期 register->attach->finish->list/status", () => {
   const rm = new RunManager(4)

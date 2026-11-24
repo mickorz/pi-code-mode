@@ -1,8 +1,8 @@
 // RunManager 事件出口 + 渲染调度器节流语义（widget 事件驱动化的数据源契约，无模型）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RunManager } from "../../src/manager/run-manager.js";
-import { createRenderScheduler } from "../../src/manager/render-scheduler.js";
+import { RunManager } from "../../packages/manager/src/run-manager.js";
+import { createRenderScheduler } from "../../packages/manager/src/render-scheduler.js";
 
 test("RunManager 事件: register/attach/finish 时序与退订", () => {
   const rm = new RunManager(2);

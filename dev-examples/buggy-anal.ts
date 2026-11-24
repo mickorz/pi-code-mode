@@ -2,8 +2,8 @@
  * 缺陷 demo 的 anal 实测：验证规则召回
  * 用法：npx tsx dev-examples/buggy-anal.ts [--with-ai]
  */
-import { analyzeSubcommand } from "../extensions/commands/workflows/analyze.js"
-import { analyzeWorkflow } from "../src/tools/workflow-analyze-tool.js"
+import { analyzeSubcommand } from "../apps/plugin/extensions/commands/workflows/analyze.js"
+import { analyzeWorkflow } from "../packages/tools/src/workflow-analyze-tool.js"
 
 const TARGET = "dev-examples/min-workflow/buggy-demo.js"
 const withAi = process.argv.includes("--with-ai")

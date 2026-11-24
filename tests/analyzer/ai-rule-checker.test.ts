@@ -13,13 +13,13 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { test } from "node:test"
 
-import { loadRuleDocs } from "../../src/engine/analyzer/ai-rule-checker/rule-doc-loader.js"
-import { BUILTIN_RULES } from "../../src/engine/analyzer/rules/index.js"
-import { parseChecks, runAIRuleCheck } from "../../src/engine/analyzer/ai-rule-checker/ai-rule-checker.js"
-import { validateCheck } from "../../src/engine/analyzer/ai-rule-checker/evidence-validator.js"
-import { buildSourceContext, toSourceFiles } from "../../src/engine/analyzer/ai-rule-checker/prompt-builder.js"
-import { aiOnlyHits, mergeRuleResults, needsHumanReview } from "../../src/engine/analyzer/ai-rule-checker/result-merger.js"
-import type { AIRuleCheck } from "../../src/engine/analyzer/ai-rule-checker/types.js"
+import { loadRuleDocs } from "../../packages/engine/src/analyzer/ai-rule-checker/rule-doc-loader.js"
+import { BUILTIN_RULES } from "../../packages/engine/src/analyzer/rules/index.js"
+import { parseChecks, runAIRuleCheck } from "../../packages/engine/src/analyzer/ai-rule-checker/ai-rule-checker.js"
+import { validateCheck } from "../../packages/engine/src/analyzer/ai-rule-checker/evidence-validator.js"
+import { buildSourceContext, toSourceFiles } from "../../packages/engine/src/analyzer/ai-rule-checker/prompt-builder.js"
+import { aiOnlyHits, mergeRuleResults, needsHumanReview } from "../../packages/engine/src/analyzer/ai-rule-checker/result-merger.js"
+import type { AIRuleCheck } from "../../packages/engine/src/analyzer/ai-rule-checker/types.js"
 
 const SOURCE = `export const meta = { name: 'demo' }
 const A = args || {}

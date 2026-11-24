@@ -6,8 +6,8 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 
-import { riskScore, runRules } from "../../src/engine/analyzer/rule-engine.js"
-import type { AnalyzerRule } from "../../src/engine/analyzer/types.js"
+import { riskScore, runRules } from "../../packages/engine/src/analyzer/rule-engine.js"
+import type { AnalyzerRule } from "../../packages/engine/src/analyzer/types.js"
 
 const FIX = path.join(import.meta.dirname, "fixtures", "atomic")
 const read = (f: string) => fs.readFileSync(path.join(FIX, f), "utf8")

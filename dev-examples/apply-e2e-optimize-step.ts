@@ -9,13 +9,13 @@
 import fs from "node:fs"
 import path from "node:path"
 
-import { optimizeSubcommand } from "../extensions/commands/workflows/optimize/index.js"
-import { PiAgentAdapter } from "../src/adapter/pi-agent-adapter.js"
-import { RunManager } from "../src/manager/run-manager.js"
-import { readSession, sessionPaths } from "../src/engine/optimizer/session-store.js"
-import { createPlannerAgent, resolveTierModel } from "../src/tools/workflow-analyze-tool.js"
-import { sha256 } from "../src/engine/optimizer/target-resolver.js"
-import type { WorkflowsCommandDeps } from "../extensions/commands/workflows/types.js"
+import { optimizeSubcommand } from "../apps/plugin/extensions/commands/workflows/optimize/index.js"
+import { PiAgentAdapter } from "../packages/adapter/src/pi-agent-adapter.js"
+import { RunManager } from "../packages/manager/src/run-manager.js"
+import { readSession, sessionPaths } from "../packages/engine/src/optimizer/session-store.js"
+import { createPlannerAgent, resolveTierModel } from "../packages/tools/src/workflow-analyze-tool.js"
+import { sha256 } from "../packages/engine/src/optimizer/target-resolver.js"
+import type { WorkflowsCommandDeps } from "../apps/plugin/extensions/commands/workflows/types.js"
 
 const ROOT = "E:/WorkProjects/pi-code-mode/dev-examples/apply-e2e"
 const TARGET = `${ROOT}/worker.js`

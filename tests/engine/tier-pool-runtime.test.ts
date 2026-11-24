@@ -1,9 +1,9 @@
 // tier 池接入 runtime 契约：acquire 决定 model / 满载串行化 / 释放 / 显式 model 优先（无模型）
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { ModelPool } from "../../src/engine/agent/model-pool.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { ModelPool } from "../../packages/engine/src/agent/model-pool.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "./helpers.js"
 
 /** 记录 model 分派与在途数的 fake runner（armAt 指定索引挂起，releaseIdx 放行） */

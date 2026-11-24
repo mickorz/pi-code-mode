@@ -7,9 +7,9 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { BudgetGate } from "../../src/engine/governance/budget-gate.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
+import { BudgetGate } from "../../packages/engine/src/governance/budget-gate.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m2-budget-"))
 

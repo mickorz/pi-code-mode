@@ -4,7 +4,7 @@
  *  B. 目录模式（新）：整个 game-requirement-audit/ 目录
  *  C. 目录模式 + AI Rule Check
  */
-import { analyzeWorkflow, createPlannerAgent } from "../../src/tools/workflow-analyze-tool.js"
+import { analyzeWorkflow, createPlannerAgent } from "../../packages/tools/src/workflow-analyze-tool.js"
 
 const CWD = "E:/WorkProjects/PrdGameSkill"
 const DIR = ".opencode-workflows/workflows/game-requirement-audit"

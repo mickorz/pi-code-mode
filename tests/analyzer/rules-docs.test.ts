@@ -15,11 +15,11 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 
-import { BUILTIN_RULES } from "../../src/engine/analyzer/rules/index.js"
-import { runRules } from "../../src/engine/analyzer/rule-engine.js"
-import { buildReport } from "../../src/engine/analyzer/report-builder.js"
+import { BUILTIN_RULES } from "../../packages/engine/src/analyzer/rules/index.js"
+import { runRules } from "../../packages/engine/src/analyzer/rule-engine.js"
+import { buildReport } from "../../packages/engine/src/analyzer/report-builder.js"
 
-const DEF_DIR = path.join(import.meta.dirname, "../../src/engine/analyzer/rules/definitions")
+const DEF_DIR = path.join(import.meta.dirname, "../../packages/engine/src/analyzer/rules/definitions")
 const FILE_RE = /^(\d{2})-([A-Z]+-\d{3})-rule\.md$/
 
 interface DocFile {

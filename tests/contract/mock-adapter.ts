@@ -1,6 +1,6 @@
 // Deterministic Mock Adapter: AgentAdapter 契约的确定性实现（不调 LLM）
 // 作为 M1 PiAgentAdapter 的契约测试靶子; 脚本化返回预置 AgentResult
-import type { AgentRequest, AgentResult } from "../../src/adapter/types.js";
+import type { AgentRequest, AgentResult } from "../../packages/adapter/src/types.js";
 
 export interface MockScript {
   /** 按 executionId 匹配的预置返回; 未命中走 default */

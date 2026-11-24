@@ -6,9 +6,9 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { agentAdapterToRunner } from "../../../src/adapter/agent-adapter.js"
-import { PiAgentAdapter } from "../../../src/adapter/pi-agent-adapter.js"
-import { runWorkflow } from "../../../src/engine/runtime/workflow-runtime.js"
+import { agentAdapterToRunner } from "../../../packages/adapter/src/agent-adapter.js"
+import { PiAgentAdapter } from "../../../packages/adapter/src/pi-agent-adapter.js"
+import { runWorkflow } from "../../../packages/engine/src/runtime/workflow-runtime.js"
 
 const HOST = process.env.PI_CODING_AGENT_DIR_ORIGINAL ?? path.join(os.homedir(), ".pi", "agent")
 

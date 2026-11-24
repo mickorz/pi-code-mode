@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { BudgetTracker, estimateTokens, limitsFromPolicy } from "../../src/engine/governance/budget-tracker.js"
+import { BudgetTracker, estimateTokens, limitsFromPolicy } from "../../packages/engine/src/governance/budget-tracker.js"
 
 test("硬预算 maxAgents：dispatch 前拦截（总 dispatch 次数语义）", () => {
   const b = new BudgetTracker({ runId: "r", limits: { maxAgents: 2 } })

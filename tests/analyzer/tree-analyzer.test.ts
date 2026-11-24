@@ -10,8 +10,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { analyzeWorkflowTree, extractScriptRefs } from "../../src/engine/analyzer/tree-analyzer.js"
-import { analyzeWorkflow } from "../../src/tools/workflow-analyze-tool.js"
+import { analyzeWorkflowTree, extractScriptRefs } from "../../packages/engine/src/analyzer/tree-analyzer.js"
+import { analyzeWorkflow } from "../../packages/tools/src/workflow-analyze-tool.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "wf-tree-"))
 

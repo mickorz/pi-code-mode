@@ -15,13 +15,13 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { createRunJournal } from "../../src/manager/run-journal.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { ExplorerController } from "../../src/explorer/controller/explorer-controller.js"
-import { NavigationModel } from "../../src/explorer/model/navigation-model.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
+import { RuntimeEventBus } from "../../packages/engine/src/events/runtime-event-bus.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { createRunJournal } from "../../packages/manager/src/run-journal.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { ExplorerController } from "../../packages/explorer/src/controller/explorer-controller.js"
+import { NavigationModel } from "../../packages/explorer/src/model/navigation-model.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "../engine/helpers.js"
 
 function tmpProject(prefix: string): string {
@@ -281,7 +281,7 @@ test("H3: schedule 触发的 run 也产生执行树与 journal（已接线 event
   const bus = new RuntimeEventBus()
   const rm = new RunManager(4, bus)
   const journal = createRunJournal(dir)
-  const { PiScheduleRunner } = await import("../../src/manager/pi-schedule-runner.js")
+  const { PiScheduleRunner } = await import("../../packages/manager/src/pi-schedule-runner.js")
   const { MockAgentAdapter } = await import("./mock-adapter.js")
 
   const runner = new PiScheduleRunner({

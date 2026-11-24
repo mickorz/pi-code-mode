@@ -14,9 +14,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { loadModelTiers } from "../../src/engine/agent/model-tiers.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { loadModelTiers } from "../../packages/engine/src/agent/model-tiers.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "./helpers.js"
 
 test("loadModelTiers：全局 + 项目 overlay，项目同名键覆盖", () => {

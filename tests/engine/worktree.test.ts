@@ -8,9 +8,9 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
-import { createWorktree, removeWorktree } from "../../src/engine/isolation/worktree.js"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
+import { createWorktree, removeWorktree } from "../../packages/engine/src/isolation/worktree.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult } from "./helpers.js"
 
 /** 造一个带一次提交的临时 git 仓库 */

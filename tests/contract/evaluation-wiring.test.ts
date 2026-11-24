@@ -5,9 +5,9 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { BaselineStore } from "../../src/engine/evaluator/baseline-store.js"
-import { hashScript } from "../../src/engine/plan/source-fingerprint.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { BaselineStore } from "../../packages/engine/src/evaluator/baseline-store.js"
+import { hashScript } from "../../packages/engine/src/plan/source-fingerprint.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m6-evalwire-"))
 const runner: any = { async run() { return { type: "text", value: "ok", sessionId: "s" } }, async cancel() {} }

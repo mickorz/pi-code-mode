@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { analyzeSubcommand } from "../../extensions/commands/workflows/analyze.js"
+import { analyzeSubcommand } from "../../apps/plugin/extensions/commands/workflows/analyze.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "wf-analyze-"))
 
@@ -118,8 +118,8 @@ test("analyze：usage 声明别名与关键开关", () => {
 })
 
 // ---- /workflows plan validate ----
-import { planSubcommand } from "../../extensions/commands/workflows/analyze.js"
-import { hashScript } from "../../src/engine/plan/source-fingerprint.js"
+import { planSubcommand } from "../../apps/plugin/extensions/commands/workflows/analyze.js"
+import { hashScript } from "../../packages/engine/src/plan/source-fingerprint.js"
 
 test("plan validate：合法 Plan 输出 PASS", async () => {
   const dir = tmp()
@@ -172,7 +172,7 @@ test("analyze：--no-suggest 关闭 AI 建议（默认开启）", async () => {
 })
 
 // ---- 挂起保护（2026-11-19 事故回归） ----
-import { createPlannerAgent } from "../../src/tools/workflow-analyze-tool.js"
+import { createPlannerAgent } from "../../packages/tools/src/workflow-analyze-tool.js"
 
 test("createPlannerAgent：1ms 超时必然抛错（证明超时通道生效，不依赖模型速度）", async () => {
   const agent = createPlannerAgent({ cwd: tmp(), timeoutMs: 1 })

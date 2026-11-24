@@ -12,9 +12,9 @@ import {
   directCommandConflict,
   isDirectCommandSafeName,
   registerWorkflowDirectCommands,
-} from "../../extensions/commands/workflows/index.js"
-import { isBuiltinWorkflow, registerJsonPath } from "../../src/engine/runtime/workflow-registry.js"
-import { RunManager } from "../../src/manager/run-manager.js"
+} from "../../apps/plugin/extensions/commands/workflows/index.js"
+import { isBuiltinWorkflow, registerJsonPath } from "../../packages/engine/src/runtime/workflow-registry.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
 
 /** fake pi：收集注册的命令；getCommands 可注入已占用名 */
 function makePi(taken: string[] = []) {
@@ -222,7 +222,7 @@ test("直跑 handler: 注册表不可读时提示原始错误，不执行", asyn
 
 // ---- 命令装配：主入口装配的闭包必须真实可执行（参考 2026-11-18 线上崩溃教训）----
 test("直跑装配: /workflows 命令与直跑注册器可同时装配且互不干扰", async () => {
-  const { registerWorkflowsCommand } = await import("../../extensions/commands/workflows/index.js")
+  const { registerWorkflowsCommand } = await import("../../apps/plugin/extensions/commands/workflows/index.js")
   const dir = makeProject([{ id: "smoke_test", file: "smoke-test.js" }])
   const { pi, commands } = makePi()
   const deps = { runManager: new RunManager(2), makeDeps: () => ({}) as any, deliver: async () => {} }

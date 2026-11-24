@@ -7,8 +7,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { computeTaskFingerprint, contentHash, externalDepsHash, modelConfigHash } from "../../src/engine/governance/task-fingerprint.js"
-import { TaskRegistry } from "../../src/engine/governance/task-registry.js"
+import { computeTaskFingerprint, contentHash, externalDepsHash, modelConfigHash } from "../../packages/engine/src/governance/task-fingerprint.js"
+import { TaskRegistry } from "../../packages/engine/src/governance/task-registry.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m3-task-"))
 const fp = (key = "t1", extra: Partial<Parameters<typeof computeTaskFingerprint>[0]> = {}) =>

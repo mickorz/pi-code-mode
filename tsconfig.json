@@ -5,7 +5,7 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2023"],
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,6 +13,6 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests", "dev-examples", "extensions"]
+  "include": ["packages/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", "dev-examples", "apps"]
 }

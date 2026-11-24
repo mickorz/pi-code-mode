@@ -17,8 +17,8 @@ import {
   loadBuiltinWorkflows,
   loadRegistry,
   registerJsonPath,
-} from "../../src/engine/runtime/workflow-registry.js"
-import { registerSubcommand, unregisterSubcommand } from "../../extensions/commands/workflows/register.js"
+} from "../../packages/engine/src/runtime/workflow-registry.js"
+import { registerSubcommand, unregisterSubcommand } from "../../apps/plugin/extensions/commands/workflows/register.js"
 
 const EXPECTED_BUILTINS = ["coder", "fixer", "judge", "quality-loop", "reviewer"]
 

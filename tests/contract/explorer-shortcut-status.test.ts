@@ -10,11 +10,11 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { RuntimeEventBus } from "../../src/engine/events/runtime-event-bus.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import { ExplorerController } from "../../src/explorer/controller/explorer-controller.js"
-import { toggleExplorer, isExplorerOpen, closeExplorer } from "../../extensions/explorer/index.js"
-import { buildStatusText, installExplorerStatusLine, EXPLORER_STATUS_KEY } from "../../extensions/explorer/status-line.js"
+import { RuntimeEventBus } from "../../packages/engine/src/events/runtime-event-bus.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import { ExplorerController } from "../../packages/explorer/src/controller/explorer-controller.js"
+import { toggleExplorer, isExplorerOpen, closeExplorer } from "../../apps/plugin/extensions/explorer/index.js"
+import { buildStatusText, installExplorerStatusLine, EXPLORER_STATUS_KEY } from "../../apps/plugin/extensions/explorer/status-line.js"
 
 /** fake 宿主 ui：记录 custom 调用，暴露 component 与 done，模拟 setStatus */
 function fakeUi() {
@@ -144,7 +144,7 @@ test("A2: 状态行随 run 事件更新，卸载后清除并退订", async () =>
 })
 
 test("A1: 快捷键与状态行在 extension 装配期真实注册（ctrl+b + session 钩子）", async () => {
-  const { default: extension } = await import("../../extensions/pi-code-mode.js")
+  const { default: extension } = await import("../../apps/plugin/extensions/pi-code-mode.js")
   const shortcuts: Array<{ key: string; description?: string }> = []
   const handlers = new Map<string, Array<(...a: any[]) => any>>()
   const commands: string[] = []

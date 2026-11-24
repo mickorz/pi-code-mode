@@ -14,9 +14,9 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { WorkflowError } from "../../src/engine/runtime/errors.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { WorkflowError } from "../../packages/engine/src/runtime/errors.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
 import { textResult, structuredResult } from "./helpers.js"
 
 /** 计数 fake：回显 prompt，上报固定用量 */
@@ -464,7 +464,7 @@ test("resume 回放恢复 executionId/outputType；老 journal 无新字段时�
 return await agent('任务')`
   // 第一轮：生成新格式 journal（含 executionId/outputType 等展示字段）
   const first = countingAgent()
-  const journal = new Map<string, import("../src/types/index.js").JournalEntry>()
+  const journal = new Map<string, import("../../packages/engine/src/types/index.js").JournalEntry>()
   await runWorkflow(script, {
     agent: first.runner,
     runId: "run-r",

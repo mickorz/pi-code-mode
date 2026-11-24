@@ -7,7 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { analyzeWorkflow, createWorkflowAnalyzeTool, runAnalyzeCli } from "../../src/tools/workflow-analyze-tool.js"
+import { analyzeWorkflow, createWorkflowAnalyzeTool, runAnalyzeCli } from "../../packages/tools/src/workflow-analyze-tool.js"
 
 const FIX = path.join(import.meta.dirname, "fixtures", "atomic")
 

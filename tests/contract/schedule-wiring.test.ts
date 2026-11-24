@@ -7,8 +7,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { PiScheduleRunner } from "../../src/manager/pi-schedule-runner.js"
-import { RunManager } from "../../src/manager/run-manager.js"
+import { PiScheduleRunner } from "../../packages/manager/src/pi-schedule-runner.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m6-sched-"))
 

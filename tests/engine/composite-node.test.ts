@@ -9,9 +9,9 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { runWorkflow, type WorkflowRunOptions } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner, AgentRunOptions } from "../../src/engine/agent/session-runner.js"
-import type { JournalEntry } from "../../src/engine/types/index.js"
+import { runWorkflow, type WorkflowRunOptions } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner, AgentRunOptions } from "../../packages/engine/src/agent/session-runner.js"
+import type { JournalEntry } from "../../packages/engine/src/types/index.js"
 
 function makeRunner() {
   const calls: Array<AgentRunOptions | undefined> = []

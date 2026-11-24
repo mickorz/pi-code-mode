@@ -1,7 +1,7 @@
 // 模型串解析契约（Step 1 前置修复：provider/model[:thinking] -> Model 对象，注入 fake runtime 无 SDK 依赖）
 import test from "node:test"
 import assert from "node:assert/strict"
-import { resolveModelSpec } from "../../src/adapter/model-spec.js"
+import { resolveModelSpec } from "../../packages/adapter/src/model-spec.js"
 
 function fakeRuntime(table: Record<string, string | undefined>) {
   return {

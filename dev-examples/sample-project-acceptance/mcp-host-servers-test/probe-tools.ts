@@ -17,8 +17,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent"
 
-import { readMcpConfigFiles } from "../../../src/mcp/mcp-config-loader.js"
-import { filterMcpConfig } from "../../../src/mcp/mcp-policy.js"
+import { readMcpConfigFiles } from "../../../packages/mcp/src/mcp-config-loader.js"
+import { filterMcpConfig } from "../../../packages/mcp/src/mcp-policy.js"
 
 const HOST = process.env.PI_CODING_AGENT_DIR_ORIGINAL ?? path.join(os.homedir(), ".pi", "agent")
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "probe-agent-"))

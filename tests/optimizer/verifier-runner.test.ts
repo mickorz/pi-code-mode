@@ -10,7 +10,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { parseVerifierCommand, renderVerifier, runVerifierCommand } from "../../src/engine/optimizer/verifier-runner.js"
+import { parseVerifierCommand, renderVerifier, runVerifierCommand } from "../../packages/engine/src/optimizer/verifier-runner.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "verifier-"))
 

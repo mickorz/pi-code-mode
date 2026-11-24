@@ -9,11 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { Case, createSession, finish, fixtureEntry, waitForTools } from "./lib/session-helper.js";
 
-import { agentAdapterToRunner } from "../../src/adapter/agent-adapter.js";
-import { PiAgentAdapter } from "../../src/adapter/pi-agent-adapter.js";
-import { JournalStore } from "../../src/engine/persistence/journal.js";
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js";
-import type { JournalEntry } from "../../src/engine/types/index.js";
+import { agentAdapterToRunner } from "../../packages/adapter/src/agent-adapter.js";
+import { PiAgentAdapter } from "../../packages/adapter/src/pi-agent-adapter.js";
+import { JournalStore } from "../../packages/engine/src/persistence/journal.js";
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js";
+import type { JournalEntry } from "../../packages/engine/src/types/index.js";
 
 async function main() {
   const cases: Case[] = [];

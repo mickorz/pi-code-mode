@@ -57,7 +57,7 @@ Analyzer 分析 → 生成 Optimization Suggestions → Agent 在独立工作区
 
 ## 扩展规则
 
-规则实现统一接口（`src/engine/analyzer/types.ts`）：
+规则实现统一接口（`packages/engine/src/analyzer/types.ts`）：
 
 ```ts
 interface AnalyzerRule {
@@ -68,4 +68,4 @@ interface AnalyzerRule {
 }
 ```
 
-新增规则加入 `src/engine/analyzer/rules/index.ts` 的 `BUILTIN_RULES` 即可，无需改动 Analyzer 主体。规则抛错会被隔离（记 confidence=0 的提示，不影响其他规则）。
+新增规则加入 `packages/engine/src/analyzer/rules/index.ts` 的 `BUILTIN_RULES` 即可，无需改动 Analyzer 主体。规则抛错会被隔离（记 confidence=0 的提示，不影响其他规则）。

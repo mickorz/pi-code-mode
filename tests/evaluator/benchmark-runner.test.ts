@@ -2,8 +2,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { renderBenchmark, requiredValidationOf, runBenchmark, validationSatisfied } from "../../src/engine/evaluator/benchmark-runner.js"
-import type { WorkflowPlan } from "../../src/engine/plan/schema.js"
+import { renderBenchmark, requiredValidationOf, runBenchmark, validationSatisfied } from "../../packages/engine/src/evaluator/benchmark-runner.js"
+import type { WorkflowPlan } from "../../packages/engine/src/plan/schema.js"
 
 function plan(over: Partial<any> = {}): WorkflowPlan {
   return {

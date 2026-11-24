@@ -1,7 +1,7 @@
 // ModelPool 池调度契约：溢出分配/FIFO 唤醒/释放复用/配比（tier 池化 P2，纯逻辑无模型）
 import test from "node:test"
 import assert from "node:assert/strict"
-import { ModelPool } from "../../src/engine/agent/model-pool.js"
+import { ModelPool } from "../../packages/engine/src/agent/model-pool.js"
 
 test("池: 20 并发请求在 A16+B8 上均衡分配（剩余产能策略保持 16:8 配比）", async () => {
   const pool = new ModelPool([{ model: "prov/a", concurrency: 16 }, { model: "prov/b", concurrency: 8 }])

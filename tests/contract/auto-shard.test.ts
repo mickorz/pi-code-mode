@@ -5,8 +5,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import { TaskRegistry } from "../../src/engine/governance/task-registry.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import { TaskRegistry } from "../../packages/engine/src/governance/task-registry.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m6-shard-"))
 const runner = (state: { calls: number }): any => ({

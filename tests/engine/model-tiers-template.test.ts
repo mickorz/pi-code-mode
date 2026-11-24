@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { ensureModelTiersTemplate, loadModelTiers } from "../../src/engine/agent/model-tiers.js"
+import { ensureModelTiersTemplate, loadModelTiers } from "../../packages/engine/src/agent/model-tiers.js"
 
 test("模板: 不存在时创建（含 tiers 空表与 __ 说明字段），创建后 loadModelTiers 正常", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tiers-tpl-"))

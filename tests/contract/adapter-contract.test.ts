@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { MockAgentAdapter } from "./mock-adapter.js";
-import type { AgentAdapter, AgentResult } from "../../src/adapter/types.js";
+import type { AgentAdapter, AgentResult } from "../../packages/adapter/src/types.js";
 
 const REQ = (prompt = "test"): any => ({ prompt });
 

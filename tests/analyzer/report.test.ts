@@ -6,7 +6,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 
-import { ANALYZER_VERSION, buildReport, renderMarkdown, RULE_SET_VERSION } from "../../src/engine/analyzer/report-builder.js"
+import { ANALYZER_VERSION, buildReport, renderMarkdown, RULE_SET_VERSION } from "../../packages/engine/src/analyzer/report-builder.js"
 
 const FIX = path.join(import.meta.dirname, "fixtures", "atomic")
 const REAL = path.join(import.meta.dirname, "fixtures", "real")

@@ -7,8 +7,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { createPlanValidateTool, runPlanValidateCli, validatePlanFile } from "../../src/tools/plan-tool.js"
-import { hashPlan, hashScript } from "../../src/engine/plan/source-fingerprint.js"
+import { createPlanValidateTool, runPlanValidateCli, validatePlanFile } from "../../packages/tools/src/plan-tool.js"
+import { hashPlan, hashScript } from "../../packages/engine/src/plan/source-fingerprint.js"
 
 function setup(mutate?: (plan: any) => void) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "m2-plancmd-"))

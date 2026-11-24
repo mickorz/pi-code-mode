@@ -8,8 +8,8 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { runWorkflow } from "../../src/engine/runtime/workflow-runtime.js"
-import type { AgentSessionRunner } from "../../src/engine/agent/session-runner.js"
+import { runWorkflow } from "../../packages/engine/src/runtime/workflow-runtime.js"
+import type { AgentSessionRunner } from "../../packages/engine/src/agent/session-runner.js"
 
 /** 可控失败 runner：指定 prompt 关键词的调用抛可恢复错误（每次都抛） */
 function makeFailingRunner(failKey: string) {

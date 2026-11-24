@@ -81,11 +81,11 @@
 
 ### 修改 src 后要测试：先 `npm run build`
 
-**每次修改 `src/` 后、开始测试前，先跑一次 `npm run build`**，这是纪律不是可选项。原因与边界：
+**每次修改 `packages/`、`apps/` 后、开始测试前，先跑一次 `npm run build`**，这是纪律不是可选项。原因与边界：
 
 - **类型关卡**：单测（tsx）与 pi 宿主（jiti）都直接加载 TS 源码、**不做类型检查**，`npm run build`（tsc）是唯一能拦住类型错误的关卡——测试前必跑，防止类型错误入库。
-- **宿主加载事实**（2026-11-15 实测：删 dist + 清 jiti 缓存后 `pi -e .` 全功能正常）：pi 宿主经 jiti 直载 `extensions/` 与 `src/` 的 TS 源码，所以宿主联调**改完 src 重启 pi 即生效**，不存在"测到旧 dist"；build 的意义是类型检查与发布产物（`package.json` main → `dist/index.js`），不是刷新宿主缓存。
-- 更新循环三步：改 `src/` → `npm run build`（类型检查）→ 重启 pi 会话。
+- **宿主加载事实**（2026-11-15 实测：删 dist + 清 jiti 缓存后 `pi -e .` 全功能正常）：pi 宿主经 jiti 直载 `apps/plugin/extensions/` 与 `packages/` 的 TS 源码，所以宿主联调**改完源码重启 pi 即生效**，不存在"测到旧 dist"；build 的意义是类型检查与发布产物（`package.json` main → `dist/packages/api/src/index.js`），不是刷新宿主缓存。
+- 更新循环三步：改 `packages/`、`apps/` → `npm run build`（类型检查）→ 重启 pi 会话。
 
 ### 把开发中的本插件装进项目（宿主联调）
 
@@ -118,7 +118,7 @@ pi install $REPO
 
 ## extensions 命令开发规范（强制）
 
-斜杠命令实现一律放 `extensions/commands/`，主入口 `extensions/pi-code-mode.ts` 只做装配（单例创建、依赖组装、工具注册、命令与 widget 挂载），不写命令逻辑：
+斜杠命令实现一律放 `apps/plugin/extensions/commands/`，主入口 `apps/plugin/extensions/pi-code-mode.ts` 只做装配（单例创建、依赖组装、工具注册、命令与 widget 挂载），不写命令逻辑：
 
 1. **一命令一文件/目录**：简单命令 `commands/<命令名>.ts`，导出 `registerXxxCommand(pi, deps)` 工厂；有子命令的命令用目录 `commands/<命令名>/`。Windows 下目录与同名 .ts 不能共存，目录形态入口必须 `index.ts`。
 2. **目录形态结构**：`index.ts` 路由表分发（无参数显示帮助、未知子命令报 usage）+ `types.ts` 契约（`Subcommand { usage, run(argv, ctx, deps) }`）+ 每子命令一文件；帮助面板从路由表 usage 行自动生成，同义别名指向同一实现对象自动去重。
@@ -156,7 +156,7 @@ export function resolveTierModel(tier: string, cwd?: string): string | undefined
 const model = options.model ?? resolveTierModel(options.tier ?? "<已确认的档位>", options.cwd)
 ```
 
-- 已实现参考：`src/tools/workflow-analyze-tool.ts` 的 `resolveTierModel()` 与 `createPlannerAgent()`
+- 已实现参考：`packages/tools/src/workflow-analyze-tool.ts` 的 `resolveTierModel()` 与 `createPlannerAgent()`
 - workflow 脚本内用 `agent(prompt, { tier: "fast" })`，由 `workflow-runtime` 经 `resolveTier` 解析
 - CLI 覆盖入口：`--tier <档位>` / `--model <供应商/模型>`
 
@@ -212,7 +212,7 @@ pi -ne -e /e/WorkProjects/pi-code-mode -p "/workflows optimize <target> --rules 
 
 要点：
 
-1. **`-ne`**（no extensions）避免本机十几个已装 pi 包干扰；**`-e <repo>`** 用本地源码（jiti 直载 `src/`，改完立即生效，不用 build）。
+1. **`-ne`**（no extensions）避免本机十几个已装 pi 包干扰；**`-e <repo>`** 用本地源码（jiti 直载 `packages/`，改完立即生效，不用 build）。
 2. **`-p`** 非交互，跑完即退出——能真实验证「命令注册 / 参数解析 / 后台化 / 结果回传」整条链路。
 3. 长任务用 `timeout` 包住，避免自己挂死：
    ```bash

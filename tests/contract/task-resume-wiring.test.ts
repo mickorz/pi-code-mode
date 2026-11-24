@@ -5,9 +5,9 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { makeWorkflowTool } from "../../src/tools/workflow-tools.js"
-import { RunManager } from "../../src/manager/run-manager.js"
-import type { AgentAdapter, AgentRequest } from "../../src/adapter/types.js"
+import { makeWorkflowTool } from "../../packages/tools/src/workflow-tools.js"
+import { RunManager } from "../../packages/manager/src/run-manager.js"
+import type { AgentAdapter, AgentRequest } from "../../packages/adapter/src/types.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m6-taskwire-"))
 function adapter(state: { calls: number }): AgentAdapter {

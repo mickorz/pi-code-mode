@@ -13,8 +13,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { JournalStore } from "../../src/engine/persistence/journal.js"
-import { JournalDetailRepository } from "../../src/explorer/repository/detail-repository.js"
+import { JournalStore } from "../../packages/engine/src/persistence/journal.js"
+import { JournalDetailRepository } from "../../packages/explorer/src/repository/detail-repository.js"
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "journal-v2-"))

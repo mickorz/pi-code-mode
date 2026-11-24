@@ -7,8 +7,8 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 
-import { BatchExecutor, type BatchTask } from "../../src/engine/governance/batch-executor.js"
-import { contentHash } from "../../src/engine/governance/task-fingerprint.js"
+import { BatchExecutor, type BatchTask } from "../../packages/engine/src/governance/batch-executor.js"
+import { contentHash } from "../../packages/engine/src/governance/task-fingerprint.js"
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "m3-batch-"))
 
