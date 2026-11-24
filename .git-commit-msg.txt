@@ -1,0 +1,41 @@
+fix(optimize): pi -p 自测暴露的 6 个真问题 + CLAUDE.md 强制自测规则
+
+按新增规范用 pi -p 自测（-ne -e 干净房间），暴露并修复：
+
+1. Git Bash 路径转换：pi -p 里的 /workflows 被 MSYS 转成
+   C:/Program Files/Git/workflows，命令根本没执行。
+   需 MSYS_NO_PATHCONV=1。这也说明之前的 pi -p 测试无效，
+   所谓"产物存在"其实是更早 node 测试的残留。
+
+2. flagValue 引号容错：pi 命令行不是 shell，用户按 shell 习惯写的
+   --args 带外层单引号会把引号原样传进来，JSON.parse 报 Unexpected token。
+   修：剥掉首尾配对引号，并拼接被空格拆开的多 token。
+
+3. RETRY-001 默认不可达：它既不在 AUTO_SAFE 也不在 AUTO_UNSAFE，
+   不给 --rules 时永远选不到（用户实测报"没有可安全自动优化的问题簇"）。
+   但它改的是字面量，是最安全的一类，加入 AUTO_SAFE。
+
+4. benchmark 的 cwd：workflow 里的相对路径（templatePath 默认 templates/...）
+   是相对项目根解析的，用 target 目录当 cwd 会直接跑不起来。
+   新增 findProjectRoot()，benchmark 的 cwd 用项目根。
+
+5. verifier 的 cwd 与 runDir 注入：verifier 的 cwd 应为脚本所在目录
+   （用户写的 node verify.mjs 是相对它），runDir 注入绝对路径
+   （否则跨 cwd 解析不到产物）。
+
+6. 非 TUI 模式输出：pi -p 下 ctx.ui.notify 不输出、deliver 因 ctx stale 失败。
+   后台化提示补 deliver（headless 场景）；文档明确 pi -p 只能验产物与状态，
+   不能验输出可见性。
+
+CLAUDE.md 新增强制章节"命令/工具改动必须自测"：改动后必须 pi -p 跑通再交付，
+附两个必知边界与 7 项交付前自测清单。
+同时新增两份经验文档：git-bash-msys-path-conversion.md、
+optimize-p-mode-stale-ctx-deliver.md。
+
+pi -p 端到端实测（dev-examples/apply-e2e/worker.js）：
+- optimize  → 候选生成，选簇 RETRY-001，改 worker.js
+- benchmark → before 2302ms / after 1914ms，verifier exit 0，status=ready
+- apply     → session applied，hash 变化，retries 2→1
+- rollback  → hash 回到 da790bd...，retries 恢复 2，session rolled-back
+
+测试：八套全绿（engine 单独复跑 10/10，原失败为时序 flaky）
