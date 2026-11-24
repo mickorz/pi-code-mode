@@ -12,6 +12,7 @@ import { Type } from "typebox"
 
 import {
   buildReport,
+  clusterFindings,
   renderMarkdown,
   type AnalysisFindingWithSnippet,
   type AnalysisReport,
@@ -71,7 +72,11 @@ export interface AnalyzeInput {
    *
    * 默认值来源：实测 14 条全跑 13 分钟且有超时；6 条语义规则约 3~5 分钟，是体验与覆盖的折中。
    */
-  aiRules?: "all" | "semantic"
+  /**
+   * AI 参与哪些规则。数组形式用于「只复核特定规则」——optimize 只关心选中问题簇对应的规则，
+   * 全量 6 条语义规则在 big 档下单次要 5~10 分钟，没有必要。
+   */
+  aiRules?: "all" | "semantic" | string[]
 }
 
 export interface AnalyzeResult {
@@ -183,6 +188,8 @@ async function analyzeDirectory(input: AnalyzeInput): Promise<AnalyzeResult> {
     },
     summary: { riskScore: first.summary.riskScore, counts, totalFindings: aggregated.length },
     findings: aggregated,
+    // 必须重算：从 first 继承来的 clusters 只含第一个文件，会把 37 条显示成 3 个簇
+    clusters: clusterFindings(aggregated),
     aggregateRiskScore: maxRisk,
     // 目录模式没有"入口"概念：entry 记第一个文件，报告头部靠 subtree 展示全量
     entry: { findings: first.findings, ruleInventory: first.ruleInventory, totalFindings: first.findings.length },
@@ -241,7 +248,11 @@ async function runAiStages(
     try {
       const loaded = loadRuleDocs()
       for (const p of loaded.problems) report.diagnostics.push(`规则文档：${p}`)
-      const aiRules = input.aiRules === "all" ? loaded.rules : loaded.rules.filter((r) => SEMANTIC_AI_RULES.has(r.id))
+      const aiRules = Array.isArray(input.aiRules)
+        ? loaded.rules.filter((r) => input.aiRules!.includes(r.id))
+        : input.aiRules === "all"
+          ? loaded.rules
+          : loaded.rules.filter((r) => SEMANTIC_AI_RULES.has(r.id))
       if (aiRules.length > 0) {
         const staticSummary = [
           `风险分 ${report.summary.riskScore}/100，聚合 ${report.summary.totalFindings} 条 finding，${report.subtree?.files ?? 1} 个文件。`,
@@ -368,6 +379,8 @@ export async function analyzeWorkflow(input: AnalyzeInput): Promise<AnalyzeResul
         report = {
           ...report,
           findings: aggregated,
+          // 同 analyzeDirectory：聚合后必须重算，否则簇只覆盖入口自身
+          clusters: clusterFindings(aggregated),
           summary: { riskScore: entrySummary.riskScore, counts, totalFindings: aggregated.length },
           entry: { findings: entryFindings, ruleInventory: entryRuleInventory, totalFindings: entryFindings.length },
           aggregateRiskScore: tree.aggregate.maxRisk,
@@ -554,7 +567,8 @@ export function createPlannerAgent(
   options: { cwd?: string; agentDir?: string; model?: string; tier?: string; timeoutMs?: number } = {},
 ) {
   // 解析一次（避免每次调用都读配置文件）
-  const resolvedModel = options.model ?? resolveTierModel(options.tier ?? "fast", options.cwd)
+  const tier = options.tier ?? "fast"
+  const resolvedModel = options.model ?? resolveTierModel(tier, options.cwd)
   return async (prompt: string): Promise<string> => {
     // 与项目其他模块一致用静态 import：jiti 直载 TS 源码时，动态 import "*.js" 可能解析失败
 
@@ -564,7 +578,10 @@ export function createPlannerAgent(
     })
     // 注意：AgentRequest.timeoutMs 当前未被 PiAgentAdapter 消费（只认 signal），
     // 因此必须用 AbortController 施加真实超时——否则模型调用挂住会让调用方永久静默等待。
-    const timeoutMs = options.timeoutMs ?? 240_000
+    // 按档位给默认超时：分析类（big/ultra）允许到 10 分钟，执行类（fast）240s 够用。
+    // 用户决策（2026-11-20）：big 用来看代码分析，慢一点可接受；fast 用来改代码，要快。
+    const tierDefaultTimeout = /^(big|ultra)$/i.test(tier) ? 600_000 : 240_000
+    const timeoutMs = options.timeoutMs ?? tierDefaultTimeout
     const controller = new AbortController()
     const executionId = `analyze-planner-${Date.now()}`
 

@@ -21,3 +21,7 @@ dist/
 .opencode-workflows/
 dev-examples/sample-project-acceptance/.journal/
 dev-examples/builtin-roles-smoke/logs/
+
+# optimize 会话（含 workspace 副本、报告、备份）是运行产物，不入库
+.pi/workflows/optimizations/
+dev-examples/*/.pi/

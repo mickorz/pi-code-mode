@@ -68,7 +68,7 @@ test("Markdown 渲染含关键段落", () => {
   const r = buildReport({ source: read("repeated-context.js"), file: "rc.js" })
   const md = renderMarkdown(r)
   assert.match(md, /# Workflow Analysis/)
-  assert.match(md, /风险分/)
+  assert.match(md, /入口风险/)
   assert.match(md, /## 调用结构/)
   assert.match(md, /## 发现的问题/)
   assert.match(md, /## 优化建议/)

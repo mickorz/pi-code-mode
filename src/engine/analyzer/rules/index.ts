@@ -269,19 +269,34 @@ export const retryCost: AnalyzerRule = {
   severity: "low",
   description: "retries 放大失败场景下的调用量与 token 消耗",
   analyze(ctx) {
-    const retries = [...ctx.source.matchAll(/retries\s*:\s*(\d+)/g)].map((m) => Number(m[1]))
-    if (retries.length === 0) return []
-    const max = Math.max(...retries)
-    if (max < 2) return []
+    // location 必须指向**实际 retries>=2 的那一行**，不能沿用「首个 agent 调用」。
+    // 实测：1-scan-template.js 的 retries: 2 在 L184，但首个 agent 在 L101，
+    // 导致 optimize 的片段窗口（L61-160）完全没覆盖到要改的代码，AI 只能拒绝生成补丁。
+    const all = [...ctx.source.matchAll(/retries\s*:\s*(\d+)/g)].map((m) => ({ value: Number(m[1]), index: m.index ?? 0 }))
+    if (all.length === 0) return []
+    const hits = all.filter((x) => x.value >= 2)
+    if (hits.length === 0) return []
+    const max = Math.max(...hits.map((h) => h.value))
+    const lineOfIndex = (idx: number): number => {
+      let line = 1
+      for (let i = 0; i < idx && i < ctx.source.length; i++) if (ctx.source[i] === "\n") line++
+      return line
+    }
+    const lines = hits.map((h) => lineOfIndex(h.index))
+    const startLine = Math.min(...lines)
+    const endLine = Math.max(...lines)
     const agentCalls = ctx.graph.counts.agent ?? 0
-    const first = ctx.ast.nodes.find((n) => n.kind === "agent")
     return [
       {
         ruleId: "RETRY-001",
         severity: "low" as const,
         confidence: 0.8,
-        location: { startLine: first?.startLine ?? 1, endLine: first?.endLine ?? 1 },
-        evidence: [`retries 最高 ${max} 次`, `agent 调用点 ${agentCalls} 个`, `失败场景最坏调用量 ≈ ${agentCalls * (max + 1)}`],
+        location: { startLine, endLine },
+        evidence: [
+          `retries 最高 ${max} 次（${hits.length} 处 ≥2，行 ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " …" : ""}）`,
+          `agent 调用点 ${agentCalls} 个`,
+          `失败场景最坏调用量 ≈ ${agentCalls * (max + 1)}`,
+        ],
         suggestion: "全量失败时重试会造成成倍 token 消耗，配合 M3 任务级恢复只重跑失败任务",
       },
     ]

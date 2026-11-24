@@ -13,6 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { runSubcommand } from "./run.js"
 import { resumeSubcommand } from "./resume.js"
 import { analyzeSubcommand, planSubcommand } from "./analyze.js"
+import { optimizeSubcommand } from "./optimize/index.js"
 import { listSubcommand } from "./list.js"
 import { statusSubcommand } from "./status.js"
 import { cancelSubcommand } from "./cancel.js"
@@ -30,6 +31,7 @@ const subcommands: Record<string, Subcommand> = {
   resume: resumeSubcommand,
   analyze: analyzeSubcommand,
   anal: analyzeSubcommand,
+  optimize: optimizeSubcommand,
   plan: planSubcommand,
   status: statusSubcommand,
   cancel: cancelSubcommand,

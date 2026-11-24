@@ -13,7 +13,14 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.extensions.json && node -e \"const fs=require('node:fs');fs.cpSync('src/engine/analyzer/dashboard/template.html','dist/engine/analyzer/dashboard/template.html');fs.cpSync('src/engine/analyzer/rules/definitions','dist/engine/analyzer/rules/definitions',{recursive:true})\"",
     "test:engine": "tsx --test tests/engine/*.test.ts",
-    "test:contract": "tsx --test tests/contract/*.test.ts"
+    "test:contract": "tsx --test tests/contract/*.test.ts",
+    "test:analyzer": "tsx --test tests/analyzer/*.test.ts",
+    "test:optimizer": "tsx --test tests/optimizer/*.test.ts",
+    "test:governance": "tsx --test tests/governance/*.test.ts",
+    "test:plan": "tsx --test tests/plan/*.test.ts",
+    "test:evaluator": "tsx --test tests/evaluator/*.test.ts",
+    "test:adaptive": "tsx --test tests/adaptive/*.test.ts",
+    "test": "npm run test:engine && npm run test:contract && npm run test:analyzer && npm run test:optimizer && npm run test:governance && npm run test:plan && npm run test:evaluator && npm run test:adaptive"
   },
   "pi": {
     "extensions": [

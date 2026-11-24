@@ -15,7 +15,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import type { AnalysisReport } from "../report-builder.js"
+import { clusterFindings, describeConfidence, type AnalysisReport } from "../report-builder.js"
 
 /** Dashboard 视图模型：模板 __REPORT_JSON__ 的唯一内容 */
 export interface DashboardView {
@@ -34,6 +34,8 @@ export interface DashboardView {
     entryFindings?: number
     /** 聚合风险分（取最危险单文件） */
     aggregateRiskScore?: number
+    /** 入口文件自身风险分（跨文件分析时与聚合风险区分） */
+    entryRiskScore?: number
   }
   estimate: {
     callSites: number
@@ -58,9 +60,44 @@ export interface DashboardView {
     /** AI 复核结论（未启用时缺省） */
     aiStatus?: string
     aiConfidence?: number
+    /** AI 置信度的人话标签 */
+    aiConfLabel?: string
     finalStatus?: string
     note?: string
   }>
+  /**
+   * optimize 专属数据（仅当本 dashboard 由 /workflows optimize 生成时存在）。
+   * 设计意图：optimize 报告 = 完整分析（5 个 Tab）+ 优化 Tab，
+   * 而不是另做一个只含优化信息的精简页面。
+   */
+  optimize?: {
+    id: string
+    status: string
+    target: string
+    beforeFindings: number
+    afterFindings: number
+    aiMs: number
+    files: Array<{ path: string; edits: number }>
+    clusters: Array<{ ruleId: string; count: number; severity: string; confidence: number; status: string; reason?: string }>
+    hunks: Array<{
+      path: string
+      startLine: number
+      endLine: number
+      oldLines: string[]
+      newLines: string[]
+      contextBefore: string[]
+      contextAfter: string[]
+      rationale: string
+    }>
+    patchReview?: { decision: string; findings: Array<{ severity: string; file: string; reason: string; evidence: string }> }
+    blockers: string[]
+    /**
+     * 下一步要执行的命令（按状态生成，可直接复制）。
+     * 必要性：用户看到「待验证」不知道怎么继续 —— blockers 里那句
+     * 「加 --benchmark --args」太抽象，需要带具体 id/target 的完整命令。
+     */
+    nextStep?: string
+  }
   /** AI Rule Check 摘要（状态、耗时、诊断） */
   aiRuleCheck?: {
     status: "completed" | "partial" | "failed" | "skipped"
@@ -85,6 +122,23 @@ export interface DashboardView {
     evidence: string[]
     snippet?: string
     suggestion?: string
+  }>
+  /** 问题簇：与 Markdown 共用同一份合并结果（避免两处漂移） */
+  clusters: Array<{
+    key: string
+    ruleId: string
+    severity: string
+    count: number
+    files: string[]
+    locations: string[]
+    moreLocations: number
+    evidence: string[]
+    confidence: number
+    /** 人话标签：确定 / 很可能 / 待确认 / 仅提示 */
+    confLabel: string
+    confHint: string
+    suggestion?: string
+    snippet?: string
   }>
   recommendations: Array<{
     id: string
@@ -127,6 +181,7 @@ export function buildDashboardView(
       ...(opts.aiSummary ? { aiSummary: opts.aiSummary } : {}),
       ...(report.entry ? { entryFindings: report.entry.totalFindings } : {}),
       ...(report.aggregateRiskScore !== undefined ? { aggregateRiskScore: report.aggregateRiskScore } : {}),
+      entryRiskScore: report.summary.riskScore,
     },
     estimate: {
       callSites: report.executionEstimate.callSites,
@@ -151,7 +206,9 @@ export function buildDashboardView(
         status: r.status,
         ...(r.error ? { error: r.error } : {}),
         ...(merged?.aiStatus ? { aiStatus: merged.aiStatus } : {}),
-        ...(merged?.aiConfidence !== undefined ? { aiConfidence: merged.aiConfidence } : {}),
+        ...(merged?.aiConfidence !== undefined
+          ? { aiConfidence: merged.aiConfidence, aiConfLabel: describeConfidence(merged.aiConfidence).label }
+          : {}),
         ...(merged?.finalStatus ? { finalStatus: merged.finalStatus } : {}),
         ...(merged?.note ? { note: merged.note } : {}),
       }
@@ -176,6 +233,21 @@ export function buildDashboardView(
       qualityRisk: r.qualityRisk,
       validation: r.validation,
       ...(r.source ? { source: r.source } : {}),
+    })),
+    clusters: (report.clusters ?? clusterFindings(report.findings)).map((c) => ({
+      key: c.key,
+      ruleId: c.ruleId,
+      severity: c.severity,
+      count: c.count,
+      files: c.files,
+      locations: c.locations,
+      moreLocations: c.moreLocations,
+      evidence: c.evidence,
+      confidence: c.confidence,
+      confLabel: describeConfidence(c.confidence).label,
+      confHint: describeConfidence(c.confidence).hint,
+      ...(c.suggestion ? { suggestion: c.suggestion } : {}),
+      ...(c.snippet ? { snippet: c.snippet } : {}),
     })),
     unknowns: report.dependencies.unknowns.map((u) => ({ line: u.line, id: u.id, reason: u.reason })),
     diagnostics: report.diagnostics,

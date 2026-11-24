@@ -62,6 +62,10 @@ await phase('查证', async () => { /* ... */ })
 
 - `phase(` 用正则计数，写在注释里也算（可能漏报）
 - 任务量是**估算**：`estimateTaskCount` 只用单层循环上界，嵌套循环会低估
+- **动态分片不计入规模**（实测确认）：`parallel(parts.map(...))` 里 parts 来自运行时，
+  `estimateTaskCount` 只把该 agent 记为 1，所以 48 个分片会被当成 1 个任务 → `total < 20` → 本条**漏报**。
+  这类场景的墙钟风险由 `CONC-002` 提示（分片数静态不可知，需人工确认三件事），
+  信息不丢失，但不要指望 REC-001 给出结论。
 - 不检查是否真的启用了 TaskCheckpoint（有 phase 但没开 checkpoint 时恢复能力仍受限）
 
 ## 验收口径

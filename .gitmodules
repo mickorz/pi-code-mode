@@ -69,3 +69,23 @@
 	path = thirdparties/PrdGameSkill
 	url = https://github.com/mickorz/PrdGameSkill.git
 	branch = main
+[submodule "thirdparties/open-vibecoding"]
+	path = thirdparties/open-vibecoding
+	url = https://github.com/mileson/open-vibecoding.git
+	branch = main
+[submodule "thirdparties/pi-superagent"]
+	path = thirdparties/pi-superagent
+	url = https://github.com/aicodewith-team/pi-superagent.git
+	branch = main
+[submodule "thirdparties/pi-percy"]
+	path = thirdparties/pi-percy
+	url = https://github.com/ghoseb/pi-percy.git
+	branch = main
+[submodule "thirdparties/linger"]
+	path = thirdparties/linger
+	url = https://github.com/simplexai-labs/linger.git
+	branch = main
+[submodule "thirdparties/PiBot"]
+	path = thirdparties/PiBot
+	url = https://github.com/w01fb0ss/PiBot.git
+	branch = main

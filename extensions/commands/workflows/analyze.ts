@@ -179,7 +179,7 @@ ${ref}`, "info")
     // AI Rule Check / AI 建议都在第二阶段执行：静态结果先出（百毫秒级），
     // 否则用户要等 4~6 分钟才看到任何东西（实测 9 条规则 AI 复核约 5 分钟）。
     const withRuleCheck = !flags.has("--no-rule-check")
-    // 模型选择：--model 显式指定 > --tier 档位 > model-tiers 的 fast 档 > 会话默认
+    // 模型选择：--model 显式指定 > --tier 档位 > 分析默认 big（2026-11-20 用户决策：分析用强模型）> 会话默认
     // 实测：fast 档（非 reasoning）比会话默认的 reasoning 模型快 7 倍且结论相当
     const argOf = (name: string): string | undefined => {
       const i = argv.indexOf(name)
@@ -254,9 +254,9 @@ ${ref}`, "info")
           ...(ref.startsWith("registry:") ? {} : resolved.dirPath ? { dirPath: resolved.dirPath } : { scriptPath: resolved.filePath ?? ref }),
           cwd,
           includeSuggestions: withSuggestions,
-          ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd, ...modelOpts }) } : {}),
+          ...(withSuggestions ? { plannerAgent: createPlannerAgent({ cwd, tier: "big", ...modelOpts }) } : {}),
           includeRuleCheck: withRuleCheck,
-          ...(withRuleCheck ? { ruleCheckAgent: createPlannerAgent({ cwd, ...modelOpts }) } : {}),
+          ...(withRuleCheck ? { ruleCheckAgent: createPlannerAgent({ cwd, tier: "big", ...modelOpts }) } : {}),
           ...(flags.has("--ai-rules-all") ? { aiRules: "all" as const } : {}),
           format: "md",
         })

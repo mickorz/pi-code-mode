@@ -164,19 +164,189 @@ export function validatePlannerOutput(raw: unknown): { ok: boolean; errors: stri
 
 /** 从模型原始文本中提取 JSON 块并校验（容忍 ```json 围栏与前后解释文字） */
 export function parsePlannerResponse(text: string): { ok: boolean; errors: string[]; output?: PlannerOutput } {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
-  const candidate = fenced ? fenced[1]! : text
-  const first = candidate.indexOf("{")
-  const last = candidate.lastIndexOf("}")
-  if (first === -1 || last <= first) return { ok: false, errors: ["响应中未找到 JSON 对象"] }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(candidate.slice(first, last + 1))
-  } catch (e) {
-    return { ok: false, errors: [`JSON 解析失败：${String((e as Error)?.message ?? e)}`] }
+  const lenient = lenientJsonParse(text)
+  if (!lenient.ok || lenient.value === undefined) return { ok: false, errors: lenient.errors }
+  const result = validatePlannerOutput(lenient.value)
+  if (result.ok) {
+    // 抢救模式丢了个别 proposal：把信息带出去便于调用方记录（不阻断）
+    return lenient.tier === 3 && lenient.errors.length > 0
+      ? { ...result, errors: [...result.errors, ...lenient.errors] }
+      : result
   }
-  return validatePlannerOutput(parsed)
+
+  // 校验失败 → 再试一次逐项抢救。
+  // 关键场景：截断在第二个 proposal 里，tier2 能修出语法合法的 JSON，
+  // 但第二个对象字段不全 → 整体校验拒绝。此时应丢掉残缺那条、保住前面完整的。
+  const first = text.indexOf("{")
+  if (first >= 0) {
+    const salvaged = salvageProposals(text.slice(first))
+    if (salvaged) {
+      const retry = validatePlannerOutput(salvaged.value)
+      if (retry.ok) return { ...retry, errors: [...retry.errors, ...salvaged.errors] }
+    }
+  }
+  return result
 }
+
+/**
+ * 容错 JSON 解析（实测需求：模型输出在 position 722 截断，严格 JSON.parse 一次失败
+ * 就把整条 AI 建议丢弃，导致 Planner 建议随机消失）。
+ *
+ * 三级降级，每级都只接受**校验得通**的结果：
+ *  ① 直接 parse
+ *  ② 截断修复：补齐未闭合的字符串与括号后 parse
+ *  ③ 逐项抢救：从 proposals 数组里逐个抠完整对象，能救几条是几条
+ */
+export function lenientJsonParse(text: string): { ok: boolean; value?: unknown; tier?: 1 | 2 | 3; errors: string[] } {
+  const first = text.indexOf("{")
+  if (first === -1) return { ok: false, errors: ["响应中未找到 JSON 对象"] }
+  const body = text.slice(first)
+
+  // ① 严格解析（用 lastIndexOf("}") 修剪尾部解释文字）
+  const last = body.lastIndexOf("}")
+  if (last > 0) {
+    try {
+      return { ok: true, value: JSON.parse(body.slice(0, last + 1)), tier: 1, errors: [] }
+    } catch {
+      /* 落到下一级 */
+    }
+  }
+
+  // ② 截断修复
+  const repaired = repairTruncatedJson(body)
+  if (repaired) {
+    try {
+      return { ok: true, value: JSON.parse(repaired), tier: 2, errors: [] }
+    } catch {
+      /* 落到下一级 */
+    }
+  }
+
+  // ③ 逐项抢救
+  const salvaged = salvageProposals(body)
+  if (salvaged) return { ok: true, value: salvaged.value, tier: 3, errors: salvaged.errors }
+  return { ok: false, errors: ["JSON 解析失败，且无法截断修复或逐项抢救"] }
+}
+
+/** 补齐未闭合的字符串与括号（扫描时正确处理转义与字符串内的括号） */
+export function repairTruncatedJson(src: string): string | undefined {
+  const stack: string[] = []
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === BACKSLASH) escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === "{" || ch === "[") stack.push(ch)
+    else if (ch === "}" || ch === "]") {
+      const open = ch === "}" ? "{" : "["
+      if (stack[stack.length - 1] === open) stack.pop()
+      else return undefined // 括号不匹配，放弃修复
+    }
+  }
+  // 构造闭合序列：先关字符串，再按栈逆序关括号
+  let trimmed = src
+  if (!inString) {
+    // 不在字符串里 = 截断在结构位置。先削掉末尾残缺的逗号，
+    // 再削掉残缺的 key（`,"key"` / `,"key":` / `,"key": `）——
+    // 实测截断在 key 后面时，直接补括号会得到 `..."dependencyAnalysis"}]}`，仍然非法。
+    trimmed = trimmed.replace(/,[ \t\r\n]*$/, "")
+    trimmed = trimmed.replace(/,\s*"[^"]*"\s*:?\s*$/, "")
+    // 截断发生在第一个键之前（`{` 后直接断）时，删到空对象
+    if (/^\{\s*$/.test(trimmed)) return "{}"
+    if (/^\{\s*"[^"]*"\s*:?\s*$/.test(trimmed)) return "{}"
+  }
+  let closing = inString ? '"' : ""
+  for (let i = stack.length - 1; i >= 0; i--) closing += stack[i] === "{" ? "}" : "]"
+  if (!closing) return undefined
+  return trimmed + closing
+}
+
+/** 从 proposals 数组里逐个抠完整对象，丢掉被截断的那个 */
+export function salvageProposals(src: string): { value: unknown; errors: string[] } | undefined {
+  const keyAt = src.indexOf('"proposals"')
+  if (keyAt === -1) return undefined
+  const arrStart = src.indexOf("[", keyAt)
+  if (arrStart === -1) return undefined
+
+  const objects: string[] = []
+  let depth = 0
+  let objStart = -1
+  let inString = false
+  let escaped = false
+  for (let i = arrStart + 1; i < src.length; i++) {
+    const ch = src[i]!
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === BACKSLASH) escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === "{") {
+      if (depth === 0) objStart = i
+      depth++
+    } else if (ch === "}") {
+      depth--
+      if (depth === 0 && objStart >= 0) {
+        objects.push(src.slice(objStart, i + 1))
+        objStart = -1
+      }
+    }
+  }
+
+  const proposals: unknown[] = []
+  const errors: string[] = []
+  for (const [i, obj] of objects.entries()) {
+    try {
+      proposals.push(JSON.parse(obj))
+    } catch (e) {
+      errors.push(`proposals[${i}] 不可解析（已丢弃）：${String((e as Error)?.message ?? e)}`)
+    }
+  }
+  if (proposals.length === 0) return undefined
+  // analysisSummary 尽力提取；截断时拿不到就给空串（校验层只要求是 string）
+  return { value: { analysisSummary: extractAnalysisSummary(src), proposals }, errors }
+}
+
+/** 从残缺 JSON 里提取 analysisSummary（失败返回空串） */
+function extractAnalysisSummary(src: string): string {
+  const keyAt = src.indexOf('"analysisSummary"')
+  if (keyAt === -1) return ""
+  const colon = src.indexOf(":", keyAt)
+  if (colon === -1) return ""
+  let i = colon + 1
+  while (i < src.length && /\s/.test(src[i]!)) i++
+  if (src[i] !== '"') return ""
+  i++
+  let out = ""
+  while (i < src.length) {
+    const ch = src[i]!
+    if (ch === BACKSLASH) {
+      out += src[i + 1] ?? ""
+      i += 2
+      continue
+    }
+    if (ch === '"') break
+    out += ch
+    i++
+  }
+  return out
+}
+
+/** 反斜杠字面量（避免正则里成串的反斜杠转义） */
+const BACKSLASH = "\\"
 
 /** 把静态建议与 AI 建议合并（静态建议始终保留，AI 建议去重叠加） */
 export function mergeRecommendations(staticRecs: Recommendation[], ai: PlannerOutput | undefined): Recommendation[] {
