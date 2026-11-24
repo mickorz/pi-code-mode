@@ -28,7 +28,7 @@
 | REF-020 | pi-superagent | https://github.com/aicodewith-team/pi-superagent.git | thirdparties/pi-superagent | fd939379f728cb203bc04a098b59d0309d119ea6 | MIT | 方法论参考：DeepSeek dsh-superagent-prototype 的 pi 扩展移植（主动式单仓库编码 agent + 独立 subagent 模式、最小人工注意力原则）；只读研究，集成前再评估 | 2026-11-19 引入。主动式 agent 触发/发言策略与 subagent 会话形态与本包 workflow 编排/子代理方向对照 |
 | REF-021 | pi-percy | https://github.com/ghoseb/pi-percy.git | thirdparties/pi-percy | a67c3a2340e3e19a46322f4127cf89ef2bd4dee8 | MIT | 方法论参考：pi 上下文自压缩扩展（旧 tool output 替换为指针、旧消息段替换为摘要、recall 检索回读，永久 session 条目）；只读研究，集成前再评估 | 2026-11-19 引入。长会话上下文治理（compaction/recall）与本包 workflow 观测/上下文管理方向对照 |
 | REF-022 | linger | https://github.com/simplexai-labs/linger.git | thirdparties/linger | 436a24b53d6b978d82d6a3e457eaa5bf5d89fe91 | 修改版 Apache-2.0（附加托管服务限制与前端 LOGO/版权信息保留条款） | 架构参考：开源个人 Agent（本地运行，pnpm monorepo：apps/packages/contracts/e2e 分层）；只读研究，禁止复制其前端代码，集成前再评估 | 2026-11-20 引入。个人 Agent 产品架构（会话/技能/集成组织）与本地 AI 运行形态对照 |
-| REF-023 | PiBot | https://github.com/w01fb0ss/PiBot.git | thirdparties/PiBot | 008198f0b6507419684dc98a46f2834af6ac40b5 | Apache-2.0 | 架构参考：本地优先桌面多 Agent 团队应用（命名 Bot 单聊/群聊、规划/命令/文件/浏览器、风险步骤审批门禁，基于 pi agent kernel）；只读研究，集成前再评估 | 2026-11-22 引入。多 Bot 协作与审批门禁形态与本包 workflow 编排/子代理方向对照（pi 内核衍生生态） |
+| REF-023 | PiBot | https://github.com/w01fb0ss/PiBot.git | thirdparties/PiBot | 86a79674de1da9bceea20e60a544af391321e496 | Apache-2.0 | 架构参考：本地优先桌面多 Agent 团队应用（命名 Bot 单聊/群聊、规划/命令/文件/浏览器、风险步骤审批门禁，基于 pi agent kernel）；只读研究，集成前再评估 | 2026-11-22 引入。多 Bot 协作与审批门禁形态与本包 workflow 编排/子代理方向对照（pi 内核衍生生态） |
 
 ## Submodule 引入与登记流程
 
