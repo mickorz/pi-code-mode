@@ -268,7 +268,12 @@ async function runOptimizeBody(
           workspaceDir: open.workspace.path,
           sessionDir: op.dir,
         })
-        if (!r) return
+        if (!r) {
+          return notify(`[验证未执行] ${open.id}：benchmarkSession 未返回结果（未知原因）`, "warning")
+        }
+        if (r.error) {
+          return notify(`[验证未执行] ${open.id}\n${r.error}`, "warning")
+        }
         const nextStatus = r.accepted ? "ready" : "rejected"
         updateSession(cwd, open.id, {
           status: nextStatus,
@@ -878,17 +883,25 @@ async function benchmarkSession(input: {
   entryName: string
   workspaceDir: string
   sessionDir: string
-}): Promise<{ accepted: boolean; quality: "pass" | "fail" | "unavailable"; text: string } | undefined> {
+}): Promise<{ accepted: boolean; quality: "pass" | "fail" | "unavailable"; text: string; error?: string } | undefined> {
   const { sessionId, argv, ctx, deps, productionRoot, entryName, workspaceDir, sessionDir } = input
   const argsRaw = flagValue(argv, "--args")
+
+  // 硬前置：多数 workflow 的入口参数是必填（如 runDir / date），
+  // 缺了会让 before/after 都手抛错——提前说清楚，别让用户看一堆 workflow 堆栈。
+  if (!argsRaw) {
+    const msg = "缺少 --args：真实 Benchmark 需要入口参数（如 runDir / date），否则 workflow 直接报必填错误。\n 示例：--args '{\"runDir\":\"spec-workflow/bench\"}'"
+    updateSession(path.dirname(path.dirname(sessionDir)), sessionId, { status: "failed", reason: msg })
+    return { accepted: false, quality: "unavailable", text: msg, error: msg }
+  }
   let benchArgs: Record<string, unknown> = {}
   if (argsRaw) {
     try {
       benchArgs = JSON.parse(argsRaw)
-    } catch {
-      updateSession(path.dirname(path.dirname(sessionDir)), sessionId, { status: "failed", reason: "--args 不是合法 JSON，benchmark 未执行" })
-      ctx.ui.notify(`--args 不是合法 JSON：${argsRaw}`, "warning")
-      return undefined
+    } catch (e) {
+      const msg = `--args 不是合法 JSON：${argsRaw}\n（${String((e as Error)?.message ?? e)}）\n注意：shell 会吃引号，建议外层单引号、内层双引号：--args '{\"runDir\":\"x\"}'`
+      updateSession(path.dirname(path.dirname(sessionDir)), sessionId, { status: "failed", reason: msg })
+      return { accepted: false, quality: "unavailable", text: msg, error: msg }
     }
   }
   const verifierCmd = flagValue(argv, "--verify-cmd")
@@ -930,16 +943,14 @@ async function benchmarkSession(input: {
     }
   }
 
-  ctx.ui.notify(
+  // 后台模式下不碰 TUI（ctx.ui 可能已失效）；仅作日志，摘要由调用方 deliver
+  console.log(
     [
-      "运行真实 Benchmark：",
-      `  before：生产目录 ${productionRoot}（**会在真实目录执行一次 workflow**）`,
+      "[optimize] 运行真实 Benchmark：",
+      `  before：生产目录 ${productionRoot}（会在真实目录执行一次 workflow）`,
       `  after ：隔离工作区 ${workspaceDir}`,
       `  args  ：${JSON.stringify(benchArgs)}`,
-      "",
-      "注意：若该 workflow 会写产物/调用外部服务，before 轮会在生产目录重复发生一次。",
     ].join("\n"),
-    "info",
   )
   const verdict = await runRealBenchmark({
     scriptPath: path.join(productionRoot, entryName),
