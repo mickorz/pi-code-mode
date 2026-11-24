@@ -14,7 +14,13 @@ import path from "node:path"
 import { analyzeWorkflow, createPlannerAgent, resolveTierModel } from "../../../../src/tools/workflow-analyze-tool.js"
 import { loadRuleDocs } from "../../../../src/engine/analyzer/ai-rule-checker/rule-doc-loader.js"
 import { condenseRuleDoc } from "../../../../src/engine/analyzer/ai-rule-checker/prompt-builder.js"
-import { writeDashboard } from "../../../../src/engine/analyzer/dashboard/build-dashboard.js"
+import {
+  buildDashboardView,
+  renderDashboardHtml,
+  writeDashboard,
+  type DashboardView,
+} from "../../../../src/engine/analyzer/dashboard/build-dashboard.js"
+import type { AnalysisReport } from "../../../../src/engine/analyzer/report-builder.js"
 import { generatePatchSet } from "../../../../src/engine/optimizer/patch-generator.js"
 import { reviewPatch } from "../../../../src/engine/optimizer/patch-reviewer.js"
 import { applyPatchSet, validatePatchSet } from "../../../../src/engine/optimizer/patch-validator.js"
@@ -741,6 +747,26 @@ async function runOptimizeBody(
     after: fs.readFileSync(path.join(p.workspace, f.path), "utf8"),
   }))
 
+  /**
+   * 按 edit 行号构造 hunk（每处 ±2 行上下文）。
+   * 不用通用 diff：我们已知每处 edit 的位置，精确渲染比 LCS 近似更可信。
+   */
+  const CP = 2
+  const hunks = validation.normalized.files.flatMap((f) => {
+    const beforeContent = resolved.sources.find((s) => toRelKey(s.file) === f.path)?.content ?? ""
+    const lines = beforeContent.split("\n")
+    return f.edits.map((e) => ({
+      path: f.path,
+      startLine: e.startLine,
+      endLine: e.endLine,
+      oldLines: lines.slice(e.startLine - 1, e.endLine),
+      newLines: e.newText.split("\n"),
+      contextBefore: lines.slice(Math.max(0, e.startLine - 1 - CP), e.startLine - 1),
+      contextAfter: lines.slice(e.endLine, Math.min(lines.length, e.endLine + CP)),
+      rationale: e.rationale,
+    }))
+  })
+
   let patchReview: PatchReview | undefined
   try {
     stage(5, 6, "补丁审查（fast 档）")
@@ -870,18 +896,33 @@ async function runOptimizeBody(
   try {
     reportPath = writeOptimizeReport({
       dir: p.dir,
-      id,
-      status: finalStatus,
-      target: ref,
-      clusters: selected.map((c) => ({ ruleId: c.ruleId, count: c.count, severity: c.severity, confidence: c.confidence })),
-      files: validation.normalized.files.map((f) => ({ path: f.path, edits: f.edits.length })),
-      diffs: diffs.map((d) => ({ path: d.path, diff: d.diff })),
-      patchReview,
-      findingsBefore: before.report.summary.totalFindings,
-      findingsAfter: afterFindings,
-      targetResolved,
-      blockers,
-      timings,
+      // 复用 after 的完整分析结果：optimize 报告必须是「完整分析 + 优化 Tab」，
+      // 不能只给优化信息——否则比 anal 的 dashboard 少掉规则清单/问题列表/子流程明细。
+      report: afterReport.ok && afterReport.report ? afterReport.report : before.report,
+      aiEnabled: true,
+      optimize: {
+        id,
+        status: finalStatus,
+        target: ref,
+        beforeFindings: before.report.summary.totalFindings,
+        afterFindings,
+        aiMs: timings.aiMs,
+        files: validation.normalized.files.map((f) => ({ path: f.path, edits: f.edits.length })),
+        clusters: selected.map((c) => {
+          const oc = clusterOutcome.find((o) => o.ruleId === c.ruleId)
+          return {
+            ruleId: c.ruleId,
+            count: c.count,
+            severity: c.severity,
+            confidence: c.confidence,
+            status: oc?.status ?? "skipped",
+            ...(oc?.reason ? { reason: oc.reason } : {}),
+          }
+        }),
+        hunks,
+        ...(patchReview ? { patchReview } : {}),
+        blockers,
+      },
     })
   } catch {
     reportPath = undefined
@@ -1264,9 +1305,8 @@ async function runRollback(argv: string[], ctx: any, deps: any): Promise<void> {
 /**
  * 从任意目录向上找项目根：含 .opencode-workflows / templates / package.json 的目录。
  *
- * 为什么需要：workflow 脚本里的相对路径（如 templatePath 默认 templates/...）
- * 是相对**项目根**解析的。benchmark 若用 target 目录当 cwd，
- * 依赖项目根的 workflow 会直接跑不起来（实测 1-scan-template.js）。
+ * workflow 里的相对路径（如 templatePath 默认 templates/...）是相对**项目根**解析的，
+ * 用 target 目录当 cwd 会让依赖项目根的 workflow 直接跑不起来。
  */
 function findProjectRoot(fromDir: string): string {
   let dir = path.resolve(fromDir)
@@ -1285,129 +1325,25 @@ function findProjectRoot(fromDir: string): string {
   return path.resolve(fromDir)
 }
 
+/**
+ * 生成 optimize 的 HTML 报告 = **完整分析 Dashboard + 优化 Tab**。
+ *
+ * 为什么不是精简版：optimize 跑完本来就是完整分析（afterReport），
+ * 另做一个只含补丁/diff 的页面会丢掉规则清单、问题列表、子 workflow 明细、AI 建议 ——
+ * 用户看 optimize 报告时就没法复核「这些问题是不是真的」。
+ */
 function writeOptimizeReport(input: {
   dir: string
-  id: string
-  status: string
-  target: string
-  clusters: Array<{ ruleId: string; count: number; severity: string; confidence: number }>
-  files: Array<{ path: string; edits: number }>
-  diffs: Array<{ path: string; diff: string }>
-  patchReview?: PatchReview
-  findingsBefore: number
-  findingsAfter: number
-  targetResolved: boolean
-  blockers: string[]
-  timings: { staticMs: number; aiMs: number }
+  report: AnalysisReport
+  aiEnabled?: boolean
+  optimize: NonNullable<DashboardView["optimize"]>
 }): string {
-  const esc = (s: unknown) =>
-    String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-
-  const SEV_COLOR: Record<string, string> = { critical: "#DC5148", high: "#E8A044", medium: "#4389D5", low: "#94A3B8" }
-  const ok = input.status === "ready" || input.status === "benchmark-pending"
-
-  // diff 着色：+ 绿 / - 红 / @@ 蓝
-  const renderDiff = (diff: string) =>
-    diff
-      .split("\n")
-      .map((line) => {
-        const e = esc(line)
-        if (line.startsWith("+") && !line.startsWith("+++")) return `<span class="add">${e}</span>`
-        if (line.startsWith("-") && !line.startsWith("---")) return `<span class="del">${e}</span>`
-        if (line.startsWith("@@")) return `<span class="hunk">${e}</span>`
-        if (line.startsWith("---") || line.startsWith("+++")) return `<span class="file">${e}</span>`
-        return e
-      })
-      .join("\n")
-
-  const clusterRows = input.clusters
-    .map(
-      (c) =>
-        `<tr><td><code>${esc(c.ruleId)}</code></td><td><span class="ptag" style="background:${SEV_COLOR[c.severity] ?? "#94A3B8"}">${esc(c.severity)}</span></td><td>${c.count}</td><td>${c.confidence.toFixed(2)}</td></tr>`,
-    )
-    .join("")
-
-  const fileRows = input.files.map((f) => `<tr><td><code>${esc(f.path)}</code></td><td>${f.edits} 处</td></tr>`).join("")
-
-  const reviewFindings = (input.patchReview?.findings ?? [])
-    .map(
-      (f) =>
-        `<li><b class="${f.severity}">${esc(f.severity)}</b> <code>${esc(f.file)}</code>：${esc(f.reason)}${
-          f.evidence ? `<div class="ev">${esc(f.evidence.slice(0, 300))}</div>` : ""
-        }</li>`,
-    )
-    .join("")
-
-  const html = `<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Optimize 报告 ${esc(input.id)}</title>
-<style>
-  :root{--bg:#F6F8FB;--card:#fff;--primary:#3478DB;--text:#253247;--muted:#8491A3;--border:#E7ECF2;--radius:12px}
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;font-size:14px;line-height:1.6}
-  .page{max-width:1200px;margin:0 auto;padding:24px 32px 64px}
-  h1{font-size:22px;font-weight:700;margin-bottom:6px}
-  .sub{font-size:13px;color:var(--muted);margin-bottom:20px;word-break:break-all}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:18px}
-  .card h2{font-size:15px;font-weight:600;margin-bottom:14px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:18px}
-  .kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px}
-  .kpi .v{font-size:28px;font-weight:700;line-height:1.2}
-  .kpi .l{font-size:12.5px;color:var(--muted);margin-top:2px}
-  .kpi .v.ok{color:#2F9E5B}.kpi .v.warn{color:#C07A00}.kpi .v.bad{color:#DC5148}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;font-size:12px;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border)}
-  td{padding:9px 10px;border-bottom:1px solid #F0F3F7}
-  code{font-family:"SF Mono",Consolas,monospace;font-size:12.5px;background:#EEF1F5;padding:1px 6px;border-radius:4px}
-  .ptag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:4px;color:#fff}
-  pre{white-space:pre-wrap;word-break:break-word;font-family:"SF Mono",Consolas,monospace;font-size:12.5px;
-      background:#0F172A;color:#E2E8F0;border-radius:8px;padding:14px;margin:8px 0;overflow-x:auto}
-  pre .add{color:#4ADE80}pre .del{color:#F87171}pre .hunk{color:#60A5FA}pre .file{color:#94A3B8}
-  ul{padding-left:20px}li{margin:5px 0}
-  .note{border-left:3px solid var(--primary);background:#F6F9FE;border-radius:0 8px 8px 0;padding:12px 16px;font-size:13px;color:#34455C;margin-bottom:14px}
-  .ev{color:var(--muted);font-size:12px;margin-top:3px;white-space:pre-wrap}
-  .sev-high{color:#DC5148}.sev-medium{color:#E8A044}.sev-low{color:#8491A3}
-  .muted{color:var(--muted)}
-</style></head><body><div class="page">
-  <h1>Optimize 报告</h1>
-  <div class="sub">${esc(input.id)} · 状态 <b>${esc(input.status)}</b> · ${esc(input.target)}</div>
-
-  <div class="kpis">
-    <div class="kpi"><div class="v ${ok ? "ok" : "warn"}">${esc(input.status)}</div><div class="l">候选状态</div></div>
-    <div class="kpi"><div class="v">${input.files.length}</div><div class="l">修改文件</div></div>
-    <div class="kpi"><div class="v">${input.files.reduce((n, f) => n + f.edits, 0)}</div><div class="l">补丁处数</div></div>
-    <div class="kpi"><div class="v">${input.findingsBefore} → ${input.findingsAfter}</div><div class="l">静态问题数${input.targetResolved ? "（目标已解决）" : ""}</div></div>
-    <div class="kpi"><div class="v">${Math.round(input.timings.aiMs / 1000)}s</div><div class="l">AI 复核耗时</div></div>
-  </div>
-
-  <div class="note">原文件未做任何修改。改造需通过 <code>optimize apply</code>，此前必须完成真实 Benchmark 与质量门。</div>
-
-  <div class="card"><h2>修改的文件</h2>
-    <table><thead><tr><th>文件</th><th>改动</th></tr></thead><tbody>${fileRows || '<tr><td colspan="2" class="muted">（没有生成补丁）</td></tr>'}</tbody></table>
-  </div>
-
-  <div class="card"><h2>问题簇</h2>
-    <table><thead><tr><th>规则</th><th>严重度</th><th>处数</th><th>置信度</th></tr></thead><tbody>${clusterRows}</tbody></table>
-  </div>
-
-  ${input.diffs.length ? `<div class="card"><h2>代码差异</h2>${input.diffs.map((d) => `<div class="muted" style="margin:10px 0 4px">${esc(d.path)}</div><pre>${renderDiff(d.diff)}</pre>`).join("")}</div>` : ""}
-
-  ${
-    input.patchReview
-      ? `<div class="card"><h2>补丁审查：${esc(input.patchReview.decision)}</h2>${
-          reviewFindings ? `<ul>${reviewFindings}</ul>` : '<div class="muted">未发现问题。</div>'
-        }</div>`
-      : ""
-  }
-
-  <div class="card"><h2>结论</h2><ul>${input.blockers.map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>
-</div></body></html>`
-
+  const view = buildDashboardView(input.report, { ...(input.aiEnabled !== undefined ? { aiEnabled: input.aiEnabled } : {}) })
+  view.optimize = input.optimize
+  // aiEnabled 在 optimize 场景恒为 true（分析阶段跑过 AI 复核）
+  view.meta.aiEnabled = true
   const file = path.join(input.dir, "optimize-report.html")
-  fs.writeFileSync(file, html, "utf8")
+  fs.writeFileSync(file, renderDashboardHtml(view), "utf8")
   return file
 }
 

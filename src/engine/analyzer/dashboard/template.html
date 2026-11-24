@@ -187,6 +187,7 @@
   <button data-v="issues">问题列表</button>
   <button data-v="subtree">子 Workflow</button>
   <button data-v="recs">建议与 AI</button>
+  <button data-v="optimize" id="tab-optimize" style="display:none">优化</button>
 </nav>
 <main>
   <section id="v-overview" class="active"></section>
@@ -194,6 +195,7 @@
   <section id="v-issues"></section>
   <section id="v-subtree"></section>
   <section id="v-recs"></section>
+  <section id="v-optimize"></section>
 </main>
 
 <script type="application/json" id="report-data">__REPORT_JSON__</script>
@@ -489,12 +491,90 @@
     el('v-recs').innerHTML = h;
   })();
 
+  // ---------- 优化 Tab（仅 /workflows optimize 生成时渲染） ----------
+  (function () {
+    var O = D.optimize;
+    if (!O) return;
+    var tab = document.getElementById('tab-optimize');
+    if (tab) tab.style.display = '';
+    var STAT = { ready: '可写回', 'benchmark-pending': '待验证', rejected: '已拒绝', applied: '已应用', analyzed: '需人工决策', failed: '失败' };
+    var CLS = { handled: 'pass', skipped: 'hit', 'needs-human': 'err' };
+
+    var h = '<div class="note">原文件未做任何修改。写回需 <code>optimize apply</code>，且必须先通过真实 Benchmark 与质量门。</div>';
+
+    // KPI
+    h += '<div class="kpis">' +
+      '<div class="kpi"><div class="v ' + (O.status === 'ready' ? 'c-ok' : O.status === 'rejected' ? 'c-high' : 'c-mid') + '">' + esc(STAT[O.status] || O.status) + '</div><div class="l">候选状态</div></div>' +
+      '<div class="kpi"><div class="v">' + O.files.length + '</div><div class="l">修改文件</div></div>' +
+      '<div class="kpi"><div class="v">' + O.files.reduce(function (n, f) { return n + f.edits; }, 0) + '</div><div class="l">补丁处数</div></div>' +
+      '<div class="kpi"><div class="v">' + O.beforeFindings + ' → ' + O.afterFindings + '</div><div class="l">静态问题数</div></div>' +
+      '<div class="kpi"><div class="v">' + (O.aiMs / 1000).toFixed(0) + 's</div><div class="l">AI 复核耗时</div></div>' +
+      '</div>';
+
+    // 问题簇处理情况
+    h += '<div class="card"><h2>问题簇处理情况（选中 ' + O.clusters.length + ' 个）</h2>' +
+      '<table><thead><tr><th>规则</th><th>严重度</th><th>处数</th><th>置信度</th><th>处理</th><th>说明</th></tr></thead><tbody>';
+    O.clusters.forEach(function (c) {
+      h += '<tr><td><code>' + esc(c.ruleId) + '</code></td><td>' + sevTag(c.severity) + '</td><td>' + c.count +
+        '</td><td>' + c.confidence.toFixed(2) + '</td><td>' + tag(CLS[c.status] || 'static', c.status) +
+        '</td><td>' + esc(c.reason || '-') + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+
+    // 修改的文件
+    h += '<div class="card"><h2>修改的文件</h2><table><thead><tr><th>文件</th><th>改动</th></tr></thead><tbody>';
+    O.files.forEach(function (f) { h += '<tr><td><code>' + esc(f.path) + '</code></td><td>' + f.edits + ' 处</td></tr>'; });
+    h += '</tbody></table></div>';
+
+    // 代码差异（按 hunk，精确到 edit 行号）
+    if (O.hunks.length) {
+      h += '<div class="card"><h2>代码差异（' + O.hunks.length + ' 处）</h2>';
+      O.hunks.forEach(function (hk) {
+        var lines = []
+          .concat(hk.contextBefore.map(function (l) { return ' ' + l; }))
+          .concat(hk.oldLines.map(function (l) { return '-' + l; }))
+          .concat(hk.newLines.map(function (l) { return '+' + l; }))
+          .concat(hk.contextAfter.map(function (l) { return ' ' + l; }));
+        var body = lines.map(function (line) {
+          var e = esc(line);
+          if (line.charAt(0) === '+') return '<span class="add">' + e + '</span>';
+          if (line.charAt(0) === '-') return '<span class="del">' + e + '</span>';
+          return e;
+        }).join('\n');
+        h += '<div class="muted" style="margin:12px 0 4px">' + esc(hk.path) + ' L' + hk.startLine + '-' + hk.endLine +
+          ' · ' + esc(hk.rationale) + '</div>' +
+          '<pre>@@ -' + hk.startLine + ',' + hk.oldLines.length + ' +' + hk.startLine + ',' + hk.newLines.length + ' @@\n' + body + '</pre>';
+      });
+      h += '</div>';
+    }
+
+    // 补丁审查
+    if (O.patchReview) {
+      h += '<div class="card"><h2>补丁审查：' + esc(O.patchReview.decision) + '</h2>';
+      if (!O.patchReview.findings.length) h += '<div class="muted">未发现问题。</div>';
+      else {
+        h += '<ul>';
+        O.patchReview.findings.forEach(function (f) {
+          h += '<li><b>' + esc(f.severity) + '</b> <code>' + esc(f.file) + '</code>：' + esc(f.reason) +
+            (f.evidence ? '<div class="muted" style="white-space:pre-wrap">' + esc(f.evidence.slice(0, 300)) + '</div>' : '') + '</li>';
+        });
+        h += '</ul>';
+      }
+      h += '</div>';
+    }
+
+    // 结论
+    h += '<div class="card"><h2>结论</h2><ul>' + O.blockers.map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('') + '</ul></div>';
+
+    el('v-optimize').innerHTML = h;
+  })();
+
   // ---------- Tab 切换 ----------
   function switchTab(v) {
     document.querySelectorAll('#tabs button').forEach(function (b) {
       b.classList.toggle('active', b.getAttribute('data-v') === v);
     });
-    ['overview', 'rules', 'issues', 'subtree', 'recs'].forEach(function (n) {
+    ['overview', 'rules', 'issues', 'subtree', 'recs', 'optimize'].forEach(function (n) {
       el('v-' + n).classList.toggle('active', n === v);
     });
   }

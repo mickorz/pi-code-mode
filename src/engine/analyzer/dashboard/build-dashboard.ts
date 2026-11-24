@@ -65,6 +65,33 @@ export interface DashboardView {
     finalStatus?: string
     note?: string
   }>
+  /**
+   * optimize 专属数据（仅当本 dashboard 由 /workflows optimize 生成时存在）。
+   * 设计意图：optimize 报告 = 完整分析（5 个 Tab）+ 优化 Tab，
+   * 而不是另做一个只含优化信息的精简页面。
+   */
+  optimize?: {
+    id: string
+    status: string
+    target: string
+    beforeFindings: number
+    afterFindings: number
+    aiMs: number
+    files: Array<{ path: string; edits: number }>
+    clusters: Array<{ ruleId: string; count: number; severity: string; confidence: number; status: string; reason?: string }>
+    hunks: Array<{
+      path: string
+      startLine: number
+      endLine: number
+      oldLines: string[]
+      newLines: string[]
+      contextBefore: string[]
+      contextAfter: string[]
+      rationale: string
+    }>
+    patchReview?: { decision: string; findings: Array<{ severity: string; file: string; reason: string; evidence: string }> }
+    blockers: string[]
+  }
   /** AI Rule Check 摘要（状态、耗时、诊断） */
   aiRuleCheck?: {
     status: "completed" | "partial" | "failed" | "skipped"
