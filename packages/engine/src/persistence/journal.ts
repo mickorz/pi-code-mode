@@ -45,6 +45,8 @@ export interface JournalRunMetadata {
   startedAt?: number
   endedAt?: number
   status?: string
+  /** run 失败时的错误摘要（persistRunSummary 写入） */
+  error?: string
 }
 
 /** V2 执行观测快照：run 终态时一次性写入（不写高频事件，避免热路径磁盘开销） */

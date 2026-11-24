@@ -5,7 +5,10 @@
   "type": "module",
   "main": "./dist/packages/api/src/index.js",
   "bin": {
-    "pi-code-mode": "bin/pi-code-mode.js"
+    "pi-code-mode": "bin/pi-code-mode.js",
+    "pi-code-mode-cli": "dist/apps/cli/src/index.js",
+    "pi-code-mode-runner": "dist/apps/runner/src/index.js",
+    "pi-code-mode-relay": "dist/apps/relay/src/index.js"
   },
   "keywords": [
     "pi-package"
