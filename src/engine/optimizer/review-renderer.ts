@@ -21,6 +21,13 @@ export interface ReviewInput {
   }>
   patch?: PatchSet
   patchReview?: PatchReview
+  /**
+   * 各选中簇的处理情况。缺省时按「有补丁则全部算已处理」推断。
+   *
+   * 必要性：实测选中 4 个簇却只改了 1 处时，读者必须知道另 3 个为什么没改，
+   * 否则会以为被静默丢弃了。
+   */
+  clusterOutcome?: Array<{ ruleId: string; status: "handled" | "skipped" | "needs-human"; reason?: string }>
   /** before → after 的 unified diff（按文件） */
   diffs?: Array<{ path: string; diff: string }>
   /** 静态复检结论 */
@@ -48,15 +55,41 @@ export function renderReview(input: ReviewInput): string {
   // ---- 1. 原问题簇 ----
   lines.push("## 1. 原问题簇")
   lines.push("")
+  // 处理情况索引（未给时：有补丁=已处理，无补丁=跳过）
+  const handledRules = new Set(
+    (input.patch?.files ?? []).flatMap((f) => f.edits.map((e) => e.relatedCluster)),
+  )
+  const outcomeByRule = new Map<string, { status: string; reason?: string }>()
+  if (input.clusterOutcome?.length) {
+    for (const o of input.clusterOutcome) outcomeByRule.set(o.ruleId, { status: o.status, ...(o.reason ? { reason: o.reason } : {}) })
+  }
+  const OUTCOME_LABEL: Record<string, string> = { handled: "已处理", skipped: "未处理", "needs-human": "待人工" }
+
   for (const c of input.clusters) {
-    lines.push(`### ${c.ruleId}（${c.count} 处，${c.severity}，置信度 ${c.confidence.toFixed(2)}）`)
+    const oc = outcomeByRule.get(c.ruleId)
+    const status = oc?.status ?? (handledRules.has(c.ruleId) ? "handled" : "skipped")
+    const badge = OUTCOME_LABEL[status] ?? status
+    lines.push(`### ${c.ruleId}（${c.count} 处，${c.severity}，置信度 ${c.confidence.toFixed(2)}）— **${badge}**`)
     lines.push("")
+    if (oc?.reason) lines.push(`- 说明：${oc.reason}`)
     lines.push(`- 涉及文件：${c.files.join(", ") || "-"}`)
     lines.push(`- 位置：${c.locations.slice(0, 8).join("；")}${c.locations.length > 8 ? " …" : ""}`)
     for (const e of c.evidence.slice(0, 4)) lines.push(`- ${e}`)
     if (c.suggestion) lines.push(`- 静态建议：${c.suggestion}`)
     lines.push("")
   }
+
+  // 汇总一行：选中 N 个，已处理 M，未处理 K —— 避免只改 1 处时读者误以为全部完成
+  const summaryCounts = { handled: 0, skipped: 0, "needs-human": 0 } as Record<string, number>
+  for (const c of input.clusters) {
+    const oc = outcomeByRule.get(c.ruleId)
+    const status = oc?.status ?? (handledRules.has(c.ruleId) ? "handled" : "skipped")
+    summaryCounts[status] = (summaryCounts[status] ?? 0) + 1
+  }
+  lines.push(
+    `**选中 ${input.clusters.length} 个簇：已处理 ${summaryCounts.handled} / 未处理 ${summaryCounts.skipped} / 待人工 ${summaryCounts["needs-human"]}**`,
+  )
+  lines.push("")
 
   // ---- 2. 修改意图 ----
   lines.push("## 2. 修改意图")

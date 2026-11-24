@@ -1,41 +1,26 @@
-fix(optimize): pi -p 自测暴露的 6 个真问题 + CLAUDE.md 强制自测规则
+feat(optimize): review 说明每个选中簇的处理情况（选中几个 / 处理几个 / 未处理的为什么）
 
-按新增规范用 pi -p 自测（-ne -e 干净房间），暴露并修复：
+问题：实测选中 4 个簇（IO-001/RETRY-001/DET-001/REC-002）却只改了 1 处，
+review.md 完全没说另外 3 个为什么没动，读者会以为被静默丢弃。
 
-1. Git Bash 路径转换：pi -p 里的 /workflows 被 MSYS 转成
-   C:/Program Files/Git/workflows，命令根本没执行。
-   需 MSYS_NO_PATHCONV=1。这也说明之前的 pi -p 测试无效，
-   所谓"产物存在"其实是更早 node 测试的残留。
+改动：
+- ReviewInput 增加 clusterOutcome（ruleId + handled/skipped/needs-human + reason）
+- review-renderer 每个簇标题后标状态徽标，未处理/待人工的显示「说明」行，
+  并在段落末尾给汇总一行：「选中 N 个簇：已处理 M / 未处理 K / 待人工 J」
+- optimize 生成 clusterOutcome：补丁里有该 ruleId 的 edit = handled；
+  有补丁但没这个规则 = skipped（本轮只改 1 个文件的预算限制）；
+  完全没补丁 = needs-human（模型判定不可自动改）
 
-2. flagValue 引号容错：pi 命令行不是 shell，用户按 shell 习惯写的
-   --args 带外层单引号会把引号原样传进来，JSON.parse 报 Unexpected token。
-   修：剥掉首尾配对引号，并拼接被空格拆开的多 token。
+pi -p 端到端验证（dev-examples/apply-e2e 造 2 簇 fixture：RETRY-001 + IO-001）：
 
-3. RETRY-001 默认不可达：它既不在 AUTO_SAFE 也不在 AUTO_UNSAFE，
-   不给 --rules 时永远选不到（用户实测报"没有可安全自动优化的问题簇"）。
-   但它改的是字面量，是最安全的一类，加入 AUTO_SAFE。
+  ### IO-001（1 处，low，置信度 0.80）— 未处理
+  - 说明：本轮只改 1 个文件（输出预算与超时限制），该簇需下一批次单独跑 optimize
+  ### RETRY-001（1 处，low，置信度 0.80）— 已处理
+  **选中 2 个簇：已处理 1 / 未处理 1 / 待人工 0**
 
-4. benchmark 的 cwd：workflow 里的相对路径（templatePath 默认 templates/...）
-   是相对项目根解析的，用 target 目录当 cwd 会直接跑不起来。
-   新增 findProjectRoot()，benchmark 的 cwd 用项目根。
+真实大脚本（1-scan-template.js，4 簇）同款输出已验证。
 
-5. verifier 的 cwd 与 runDir 注入：verifier 的 cwd 应为脚本所在目录
-   （用户写的 node verify.mjs 是相对它），runDir 注入绝对路径
-   （否则跨 cwd 解析不到产物）。
+注：验证过程中发现 jiti 会缓存编译结果 —— 改完 src 后新 pi 进程仍可能加载旧代码，
+所以端到端复验要用小 fixture 快速跑，不要以为"新进程=新代码"。
 
-6. 非 TUI 模式输出：pi -p 下 ctx.ui.notify 不输出、deliver 因 ctx stale 失败。
-   后台化提示补 deliver（headless 场景）；文档明确 pi -p 只能验产物与状态，
-   不能验输出可见性。
-
-CLAUDE.md 新增强制章节"命令/工具改动必须自测"：改动后必须 pi -p 跑通再交付，
-附两个必知边界与 7 项交付前自测清单。
-同时新增两份经验文档：git-bash-msys-path-conversion.md、
-optimize-p-mode-stale-ctx-deliver.md。
-
-pi -p 端到端实测（dev-examples/apply-e2e/worker.js）：
-- optimize  → 候选生成，选簇 RETRY-001，改 worker.js
-- benchmark → before 2302ms / after 1914ms，verifier exit 0，status=ready
-- apply     → session applied，hash 变化，retries 2→1
-- rollback  → hash 回到 da790bd...，retries 恢复 2，session rolled-back
-
-测试：八套全绿（engine 单独复跑 10/10，原失败为时序 flaky）
+测试：optimizer 64 → 65

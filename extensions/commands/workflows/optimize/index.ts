@@ -831,10 +831,30 @@ async function runOptimizeBody(
     reason: blockers[0],
   })
 
+  // 各簇处理情况：按「补丁里是否有该 ruleId 的 edit」判定，未处理的给出可读原因。
+  // 实测选中 4 个簇只改了 1 处时，旧 review 完全没说另 3 个为什么没动。
+  const handledRuleIds = new Set(validation.normalized.files.flatMap((f) => f.edits.map((e) => e.relatedCluster)))
+  const clusterOutcome = selected.map((c) => {
+    if (handledRuleIds.has(c.ruleId)) return { ruleId: c.ruleId, status: "handled" as const }
+    if (handledRuleIds.size === 0) {
+      return {
+        ruleId: c.ruleId,
+        status: "needs-human" as const,
+        reason: "模型未给出可应用的补丁（原因见第 2 节 needsHumanDecision）",
+      }
+    }
+    return {
+      ruleId: c.ruleId,
+      status: "skipped" as const,
+      reason: "本轮只改 1 个文件（输出预算与超时限制），该簇需下一批次单独跑 optimize",
+    }
+  })
+
   const reviewMd = renderReview({
     session: readSession(cwd, id)!,
     clusters: selected,
     patch: validation.normalized,
+    clusterOutcome,
     ...(patchReview ? { patchReview } : {}),
     diffs: diffs.map((d) => ({ path: d.path, diff: d.diff })),
     staticAfter: { totalFindings: afterFindings, targetRuleResolved: targetResolved },

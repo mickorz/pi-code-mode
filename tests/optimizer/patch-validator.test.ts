@@ -511,3 +511,40 @@ test("flagValue 语义：JSON 含空格时被 split 拆开也能拼回", () => {
   assert.doesNotThrow(() => JSON.parse(v))
   assert.deepEqual(JSON.parse(v), { runDir: "x", date: "2026-01-01" })
 })
+
+// ---- review 必须说明「选中几个簇 / 处理了几个 / 没处理的为什么」----
+test("renderReview：未处理的簇必须标注原因（不能静默丢弃）", async () => {
+  const { renderReview } = await import("../../src/engine/optimizer/review-renderer.js")
+  const s: OptimizationSession = {
+    schemaVersion: "1.0",
+    id: "opt-t-001",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: "benchmark-pending",
+    target: { kind: "file", ref: "a.js", root: "/x", sourceHashes: {}, files: [] },
+    selectedClusters: ["RETRY-001", "IO-001"],
+    model: { generatorTier: "fast", reviewerTier: "fast" },
+    workspace: { path: "/x", patchApplied: true },
+    validation: {},
+  }
+  const md = renderReview({
+    session: s,
+    clusters: [
+      { ruleId: "RETRY-001", count: 1, severity: "low", confidence: 0.8, files: ["a.js"], locations: ["a.js:L1"], evidence: ["e1"] },
+      { ruleId: "IO-001", count: 2, severity: "medium", confidence: 0.8, files: ["a.js"], locations: ["a.js:L5"], evidence: ["e2"] },
+    ],
+    patch: {
+      schemaVersion: "1.0",
+      targetRoot: ".",
+      files: [{ path: "a.js", expectedSourceHash: "", edits: [{ startLine: 1, endLine: 1, newText: "x", rationale: "r", relatedCluster: "RETRY-001" }] }],
+    },
+    clusterOutcome: [
+      { ruleId: "RETRY-001", status: "handled" },
+      { ruleId: "IO-001", status: "skipped", reason: "本轮只改 1 个文件" },
+    ],
+  })
+  assert.match(md, /RETRY-001.*已处理/)
+  assert.match(md, /IO-001.*未处理/)
+  assert.match(md, /本轮只改 1 个文件/)
+  assert.match(md, /选中 2 个簇：已处理 1 \/ 未处理 1/)
+})
