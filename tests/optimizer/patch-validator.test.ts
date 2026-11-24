@@ -478,3 +478,36 @@ test("normalizeNeedsHumanDecision：兼容 verdict + reasons + suggestedSplit", 
 test("normalizeNeedsHumanDecision：完全未知结构 → 空数组（不瞎猜）", () => {
   assert.deepEqual(normalizeNeedsHumanDecision({ foo: "bar" }), [])
 })
+
+// ---- pi 命令行不是 shell：flag 值必须剥离用户按 shell 习惯加的外层引号 ----
+test("flagValue 语义：带单引号的 JSON 值应能解析（模拟 pi 的 split 行为）", () => {
+  // pi 的 handler 是 args.trim().split(/\s+/)，不做引号解析
+  const argv = ["t.js", "--benchmark", "--args", `'{"runDir":"x"}'`].slice(1)
+  // 复刻 flagValue 逻辑
+  const i = argv.indexOf("--args")
+  const parts: string[] = []
+  for (let j = i + 1; j < argv.length; j++) {
+    if (argv[j]!.startsWith("--")) break
+    parts.push(argv[j]!)
+  }
+  let v = parts.join(" ")
+  const first = v[0]
+  if ((first === "'" || first === '"') && v.length > 1 && v.endsWith(first!)) v = v.slice(1, -1)
+  assert.doesNotThrow(() => JSON.parse(v), "剥掉外层引号后应是合法 JSON")
+  assert.deepEqual(JSON.parse(v), { runDir: "x" })
+})
+
+test("flagValue 语义：JSON 含空格时被 split 拆开也能拼回", () => {
+  const argv = ["--args", `'{"runDir":`, `"x",`, `"date":`, `"2026-01-01"}'`]
+  const i = 0
+  const parts: string[] = []
+  for (let j = i + 1; j < argv.length; j++) {
+    if (argv[j]!.startsWith("--")) break
+    parts.push(argv[j]!)
+  }
+  let v = parts.join(" ")
+  const first = v[0]
+  if ((first === "'" || first === '"') && v.length > 1 && v.endsWith(first!)) v = v.slice(1, -1)
+  assert.doesNotThrow(() => JSON.parse(v))
+  assert.deepEqual(JSON.parse(v), { runDir: "x", date: "2026-01-01" })
+})

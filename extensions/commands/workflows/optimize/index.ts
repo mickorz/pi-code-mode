@@ -39,7 +39,15 @@ import { copyWorkspace, detectSourceChanges } from "../../../../src/engine/optim
 import type { Subcommand } from "../types.js"
 
 /** 默认可自动优化（副作用小、验证可穷尽）；其余规则只诊断不自动改 */
-const AUTO_SAFE_RULES = new Set(["DET-001", "IO-001", "REC-002"])
+/**
+ * 默认可自动优化（副作用小 / 改动局部性 / 可验证）：
+ *  - RETRY-001：改字面量（如 2→1），不碰调用结构与返回语义，有验证器可对比产物
+ *  - DET-001 / IO-001：把确定性 IO/统计改成 JS（需运行时支持，模型会自己判定可行性）
+ *  - REC-002：修参数传递链路
+ * 注：RETRY-001 曾经两边都不在，导致不给 --rules 时永远选不到它（用户实测报
+ * 「没有可安全自动优化的问题簇」，但它恰恰是最安全的一类）。
+ */
+const AUTO_SAFE_RULES = new Set(["RETRY-001", "DET-001", "IO-001", "REC-002"])
 /** 明确不自动改：需要运行语义或副作用证明 */
 const AUTO_UNSAFE_RULES = new Set(["SERIAL-002", "CONC-002", "SIDEFX-001", "BUDGET-001"])
 /**
@@ -99,9 +107,31 @@ function usageText(): string {
   ].join("\n")
 }
 
+/**
+ * 取 flag 的值。
+ *
+ * 两条容错（实测都得有）：
+ *  1. **pi 的命令行不是 shell**——`args.trim().split(/\s+/)` 不做引号解析，
+ *     用户按 shell 习惯写的 `--args '{"a":1}'` 会把单引号原样传进来，
+ *     JSON.parse 直接报 `Unexpected token '''`。这里剥掉首尾配对引号。
+ *  2. JSON 里带空格（如 `{"a": 1}`）会被 split 拆成多个 token，所以要拼到下一个 `--` 前。
+ */
 function flagValue(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name)
-  return i >= 0 ? argv[i + 1] : undefined
+  if (i < 0) return undefined
+  const parts: string[] = []
+  for (let j = i + 1; j < argv.length; j++) {
+    if (argv[j]!.startsWith("--")) break
+    parts.push(argv[j]!)
+  }
+  if (parts.length === 0) return undefined
+  let v = parts.join(" ")
+  // 剥掉整串首尾配对的引号（单/双）
+  const first = v[0]
+  if ((first === "'" || first === '"') && v.length > 1 && v.endsWith(first)) {
+    v = v.slice(1, -1)
+  }
+  return v
 }
 
 // ---------------------------------------------------------------- optimize
@@ -177,16 +207,20 @@ async function runOptimize(ref: string, argv: string[], ctx: any, deps: any): Pr
   const stageEmit = (msg: string, n?: number) => emitStage(n ?? lastStageNo + 1, msg)
   void sealStage
 
-  ctx.ui.notify(
-    [
-      `optimize 已转入后台：runId=${runId}`,
-      `实时进度：/workflows watch ${runId}`,
-      `查询：/workflows status ${runId} ｜ 停止：/workflows cancel ${runId}`,
-      "",
-      "完成后结果会自动回传本会话。",
-    ].join("\n"),
-    "info",
-  )
+  const bgNotice = [
+    `optimize 已转入后台：runId=${runId}`,
+    `实时进度：/workflows watch ${runId}`,
+    `查询：/workflows status ${runId} ｜ 停止：/workflows cancel ${runId}`,
+    "",
+    "完成后结果会自动回传本会话。",
+  ].join("\n")
+  ctx.ui.notify(bgNotice, "info")
+  // 非 TUI 模式（pi -p / headless / CI）下 ctx.ui.notify 不输出到 stdout，
+  // 实测 pi -p 跑 optimize 时除了档位告警外一片空白，用户以为没执行。
+  // 此时补一条 deliver（走会话消息流，print 模式可见）。
+  if (ctx.hasUI !== true) {
+    void deps.deliver?.(bgNotice)
+  }
 
   // 后台执行（不阻塞命令返回）
   void (async () => {
@@ -899,7 +933,7 @@ async function benchmarkSession(input: {
     try {
       benchArgs = JSON.parse(argsRaw)
     } catch (e) {
-      const msg = `--args 不是合法 JSON：${argsRaw}\n（${String((e as Error)?.message ?? e)}）\n注意：shell 会吃引号，建议外层单引号、内层双引号：--args '{\"runDir\":\"x\"}'`
+      const msg = `--args 不是合法 JSON：${argsRaw}\n（${String((e as Error)?.message ?? e)}）\n注意：pi 的命令行不是 shell（不做引号解析），不要加外层引号，直接写：--args {"runDir":"spec-workflow/bench"}`
       updateSession(path.dirname(path.dirname(sessionDir)), sessionId, { status: "failed", reason: msg })
       return { accepted: false, quality: "unavailable", text: msg, error: msg }
     }
@@ -918,7 +952,8 @@ async function benchmarkSession(input: {
     const scriptAbs = label === "before" ? path.join(productionRoot, entryName) : path.join(workspaceDir, entryName)
     // runDir 隔离：给 --args 里的 runDir 追加 -before / -after，避免两次写同一目录
     const runArgs = benchArgs.runDir ? { ...benchArgs, runDir: `${String(benchArgs.runDir)}-${label}` } : benchArgs
-    if (typeof runArgs.runDir === "string") runDirs[label] = runArgs.runDir
+    // 存**绝对路径**：verifier 的 cwd 是脚本目录，不是项目根，相对路径在那边解析不到
+    if (typeof runArgs.runDir === "string") runDirs[label] = path.resolve(projectRoot, runArgs.runDir)
     const tool = makeWorkflowTool({ ...deps.makeDeps(projectRoot), deliver: deps.deliver })
     const t0 = Date.now()
     const out: any = await tool.execute("bench", { scriptPath: scriptAbs, args: runArgs, background: false }, undefined, undefined, undefined)
@@ -963,9 +998,11 @@ async function benchmarkSession(input: {
             // cwd 用项目根：verifier 要能读到 runDir 产物（相对项目根）。
             // 同时注入两次 runDir，让 verifier 能对比 before/after 产物是否等价 ——
             // 这才是「质量未降级」的直接证据。
+            // cwd = 脚本所在目录：用户写的 `node verify.mjs` 等相对路径是相对这个目录的
+            // （projectRoot 是给 workflow 用的，用来解析 templates/ 这类项目级相对路径）
             const vr = await runVerifierCommand({
               command: cmd,
-              cwd: projectRoot,
+              cwd: productionRoot,
               env: {
                 ...(runDirs.before ? { PI_OPT_BEFORE_RUN: runDirs.before } : {}),
                 ...(runDirs.after ? { PI_OPT_AFTER_RUN: runDirs.after } : {}),

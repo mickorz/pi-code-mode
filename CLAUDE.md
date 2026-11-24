@@ -189,6 +189,77 @@ const model = options.model ?? resolveTierModel(options.tier ?? "<已确认的�
 新增调用点时的流程：先 `ask_user_question` 确认档位 → 在 `createPlannerAgent({ tier })` 或
 `agent(prompt, { tier })` 写明 → 回填本表。
 
+## 命令/工具改动必须自测（强制）：先 `pi -p` 跑通再交付
+
+**任何涉及斜杠命令、工具、执行链路、参数解析的改动，改动后必须自己用 `pi -p` 端到端跑一遍，确认通过后才能告诉用户"改好了"。禁止把首次验证推给用户手动跑。**
+
+### 为什么
+
+之前多轮改动（optimize 后台化、`--args` 引号解析、`needsHumanDecision` 字段兼容、补丁选文件逻辑）都是**用户手动跑才暴露 bug**，其中"改错文件""命令卡死会话无响应""只回传一句详见 review.md"这三类是完全可以在交付前自测发现的。用户手动跑一次要等 4~11 分钟（big 档 AI 复核），成本极高。
+
+### 怎么做
+
+```bash
+# 干净房间：跳过已装扩展干扰，只加载本仓库
+cd <被测项目目录>
+pi -ne -e /e/WorkProjects/pi-code-mode -p "/workflows optimize <target> --rules RETRY-001 --fresh --no-open"
+```
+
+要点：
+
+1. **`-ne`**（no extensions）避免本机十几个已装 pi 包干扰；**`-e <repo>`** 用本地源码（jiti 直载 `src/`，改完立即生效，不用 build）。
+2. **`-p`** 非交互，跑完即退出——能真实验证「命令注册 / 参数解析 / 后台化 / 结果回传」整条链路。
+3. 长任务用 `timeout` 包住，避免自己挂死：
+   ```bash
+   timeout 300 pi -ne -e <repo> -p "/workflows ..."
+   ```
+4. **短流程优先**：先用 `dev-examples/apply-e2e/worker.js`（单轮 ~2s）验证链路，再用真实大脚本（如 `game-requirement-audit`，单次 10 分钟级）。
+5. 需要固定档位时在被测项目放 `.pi/workflows/model-tiers.json`（否则会告警并回退会话默认模型——这也是要确认的行为之一）。
+
+### 两个必知边界（实测踩过）
+
+**1. Git Bash 会把 `/workflows` 转成 Windows 路径**
+
+```bash
+# 错误：MSYS 路径转换把 /workflows 变成 C:/Program Files/Git/workflows
+pi -p "/workflows optimize ..."
+# → prompt 变成普通文本，命令根本没执行（现象：无任何输出、也无产物）
+
+# 正确：关掉路径转换
+MSYS_NO_PATHCONV=1 pi -ne -e <repo> -p "/workflows optimize ..."
+```
+
+PowerShell / cmd 下没有这个问题。
+
+**2. `pi -p` 不能验证「输出可见性」，只能验证「链路是否跑通」**
+
+- `ctx.ui.notify` 在 print 模式下**不输出到 stdout**（TUI 弹窗在非交互模式不存在）
+- `deps.deliver` 会失败：`This extension ctx is stale after session replacement or reload`
+  —— print 模式在命令返回后立即结束会话，后台任务的回传通道已失效
+
+所以 `pi -p` 的正确用法是**看产物、看状态**，不是看输出：
+
+```bash
+MSYS_NO_PATHCONV=1 pi -ne -e <repo> -p "/workflows optimize <target> --rules X --fresh --no-open"
+# 然后检查
+ls <project>/.pi/workflows/optimizations/*/     # session.json / review.md / optimize-report.html
+node -e "console.log(require('<project>/.pi/workflows/optimizations/opt-xxx/session.json').status)"
+```
+
+要看真实输出/回传，用交互式 pi 会话，或 `--mode json` 读事件流。
+
+### 交付前自测清单
+
+| 检查项 | 怎么确认 |
+| --- | --- |
+| 命令已注册 | 不带参数的 `-p "/workflows optimize"` 能打印新版 usage |
+| 参数解析 | `--args` 带/不带外层引号各跑一次；`--rules` 逗号分隔 |
+| 后台化 | 命令 <2s 返回，且返回 runId + watch/status 提示 |
+| 结果回传 | 结束后能看到候选摘要（不是 fallback 文案） |
+| 产物落盘 | session.json / review.md / optimize-report.html 存在 |
+| 不误改生产 | 被测脚本 hash 未变（optimize 阶段） |
+| 早退可见 | 故意触发（如 `--rules SERIAL-002` 不加 `--unsafe-rules`）能回传原因 |
+
 ## 专项约定：pi 插件与工作流联调测试
 
 本项目是 pi agent 插件（workflow 编排引擎），联调测试涉及真实模型调用：
