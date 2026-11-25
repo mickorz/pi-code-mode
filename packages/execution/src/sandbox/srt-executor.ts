@@ -21,6 +21,7 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { mxcNodeVersionHint, mxcNodeVersionOk, sandboxPlatformSupported } from "./sandbox-config.js"
 import { killProcessTree } from "./process-tree.js"
+import { WorkspaceRegistry, WorkspaceRegistryError } from "../workspace/registry.js"
 import type { SandboxHostPayload } from "./sandbox-host.js"
 import type { CommandExecutor, SandboxCommandRequest, SandboxCommandResult } from "../command/types.js"
 
@@ -69,6 +70,11 @@ export interface SrtExecutorOptions {
   /** 平台覆盖（测试用） */
   platform?: NodeJS.Platform
   /**
+   * 工作区注册表（M2-W2）：提供后由 Runtime 统一决定 deny 集合，
+   * 调用方传入的 denyWorkspaces 会被忽略（防止 Agent 自行决定绕过）。
+   */
+  workspaceRegistry?: WorkspaceRegistry
+  /**
    * Windows 后端显式 opt-in（SRT >= 0.0.83）。设置后才允许 win32 走 srt-win/mxc。
    * 缺省 undefined = Windows 保持 unsupported（fail-closed）。
    */
@@ -103,15 +109,36 @@ export class SrtCommandExecutor implements CommandExecutor {
     if (!request.command.trim()) return blocked("empty_command")
     if (request.signal?.aborted) return blocked("aborted_before_start")
 
+    // 权限由 Runtime 决定（M2-W2）：注册表存在时以它为准，忽略调用方自带的 deny 列表。
+    // 注册表解析失败 → fail-closed 拒绝执行，绝不退化成"无 deny"。
+    let denyWorkspaces: readonly string[] = request.denyWorkspaces ?? []
+    let workspaceRoot = path.resolve(request.cwd)
+    if (this.options.workspaceRegistry) {
+      try {
+        const entry = this.options.workspaceRegistry.findByPath(request.cwd)
+        if (!entry) {
+          return blocked(
+            `isolation_unavailable：当前目录未登记为工作区（${request.cwd}），拒绝在无隔离策略下执行`,
+          )
+        }
+        const policy = this.options.workspaceRegistry.getIsolationPolicy(entry.workspaceId)
+        denyWorkspaces = policy.denyWorkspaces
+        workspaceRoot = policy.workspace
+      } catch (e) {
+        const code = e instanceof WorkspaceRegistryError ? e.code : "policy_error"
+        return blocked(`isolation_unavailable：工作区隔离策略解析失败（${code}），拒绝执行`)
+      }
+    }
+
     const host = this.options.hostEntry ?? resolveHostEntry()
     const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const payload: SandboxHostPayload = {
       command: request.command,
-      cwd: path.resolve(request.cwd),
+      cwd: workspaceRoot,
       policy: {
-        workspace: request.cwd,
+        workspace: workspaceRoot,
         ...(this.options.windowsBackend ? { windowsBackend: this.options.windowsBackend } : {}),
-        ...(request.denyWorkspaces?.length ? { denyWorkspaces: request.denyWorkspaces } : {}),
+        ...(denyWorkspaces.length ? { denyWorkspaces } : {}),
         ...(request.allowedDomains?.length ? { allowedDomains: request.allowedDomains } : {}),
       },
       commandId: request.toolCallId ?? request.executionId ?? `cmd-${Date.now()}`,
