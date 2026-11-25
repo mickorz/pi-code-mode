@@ -86,3 +86,86 @@
 - **win32 默认仍 fail-closed**（未通过 M2-W0 前不开放）。
 - 本机基线已采集：无 `srt-sandbox` 用户、0 条 WFP 过滤器、无 CA → **后端未安装**。
 - 下一步：在隔离 Win11 VM 中执行 `windows-install --skip-profile-grant`，然后跑 `m2-w0-check.ts`。
+
+---
+
+## 8. M2-W0b 实测结论（2026-11-25，真实 Windows 环境）
+
+### 8.1 重大发现：MXC BaseContainer 在本机直接可用
+
+用 SRT 0.0.83 的 `windows.backend: 'mxc'` + `@microsoft/mxc-sdk@1.1.0` 实测：
+
+```
+tier: "base-container"                       ← 满足要求
+baseContainerApiPresent: true
+baseContainerSupportsDenyPaths: true         ← 能拒路径
+baseContainerSupportsIdentitylessLoopbackProxy: true  ← 能收紧出口到代理
+isolationSessionAvailable: true
+warnings: []                                 ← 零告警
+needsDaclAugmentation: false
+```
+
+**不需要 UAC 安装、不需要创建 srt-sandbox 用户、不需要 WFP 过滤器、不需要 CA、不需要 VM。**
+这验证了 MXC 优先于 srt-win 的判断。
+
+### 8.2 边界实测矩阵（13 PASS / 2 WARN / 0 FAIL）
+
+用本项目 `SrtCommandExecutor({ windowsBackend: 'mxc' })` 端到端执行：
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| W1 工作区内写入 | PASS | `exit=0`，文件落盘 `inside-ok` |
+| **W2 工作区外写入** | **PASS（拒绝）** | `exit=1`，中文「拒绝访问」，外部文件未创建 |
+| **W3 denyRead 秘密文件** | **PASS（拒绝）** | `exit=1`，未泄漏 `TOP_SECRET_TOKEN_12345` |
+| W3b denyRead 目录枚举 | PASS | 未列出 `token.txt` |
+| **W4 网络默认拒绝** | **PASS（拒绝）** | `curl: (7) CONNECT tunnel failed, response 403` |
+| W5 超时终止 | PASS | `timedOut=true`，2724ms |
+| W6 并行两工作区不串扰 | PASS | 无交叉文件 |
+| TOOL CMD / PowerShell / Node / npm / Git / Python | 全部 PASS | 版本均正确输出 |
+| TOOL Git Bash (MSYS2) | **WARN** | `exit=-1073741502`（STATUS_DLL_INIT_FAILED），确认不兼容 |
+| W8 宿主机 `%TEMP%` 可写 | **WARN** | SRT 设计如此，见 8.3 |
+
+### 8.3 两个必须登记的残余（WARN）
+
+**R-TEMP：宿主机 `%TEMP%` 永远可写。**
+根因在 SRT 源码 `mxc-sandbox-utils.js` `buildMxcRequest()`：
+
+```js
+const readwritePaths = [
+    ...(p.allowWrite ?? []),
+    ...(temp !== undefined ? [temp] : []),   // 宿主机 %TEMP% 无条件加入
+];
+```
+
+影响：沙盒内命令可写 `%TEMP%` 下任意文件。缓解措施：
+- 工作区不要放在 `%TEMP%`（我们的工作区是项目目录，不受影响）。
+- 若威胁模型要求，可在 M2-W2 给 `denyWrite` 显式补 `%TEMP%` 子路径（需验证 MXC 的 deny 优先级）。
+
+**R-Msys2：Git Bash / MSYS2 无法在 MXC 内启动**（`STATUS_DLL_INIT_FAILED`）。
+影响：依赖 Git Bash 的命令（部分脚本、POSIX 语法）不可用。原生 `git.exe`、PowerShell、CMD、Node、Python 均正常。
+缓解：Agent prompt 引导用 `cmd /c` 与 PowerShell；若确需 bash，评估 srt-win 或 WSL2 后端。
+
+### 8.4 阻塞项：Node 版本
+
+MXC 原生 stdio 要求 **Node 24.21.0+**（Node 24 线）或 **26.8.0+**（Node 26 线）。
+本机默认 24.18.0 直接报 `MxcError ... native stdio on Windows requires Node.js 24.21.0 or newer`，`code: backend_unavailable`。
+
+已处理：
+- `mxcNodeVersionOk()` / `mxcNodeVersionHint()` 在 `sandbox-config.ts` 显式前置拦截，给出可操作提示而非裸 MxcError。
+- 用本机已有的 **Node 26.11.1**（nvm 已安装）验证通过，未切换全局版本。
+
+**待决策**：项目 Node 版本基线是否提到 `>=24.21.0`（建议 `.nvmrc` + `package.json engines`），因为 pi 宿主进程与其 spawn 的 Sandbox Host 继承同一 Node。
+
+### 8.5 修复的两个真实 bug（本轮实测暴露）
+
+1. **`--import` 传 Windows 绝对路径在 Node 26 报 `ERR_UNSUPPORTED_ESM_URL_SCHEME`** —— 必须用 `file://` URL（`pathToFileURL(loaderPath).href`）。
+2. **重写 executor 时丢失 `child.stdin.write(payload)`** —— Host 永远等 payload、父进程等 Host 退出，死锁到超时。已补回，并加 `PCM_SANDBOX_DEBUG=1` 阶段追踪便于定位。
+
+### 8.6 判定
+
+**CONDITIONAL-GO**：MXC BaseContainer 具备成为 Windows 正式执行底座的能力（文件/网络/进程三项核心隔离均实证有效）。
+放行前需处理：
+1. Node 版本基线提升到 24.21+（决策）。
+2. Git Bash 不兼容需在产品层规避（prompt 引导 / 文档声明）。
+3. `%TEMP%` 可写需按威胁模型决定是否加 denyWrite。
+4. 仍需补测：白名单域名放行、跨 Session 读取（R7）、父 Host 崩溃回收、Cocos/构建类真实工具链。

@@ -18,8 +18,8 @@ import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
-import { sandboxPlatformSupported } from "./sandbox-config.js"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { mxcNodeVersionHint, mxcNodeVersionOk, sandboxPlatformSupported } from "./sandbox-config.js"
 import type { SandboxHostPayload } from "./sandbox-host.js"
 import type { CommandExecutor, SandboxCommandRequest, SandboxCommandResult } from "../command/types.js"
 
@@ -40,14 +40,18 @@ interface HostEntry {
  * 用绝对路径喂 --import，避免子进程 cwd（工作区）里找不到 tsx。
  */
 function resolveHostEntry(): HostEntry {
-  const here = fileURLToPath(import.meta.url)
+  // import.meta.url 是自身文件 URL；转路径再取同目录
+  const here = fileURLToPathLocal()
   const dir = path.dirname(here)
   const compiled = path.join(dir, "sandbox-host.js")
   if (existsSync(compiled)) return { script: compiled, execArgv: [] }
-  return {
-    script: path.join(dir, "sandbox-host.ts"),
-    execArgv: ["--import", createRequire(import.meta.url).resolve("tsx")],
-  }
+  // 开发态：--import 必须是 file:// URL（Node 26 下 Windows 绝对路径会报 ERR_UNSUPPORTED_ESM_URL_SCHEME）
+  const loaderUrl = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href
+  return { script: path.join(dir, "sandbox-host.ts"), execArgv: ["--import", loaderUrl] }
+}
+
+function fileURLToPathLocal(): string {
+  return fileURLToPath(import.meta.url)
 }
 
 function capOutput(chunks: Buffer[]): { text: string; truncated: boolean } {
@@ -91,6 +95,10 @@ export class SrtCommandExecutor implements CommandExecutor {
         `isolation_unavailable：平台 ${this.platform} 无受支持的 OS 级隔离后端（Windows 需先完成 srt-win 安装与 M2-W0 安全验收）`,
       )
     }
+    // MXC 后端对 Node 版本有硬要求（原生 stdio）；提前拦截并给可操作信息
+    if (this.options.windowsBackend === "mxc" && !mxcNodeVersionOk()) {
+      return blocked(`isolation_unavailable：${mxcNodeVersionHint()}`)
+    }
     if (!request.command.trim()) return blocked("empty_command")
     if (request.signal?.aborted) return blocked("aborted_before_start")
 
@@ -127,6 +135,12 @@ export class SrtCommandExecutor implements CommandExecutor {
       })
 
       const control = child.stdio[3] as NodeJS.ReadableStream | null
+      // 投递 payload（单行 JSON）；stdin 保持打开作为 Host 的存活信号，
+      // 父进程异常退出时 Host 读到 EOF 会杀整棵进程树。
+      child.stdin?.once("error", () => {
+        /* Host 提前退出：由 exit 事件结算 */
+      })
+      child.stdin?.write(`${JSON.stringify(payload)}\n`)
       child.stdout?.on("data", (c: Buffer) => {
         if (out.reduce((n, b) => n + b.length, 0) < MAX_OUTPUT_BYTES) out.push(c)
       })

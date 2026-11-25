@@ -45,6 +45,18 @@ export interface SandboxHostPayload {
   timeoutMs?: number
 }
 
+/** 阶段追踪（PCM_SANDBOX_DEBUG=1 时打到 stderr，不影响控制通道） */
+function trace(stage: string): void {
+  if (process.env.PCM_SANDBOX_DEBUG === "1") {
+    try {
+      process.stderr.write(`[host] ${stage}
+`)
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
 /** 写 fd 3（同步写：快速命令可能在 ready 之后立刻退出，异步写会丢行） */
 function report(line: string): void {
   try {
@@ -106,10 +118,14 @@ async function main(): Promise<void> {
   }
 
   const config = buildSandboxConfig(payload.policy)
+  trace(`payload ok, backend=${payload.policy.windowsBackend ?? "default"}`)
 
   try {
+    trace("initialize start")
     await SandboxManager.initialize(config, undefined, false)
+    trace(`initialize done backend=${JSON.stringify(SandboxManager.getWindowsBackend?.())}`)
     if (stopping) process.exit(125)
+    trace("spawn start")
     proc = await SandboxManager.spawnSandboxed!(payload.command, {
       ...(payload.shell ? { binShell: payload.shell } : {}),
       cwd: payload.cwd,
@@ -119,13 +135,16 @@ async function main(): Promise<void> {
     })
     proc.stdout?.on("data", (c: Buffer) => process.stdout.write(c))
     proc.stderr?.on("data", (c: Buffer) => process.stderr.write(c))
+    trace(`spawned pid=${proc.pid}`)
     report("ready")
     const { exitCode, timedOut } = await proc.wait()
+    trace(`wait done exit=${exitCode} timedOut=${timedOut}`)
     report(`exit ${timedOut ? "timeout" : exitCode}`)
     await cleanup()
     process.exit(timedOut ? 124 : exitCode)
-  } catch {
+  } catch (e) {
     // 细节可能含工作区路径：父进程统一报 isolation_unavailable
+    trace(`failed: ${(e as Error)?.constructor?.name} ${(e as Error)?.message}`)
     report("failed 125")
     process.exit(125)
   }

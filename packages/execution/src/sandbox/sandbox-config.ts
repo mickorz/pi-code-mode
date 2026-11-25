@@ -107,7 +107,25 @@ export function buildSandboxConfig(input: SandboxPolicyInput): SandboxRuntimeCon
   return config as unknown as SandboxRuntimeConfig
 }
 
-/** 平台是否支持本项目沙盒（Windows 明确不支持：不降级宿主执行） */
+/**
+ * MXC 原生 stdio 的 Node 版本门槛（实测自 @microsoft/mxc-sdk 1.1.0 spawn 报错）：
+ * Node 24 线需 >= 24.21.0；Node 26 线需 >= 26.8.0。不满足时报 backend_unavailable。
+ * 这里提前拦截并给出可操作信息，免得用户只看到一行 MxcError。
+ */
+export function mxcNodeVersionOk(version = process.versions.node): boolean {
+  const [major = 0, minor = 0] = version.split(".").map((n) => Number.parseInt(n, 10))
+  if (major === 24) return minor >= 21
+  if (major === 26) return minor >= 8
+  if (major > 26) return true
+  return false
+}
+
+/** MXC 版本不满足时的可操作提示 */
+export function mxcNodeVersionHint(version = process.versions.node): string {
+  return `MXC 后端要求 Node 24.21.0+（Node 24 线）或 26.8.0+（Node 26 线），当前 ${version}`
+}
+
+/** 平台是否支持本项目沙盒（darwin/linux 恒支持；win32 仅 MXC/已安装后端时支持） */
 export function sandboxPlatformSupported(platform: NodeJS.Platform = process.platform): boolean {
   return platform === "darwin" || platform === "linux"
 }
