@@ -60,6 +60,10 @@ export interface SandboxPolicyInput {
    * 注意 MXC 的 deny 是读写双关（over-deny），这里正是想要的效果。
    */
   denyWorkspaces?: readonly string[]
+  /** 额外只读路径（工具链/编辑器安装目录）；来自 Runtime 配置，非模型输入 */
+  readOnlyPaths?: readonly string[]
+  /** 额外可写路径（编辑器缓存/日志）；仅构建专用权限档，来自 Runtime 配置 */
+  writePaths?: readonly string[]
 }
 
 /** 规范化绝对路径：解析相对路径 + 消解 symlink（工作区不存在时退回 resolve 结果） */
@@ -70,6 +74,20 @@ export function normalizeAbsolute(target: string, base = process.cwd()): string 
   } catch {
     return path.normalize(absolute)
   }
+}
+
+/**
+ * 工作区所在卷的根（E:\ / C:\ / /）。
+ *
+ * M2-W3 实测：SRT 的 buildMxcRequest 只把 `SystemDrive`（通常是 C:\）放进 readonlyPaths。
+ * 工程在非系统盘（如 E:\）时，Node 解析入口脚本要 realpathSync 祖先链并 lstat 盘根，
+ * 盘根不可读 → `EPERM: operation not permitted, lstat 'E:\'`，任何 node 进程都起不来。
+ * 因此卷根必须可读；跨项目隔离仍由 denyWorkspaces（更具体，MXC 按最具体优先）保证。
+ */
+export function volumeRootOf(absolutePath: string): string {
+  const parsed = path.parse(absolutePath)
+  // path.parse("E:\a") = { root: "E:\\" }；POSIX 为 "/"
+  return parsed.root || path.sep
 }
 
 /** 家目录下的凭据目录 -> 绝对路径列表（存在与否都列出：不存在时 deny 无害，存在时生效） */
@@ -94,7 +112,11 @@ export function buildSandboxConfig(input: SandboxPolicyInput): SandboxRuntimeCon
     },
     filesystem: {
       // 写入边界：仅工作区（绝对路径 + literal，避免 glob 语义差异）
-      allowWrite: [{ path: workspace, literal: true as const }],
+      allowWrite: [
+        { path: workspace, literal: true as const },
+        // 编辑器缓存/日志等额外可写路径（构建专用权限档；非模型输入）
+        ...(input.writePaths ?? []).map((p) => ({ path: normalizeAbsolute(p), literal: true as const })),
+      ],
       // 读取限制：凭据目录一律不可读（家目录内的诊断日志目录同样排除）
       denyRead: [
         ...credentialDenyReadPaths(home).map((p) => ({ path: p, literal: true as const })),
@@ -104,7 +126,12 @@ export function buildSandboxConfig(input: SandboxPolicyInput): SandboxRuntimeCon
           literal: true as const,
         })),
       ],
-      allowRead: [],
+      allowRead: [
+        // 卷根只读：否则非系统盘上的 node/runtime 无法解析入口路径（M2-W3 实测 EPERM）
+        { path: volumeRootOf(workspace), literal: true as const },
+        // 工具链只读路径（编辑器安装目录等在其它盘时必需）
+        ...(input.readOnlyPaths ?? []).map((p) => ({ path: normalizeAbsolute(p), literal: true as const })),
+      ],
       denyWrite: [],
       allowGitConfig: false,
     },

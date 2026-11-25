@@ -80,3 +80,78 @@ buildProfile: {
 1. **构建专用权限档**（M2-W4）：命令分类为构建类时，按项目配置追加 allowWrite/allowDomains，模型不可声明。
 2. **安装 CocosCreator 3.7.3 后复跑**：把 `m2-w3-check.ts` 的 R6c 换成真实 `cocoscli build` 并比对产物 hash。
 3. 未解决前，真实构建应在**沙盒外**执行（人工审批），不得默认在沙盒内静默失败。
+
+---
+
+## 7. 补充：真实 GUI 构建链实测（编辑器已安装于 D:\CocosSofts\Creator\3.7.3）
+
+> 上一节的前提（"编辑器未安装"）已纠正：**CocosCreator 3.7.3 已安装**，位于 `D:\CocosSofts\Creator\3.7.3`（3.7GB Electron 应用）。
+> 我的首次探测只查了环境变量与几个常见路径，漏了自定义安装目录 —— 记录此误判以免重犯。
+
+### 7.1 沙盒外基线（作为对照）
+
+```
+cocoscli build web-mobile examples/cocos_example_proj
+→ 构建成功，产物 49 文件 / 7.9MB
+   build/web-mobile/src/polyfills.bundle.js  md5 5adbfb0a...
+   build/web-mobile/src/system.bundle.js     md5 543e6214...
+```
+
+（注：沙盒外构建日志也有 `[Assets] excute-taskbuild-script failed!` 与若干 SyntaxError，属该示例工程自身状况；基线以"产物存在"为准。）
+
+### 7.2 沙盒内同一命令（清理产物后）
+
+逐层推进，每一步都暴露一个真实约束：
+
+| 阶段 | 现象 | 根因 | 处理 |
+|---|---|---|---|
+| 1 | `EPERM: lstat 'E:\'`（Node 连启动都失败） | SRT 的 `buildMxcRequest` 只把 **`SystemDrive`（C:\）** 放进 readonlyPaths；工程在 **E 盘**时盘根不可读，Node 解析入口 `realpathSync` 失败 | 修复：`buildSandboxConfig` 增加 `volumeRootOf(workspace)` 到 `allowRead` |
+| 2 | `目标目录不是 Cocos 3.x 工程` | 注册表把**子孙工作区**也 deny 了：CLI 目录与它内部的 `examples/cocos_example_proj` 同时登记 → CLI 读不到自己的子目录 | 修复：`getIsolationPolicy` 排除 `descendant_of_current`（工作区 = 自己拥有的一棵树，重叠登记合并为同一棵树） |
+| 3 | `spawn CocosCreator.exe ENOENT` | 编辑器在 **D 盘**，不在可读范围 | 新增 `readOnlyPaths`（工具链只读路径，Runtime 提供，**非模型输入**） |
+| 4 | 编辑器启动，0.9s 静默退出，退出码 1，build-raw 日志**完全为空** | 加 `writePaths`（AppData 缓存）后仍相同 | 见 7.3 |
+
+### 7.3 关键结论：GUI Electron 应用无法在 MXC BaseContainer 内启动
+
+逐项探测（均在沙盒内，`readOnlyPaths` 已指向 `D:\CocosSofts\Creator\3.7.3`）：
+
+| 探测 | 结果 |
+|---|---|
+| `type D:\...\3.7.3\version` | **exit=0，输出 `13.1.4`** → 文件读取正常 |
+| `dir D:\...\3.7.3` | **exit=1 拒绝访问** → 目录枚举被拒 |
+| `CocosCreator.exe --version` | **exit=1 拒绝访问** |
+| 同上 + `writePaths`（APPDATA/LOCALAPPDATA/.CocosCreator/.CocosDashboard） | **exit=1 拒绝访问** |
+| 同上 + `--no-sandbox` / `--disable-gpu` / `--disable-gpu-sandbox` | 全部 **exit=1 拒绝访问** |
+
+**判定：不是权限不足，是 MXC BaseContainer 不承载 GUI/Electron 进程启动。**
+旁证：SRT 的 MXC 请求固定 `ui: { disable: false, clipboard: 'none', allowInputInjection: false }`，
+且探测到的能力集包含 `canBlockGlobalUiNamespace` / `canBlockExternalUiObjects` 等 UI 阻断能力。
+
+### 7.4 由此得出的架构结论
+
+**`cocoscli build`（GUI 构建链）不能作为沙盒内命令。** 三条可选路线：
+
+| 路线 | 说明 | 评价 |
+|---|---|---|
+| A. 构建在沙盒外执行 | 作为受控控制面操作，需显式人工审批，命令与产物记录审计 | **当前可行**，建议默认 |
+| B. 无头构建 | 需 Cocos 侧支持 headless（3.7.3 未见该能力） | 待评估 |
+| C. 构建命令单独走 srt-win 后端 | srt-win 用独立用户 + ACL，非容器化，可能承载 GUI | 待评估（会引入第二后端） |
+
+**不建议**为了跑构建而放宽 MXC 权限——MXC 的 UI/进程阻断是隔离强度的一部分。
+
+### 7.5 本轮顺带落地的三项真实修复
+
+1. **卷根可读**（`volumeRootOf`）：非系统盘工程上的 Node 运行时必需；跨项目隔离仍由 `denyWorkspaces`（更具体）保证，W2 的 14 项复跑全绿。
+2. **子孙工作区不 deny**（`descendant_of_current`）：否则"工具目录 + 其内部工程"这类合法嵌套无法工作。代价如实记录：外层可读被单独登记的内层（重叠登记合并为同一棵树）。
+3. **`readOnlyPaths` / `writePaths` 通道**：工具链与缓存目录的授权入口，**必须由 Runtime/项目配置提供，不得来自模型输入**（否则模型可自行扩展权限）。
+
+### 7.6 回归
+
+- contract **291/0**、engine **222/0**、M2-W2 的 14 项复跑 **14/14 PASS**（策略改动未削弱跨项目隔离）
+
+### 7.7 M2-W3 最终判定
+
+**CONDITIONAL**（不放行 Windows Sandbox 正式验收）：
+
+- 沙盒可承载：真实工程全量读写（732 文件 / 30.9MB）、产物写入、长时进程回收、并发隔离 —— **全部实证**
+- 沙盒不可承载：**GUI 构建链**（CocosCreator/Electron 无法启动）—— 需走控制面方案 A
+- 因此"真实 Cocos 构建"这一项**未在沙盒内通过**，不得据本轮宣称构建可行

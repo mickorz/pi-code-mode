@@ -194,6 +194,14 @@ export class WorkspaceRegistry {
         excluded.push({ workspaceId: entry.workspaceId, reason: "ancestor_of_current" })
         continue
       }
+      // 子孙工作区：位于当前工作区树内，属于"我自己的目录"。deny 它会切断对自身子树的
+      // 合法访问（实测：工具目录 CLI 与其内部 examples/<proj> 同时登记时，CLI 读不到工程）。
+      // 语义上"工作区 = 自己拥有的一棵树"，重叠登记因此合并为同一棵有效树。
+      // 代价：外层可读内层（已登记为独立工作区的子目录），登记时需知悉这一取舍。
+      if (isAtOrUnder(entry.key, current.key, this.platform)) {
+        excluded.push({ workspaceId: entry.workspaceId, reason: "descendant_of_current" })
+        continue
+      }
       deny.push(entry.canonicalRoot)
     }
     return {

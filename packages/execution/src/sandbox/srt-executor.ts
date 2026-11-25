@@ -140,6 +140,8 @@ export class SrtCommandExecutor implements CommandExecutor {
         ...(this.options.windowsBackend ? { windowsBackend: this.options.windowsBackend } : {}),
         ...(denyWorkspaces.length ? { denyWorkspaces } : {}),
         ...(request.allowedDomains?.length ? { allowedDomains: request.allowedDomains } : {}),
+        ...(request.readOnlyPaths?.length ? { readOnlyPaths: request.readOnlyPaths } : {}),
+        ...(request.writePaths?.length ? { writePaths: request.writePaths } : {}),
       },
       commandId: request.toolCallId ?? request.executionId ?? `cmd-${Date.now()}`,
       commandText: request.command,

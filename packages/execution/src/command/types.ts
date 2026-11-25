@@ -16,6 +16,16 @@ export interface SandboxCommandRequest {
   denyWorkspaces?: readonly string[]
   /** 允许访问的域名（缺省空 = 网络全拒）；由策略层按命令注入 */
   allowedDomains?: readonly string[]
+  /**
+   * 额外的**只读**工具链路径（如 D:\CocosSofts\Creator.7.3）。
+   * 必须由 Runtime/项目配置提供，**不得来自模型输入**——否则模型可自行声明任意可读路径。
+   */
+  readOnlyPaths?: readonly string[]
+  /**
+   * 额外的**可写**路径（编辑器缓存/日志目录等）。
+   * 同样必须由 Runtime/项目配置提供，**不得来自模型输入**；仅限"构建专用权限档"使用。
+   */
+  writePaths?: readonly string[]
   /** 执行身份贯通（runId/executionId 全链路关联，审计用） */
   runId?: string
   executionId?: string
