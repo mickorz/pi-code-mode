@@ -11,6 +11,18 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { Type } from "typebox"
 import type { ControlledExtensionDeps } from "./types.js"
 
+/**
+ * Windows 沙盒的 Shell 能力边界（M2-W0c）。
+ * 写进工具说明而不是只靠 system prompt：模型读工具描述比读系统提示更可靠。
+ * MXC BaseContainer 下 Git Bash / MSYS2 无法启动（STATUS_DLL_INIT_FAILED，实测）。
+ */
+const WINDOWS_SHELL_NOTICE =
+  process.platform === "win32"
+    ? "[Windows sandbox shells] Supported: cmd.exe, powershell.exe, pwsh.exe (if installed). " +
+      "Unsupported: bash.exe, sh.exe, MSYS2, Git Bash (they fail to start inside the sandbox). " +
+      "Do not generate POSIX shell syntax; use cmd or PowerShell."
+    : ""
+
 export function createAgentToolsExtension(deps: ControlledExtensionDeps) {
   const factory = (pi: ExtensionAPI): void => {
     /** 第二阶段防线包装：无有效 Permit 一律拒绝真实执行；signal 贯通到执行层（M1.1） */
@@ -26,7 +38,7 @@ export function createAgentToolsExtension(deps: ControlledExtensionDeps) {
       label: name,
       description:
         name === "run_command"
-          ? "在沙盒中执行 shell 命令（工作区为可写边界，网络默认拒绝）"
+          ? WINDOWS_SHELL_NOTICE + "在沙盒中执行 shell 命令（工作区为可写边界，网络默认拒绝）"
           : `${name}：工作区内的文件操作`,
       parameters: Type.Object({
         ...(name === "read_file" ? { path: Type.String() } : {}),

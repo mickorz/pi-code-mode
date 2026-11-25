@@ -20,6 +20,7 @@ import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { mxcNodeVersionHint, mxcNodeVersionOk, sandboxPlatformSupported } from "./sandbox-config.js"
+import { killProcessTree } from "./process-tree.js"
 import type { SandboxHostPayload } from "./sandbox-host.js"
 import type { CommandExecutor, SandboxCommandRequest, SandboxCommandResult } from "../command/types.js"
 
@@ -110,6 +111,8 @@ export class SrtCommandExecutor implements CommandExecutor {
       policy: {
         workspace: request.cwd,
         ...(this.options.windowsBackend ? { windowsBackend: this.options.windowsBackend } : {}),
+        ...(request.denyWorkspaces?.length ? { denyWorkspaces: request.denyWorkspaces } : {}),
+        ...(request.allowedDomains?.length ? { allowedDomains: request.allowedDomains } : {}),
       },
       commandId: request.toolCallId ?? request.executionId ?? `cmd-${Date.now()}`,
       commandText: request.command,
@@ -167,12 +170,14 @@ export class SrtCommandExecutor implements CommandExecutor {
         }
       })
 
-      const killGroup = (signal: NodeJS.Signals) => {
-        try {
-          if (child.pid) process.kill(-child.pid, signal)
-        } catch {
+      // 平台感知终止（M2-W0c）：POSIX 杀进程组；Windows 用 taskkill /T /F 杀整棵树。
+      // Windows 无负 PID 语义，原先的 process.kill(-pid) 在这里是空操作。
+      const killGroup = (force: boolean) => {
+        if (!child.pid) return
+        const ok = killProcessTree(child.pid, { force })
+        if (!ok) {
           try {
-            child.kill(signal)
+            child.kill()
           } catch {
             /* 已退出 */
           }
@@ -181,8 +186,8 @@ export class SrtCommandExecutor implements CommandExecutor {
 
       const onAbort = () => {
         aborted = true
-        killGroup("SIGTERM")
-        setTimeout(() => killGroup("SIGKILL"), STOP_GRACE_MS).unref()
+        killGroup(false) // 先优雅
+        setTimeout(() => killGroup(true), STOP_GRACE_MS).unref() // 宽限后强杀
       }
       request.signal?.addEventListener("abort", onAbort, { once: true })
 
@@ -190,8 +195,8 @@ export class SrtCommandExecutor implements CommandExecutor {
         timeoutMs > 0
           ? setTimeout(() => {
               timedOut = true
-              killGroup("SIGTERM")
-              setTimeout(() => killGroup("SIGKILL"), STOP_GRACE_MS).unref()
+              killGroup(false)
+              setTimeout(() => killGroup(true), STOP_GRACE_MS).unref()
             }, timeoutMs + 5000) // Host 内部有自己的 timeoutMs，父进程留 5s 余量兜底
           : undefined
       timer?.unref()

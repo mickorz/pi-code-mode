@@ -54,6 +54,12 @@ export interface SandboxPolicyInput {
    * 不启用实验性 MXC（避免同时引入两套 Windows 沙盒技术）。
    */
   windowsBackend?: "srt-win" | "mxc"
+  /**
+   * 其他工作区根（M2-W0c 读取隔离）：MXC 默认把系统盘根 `C:\` 放进 readonlyPaths，
+   * 因此项目 A 默认能读项目 B。这里逐项加入 deniedPaths 以切断跨项目读取。
+   * 注意 MXC 的 deny 是读写双关（over-deny），这里正是想要的效果。
+   */
+  denyWorkspaces?: readonly string[]
 }
 
 /** 规范化绝对路径：解析相对路径 + 消解 symlink（工作区不存在时退回 resolve 结果） */
@@ -92,6 +98,11 @@ export function buildSandboxConfig(input: SandboxPolicyInput): SandboxRuntimeCon
       // 读取限制：凭据目录一律不可读（家目录内的诊断日志目录同样排除）
       denyRead: [
         ...credentialDenyReadPaths(home).map((p) => ({ path: p, literal: true as const })),
+        // 其他项目工作区：切断跨项目读取（系统盘默认可读，不显式 deny 就等于全通）
+        ...(input.denyWorkspaces ?? []).map((p) => ({
+          path: normalizeAbsolute(p),
+          literal: true as const,
+        })),
       ],
       allowRead: [],
       denyWrite: [],
@@ -109,20 +120,19 @@ export function buildSandboxConfig(input: SandboxPolicyInput): SandboxRuntimeCon
 
 /**
  * MXC 原生 stdio 的 Node 版本门槛（实测自 @microsoft/mxc-sdk 1.1.0 spawn 报错）：
- * Node 24 线需 >= 24.21.0；Node 26 线需 >= 26.8.0。不满足时报 backend_unavailable。
- * 这里提前拦截并给出可操作信息，免得用户只看到一行 MxcError。
+ * 只接受经本项目验证的两个区间：Node 24.21.0+（24 线）与 Node 26.8.0+（26 线）。
+ * Node 25.x 与 27+ **不自动放行**（未经 MXC 验证的版本不能靠"更大就更安全"的假设开放）。
  */
 export function mxcNodeVersionOk(version = process.versions.node): boolean {
   const [major = 0, minor = 0] = version.split(".").map((n) => Number.parseInt(n, 10))
   if (major === 24) return minor >= 21
   if (major === 26) return minor >= 8
-  if (major > 26) return true
   return false
 }
 
 /** MXC 版本不满足时的可操作提示 */
 export function mxcNodeVersionHint(version = process.versions.node): string {
-  return `MXC 后端要求 Node 24.21.0+（Node 24 线）或 26.8.0+（Node 26 线），当前 ${version}`
+  return `MXC 后端要求 Node ^24.21.0 或 ^26.8.0，当前 ${version}`
 }
 
 /** 平台是否支持本项目沙盒（darwin/linux 恒支持；win32 仅 MXC/已安装后端时支持） */

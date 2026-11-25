@@ -19,9 +19,9 @@
 ### 决策条款
 
 1. Windows 原生 Sandbox 为 **P0**；macOS/Linux 不得替代其验证。
-2. 首选评估 Anthropic Sandbox Runtime 的 `srt-win` 后端。
-3. 不因上游 Alpha 标签直接放弃，但**必须通过独立安全验证**（M2-W0）。
-4. 优先评估 **SRT 0.0.83**（已实测升级，见第 4 节），显式 `windows.backend: 'srt-win'`，**不启用 MXC**（避免同时引入两套 Windows 沙盒技术）。
+2. Windows 首选后端为 **SRT + MXC BaseContainer**（`windows.backend: 'mxc'`）——M2-W0b/W0c 已实测通过，见第 8、9 节。
+3. `srt-win` 降级为**备选**（仅当出现 MXC 无法满足的工具兼容需求时再评估），不作为默认。
+4. 固定 **SRT 0.0.83**（见第 4 节），`@microsoft/mxc-sdk` **精确固定 1.1.0**。不启用 MXC 以外的实验性后端。
 5. 安装验证在**隔离 Windows 测试环境**（Win11 VM + 快照）进行，不首轮改日常开发主机。
 6. **不默认授予** Profile Read 权限（安装用 `--skip-profile-grant`），后续只显式开放实际需要的工具目录。
 7. **不允许宿主机执行降级**（不变）。
@@ -82,7 +82,7 @@
 ## 7. 当前状态（2026-11-25）
 
 - SRT 已升级并固定 `0.0.83`；Host 改用 `spawnSandboxed`（原生进程树回收）。
-- `windows.backend: 'srt-win'` 配置支持与 opt-in 开关已实现（`SrtCommandExecutor({ windowsBackend })` / `createCommandExecutor({ windowsBackend })`）。
+- `windows.backend` 配置支持与 opt-in 开关已实现（`SrtCommandExecutor({ windowsBackend: 'mxc' })` / `createCommandExecutor({ windowsBackend: 'mxc' })`）；**默认后端为 MXC BaseContainer**。
 - **win32 默认仍 fail-closed**（未通过 M2-W0 前不开放）。
 - 本机基线已采集：无 `srt-sandbox` 用户、0 条 WFP 过滤器、无 CA → **后端未安装**。
 - 下一步：在隔离 Win11 VM 中执行 `windows-install --skip-profile-grant`，然后跑 `m2-w0-check.ts`。
@@ -169,3 +169,62 @@ MXC 原生 stdio 要求 **Node 24.21.0+**（Node 24 线）或 **26.8.0+**（Node
 2. Git Bash 不兼容需在产品层规避（prompt 引导 / 文档声明）。
 3. `%TEMP%` 可写需按威胁模型决定是否加 denyWrite。
 4. 仍需补测：白名单域名放行、跨 Session 读取（R7）、父 Host 崩溃回收、Cocos/构建类真实工具链。
+
+---
+
+## 9. M2-W0c 安全收尾实测（2026-11-25）
+
+### 9.1 结果：17 PASS / 1 WARN / 0 FAIL
+
+| 项 | 内容 | 结果 |
+|---|---|---|
+| C1 | Node 版本基线（`^24.21.0 \|\| ^26.8.0`） | PASS：当前 26.11.1 |
+| C1b | 版本判定只接受已验证区间（25.x / 27+ 不得放行） | PASS：修正了原先 `major > 26 return true` 的过宽判断 |
+| C2 | **TEMP 隔离**：A 能写自己的 TEMP，**不能写宿主机原 TEMP** | PASS（`exit=1`，被拒） |
+| C2b | Host 私有 TEMP 目录生成与清理 | PASS：`pcm-host-temp-<pid>-*`，退出后残留 0 |
+| C3 | **跨项目读取拒绝**（A 不能读 B） | PASS：`exit=1` 拒绝访问，未泄漏 |
+| C3b | 对照组：未配置 `denyWorkspaces` 时可读 | PASS（证明 C3 的隔离来自配置而非巧合） |
+| C4a | 非白名单域名拒绝 | PASS：`curl: (7) CONNECT tunnel failed, 403` |
+| C4b | **白名单域名放行** | PASS：`example.com` 返回 `200` |
+| C5 | **父 Host 崩溃后命令树回收** | PASS：强杀 Host 后命令标记行 10→10（无残留） |
+| C6 | **AbortSignal 回收（Windows）** | PASS：`blocked=true`，3367ms，标记行 4→4 |
+| C7 | 工具链 CMD/PowerShell/Node/npm/Git/Python | 全部 PASS |
+| C7b | Git Bash / MSYS2 | WARN（`exit=3221225794` = STATUS_DLL_INIT_FAILED，确认不支持） |
+
+### 9.2 本轮修复的四个实质问题
+
+1. **Windows AbortSignal 失效（P0）**：原实现用 `process.kill(-pid)`，Windows 无负 PID 进程组语义，且 Host 的信号处理器是 `() => {}` 空实现 → 取消变空操作。修复：新增 `process-tree.ts`，Windows 走 `taskkill /PID <pid> /T /F`；Host 信号处理器真调 `proc.kill()`。
+2. **spawn 竞争窗口（P0）**：停止请求若发生在 `spawnSandboxed()` 返回之前，`proc` 尚未赋值 → `stop()` 空转 → 残留孤儿。修复：spawn 返回后**再次检查 `stopping`** 并立即补杀 + 等 wait。
+3. **宿主机 `%TEMP%` 共享可写（P1）**：SRT 的 `buildMxcRequest()` 无条件把宿主机 `%TEMP%` 加入 `readwritePaths`。修复：Host 启动后先把自身 `process.env.TEMP/TMP/TMPDIR` 指向随机私有目录再 `initialize()`，退出时删除——宿主机原 TEMP 不再进入授权列表。实测 A 写宿主机 TEMP 被拒。
+4. **跨项目读取（P1，评审新发现）**：SRT 默认把系统盘根 `C:\` 放进 `readonlyPaths`，因此项目 A 默认可读项目 B。修复：`SandboxPolicyInput.denyWorkspaces` / `SandboxCommandRequest.denyWorkspaces`，逐项加入 `deniedPaths`。
+
+### 9.3 已完成的配置项
+
+- `package.json`：`engines.node = "^24.21.0 || ^26.8.0"`；`.nvmrc = 24.21.0`。
+- `@microsoft/mxc-sdk` 精确固定 `1.1.0`（原 `^1.1.0`）。
+- Git Bash 能力边界写入 `run_command` 工具描述（不只靠 system prompt）。
+- `allowedDomains` 从请求透传到 SRT `network.allowedDomains`（C4b 实测生效）。
+
+### 9.4 仍待处理
+
+| 项 | 状态 |
+|---|---|
+| 工作区注册表（谁提供 `denyWorkspaces`） | 需 M2-W2 设计：由 RunManager/插件层维护活跃工作区集合，注入每次请求 |
+| Cocos / 真实构建链验证（P1） | 待有真实项目时执行 |
+| 正式安全验收放行 | **未放行**：仍为 CONDITIONAL-GO |
+
+### 9.5 架构基线（已确定）
+
+```
+Windows: SRT + MXC BaseContainer
+  OS 隔离        Microsoft MXC BaseContainer
+  Sandbox 编排   Anthropic SRT 0.0.83
+  执行管理       独立 Sandbox Host（一命令一进程）
+  授权           每命令独立配置（MXC 每次 spawn 携带完整策略，非 Session 级 ACL）
+  文件权限       工作区白名单 + 凭据 denyRead + 其他项目 denyWorkspaces
+  网络           默认拒绝 + allowedDomains 白名单
+  生命周期       spawnSandboxed + taskkill /T /F + stopping 复用检查
+  降级           不允许宿主执行降级
+不再采用：srt-win 作为默认后端 / Windows VM 运行依赖 / Git Bash 作为默认 Shell /
+         宿主机共享 TEMP / 未验证的自动后端切换
+```

@@ -12,6 +12,10 @@ export interface SandboxCommandRequest {
   cwd: string
   timeoutMs?: number
   signal?: AbortSignal
+  /** 其他工作区根（禁读禁写）：跨项目隔离，由工作区注册表或调用方提供 */
+  denyWorkspaces?: readonly string[]
+  /** 允许访问的域名（缺省空 = 网络全拒）；由策略层按命令注入 */
+  allowedDomains?: readonly string[]
   /** 执行身份贯通（runId/executionId 全链路关联，审计用） */
   runId?: string
   executionId?: string
