@@ -162,17 +162,18 @@ interface ToolPermit {
 3. Policy Extension 不主动修改 `event.input`；Tool.execute 对参数做二次 schema 校验；摘要必须与 execute 实收参数一致。
 4. Policy 异常（抛错）时 fail-closed：不签发 Permit，execute 拒绝。
 
-### M1：Agent 自定义工具层（1.5～2 天）
+### M1：Agent 自定义工具层（1.5～2 天）—— 2026-11-25 完成
 
-- [ ] 实现 `agent-tools` Extension：注册 `run_command` / `read_file` / `write_file` / `edit_file`。
-- [ ] 实现 `policy-extension`：tool_call -> Policy Gate -> 按 M0.1 冻结契约签发一次性 Permit。
-- [ ] 实现 `packages/policy-lite/src/permit.ts`：PermitStore（session 隔离、一次性消费、参数摘要、TTL）。
-- [ ] 文件操作全走 Workspace File Service（canonicalize/realpath 校验）。
-- [ ] 未知工具默认拒绝。
-- [ ] PiAgentAdapter 改造：loader 注入受控 factories；`noTools: "builtin"`；兼容现有 allowTools/excludeTools 映射到新工具名；工具执行 signal 与 request.signal 合并。
-- [ ] CommandExecutor 用测试 Mock，**生产链路不增加宿主机直接执行旁路**。
+- [x] 实现 `agent-tools` Extension：注册 `run_command` / `read_file` / `write_file` / `edit_file`。
+- [x] 实现 `policy-extension`：tool_call -> Policy Gate -> 按 M0.1 冻结契约签发一次性 Permit。
+- [x] 实现 `packages/policy-lite/src/permit.ts`：PermitStore（session 隔离、一次性消费、参数摘要、TTL）。
+- [x] 文件操作全走 Workspace File Service（canonicalize/realpath 校验 + symlink 逃逸防护）。
+- [x] 未知工具默认拒绝。
+- [x] PiAgentAdapter 改造：loader 注入受控 factories；`noTools: "builtin"`；旧工具名映射（read->read_file 等）；PermitStore 每调用独立并在 finally 清理。
+- [x] CommandExecutor 用 fail-closed 默认实现（UnavailableCommandExecutor），零宿主机旁路。
+- [x] runId 贯通：AgentRunOptions.runId -> shared.runId -> ctx.runId -> CommandExecutor 审计字段。
 
-验收：Agent 能读写工作区文件、发起 run_command；全部工具过统一权限检查；不再暴露 pi bash；AgentAdapter 的结构化输出/usage/partial/cancel 契约不回归。**Permit 验收（M0.1 遗留两项在此补齐）：并发工具调用 Permit 不串扰；参数摘要不匹配拒绝；plus 错误形态下 CommandExecutor 调用次数为 0 的 end-to-end 断言。**
+验收结果：contract sandbox-m1 18/18（含 M0.1 C2 正式化：错误形态 SDK 放行但第二层拦截、executor 零调用；参数篡改 digest 拒绝；双 store 并发独立）；全量 contract 268/0、engine 222/0、optimizer 65/0；adapter 级 e2e 4/4（fast 档：write_file 落盘 / readBack+结构化输出 / run_command blocked / bash 不可用）。详见 dev-docs/progress-result/M1-受控工具层-执行报告.md。
 
 ### M2：Sandbox Execution 实现（2～3 天）
 
@@ -263,7 +264,8 @@ interface ToolPermit {
 | 2026-11-24 | v1 文档创建 | done | 定位 Sandbox 适配器 + tool_call 拦截 |
 | 2026-11-25 | v2 修订 | done | 重构定位；SDK 1.3.0 六项判断核实（一项修正：workflow-runtime 有 exec/execFile 旁路）；旁路清单定为 4 处 |
 | 2026-11-25 | M0 探针验证 | done | probe 6/6 PASS（零模型 A1-A4 + fast 档 B1/B2）；沉淀 tool_call 返回形态安全坑；接口冻结与 runId 贯通移入 M1 |
-| 2026-11-25 | v3 + M0.1 安全契约 | **done** | 评审意见落地：probe 删 as never（tsc strict 零错误）；双阶段 Permit 防线实证（C2：错误形态 SDK 静默放行但第二层拦住，entered=1 executed=0）；PermitStore 契约冻结；旁路清单 5 处；VM 边界精确化；新增工程原则。probe 10/10 PASS |
+| 2026-11-25 | v3 + M0.1 安全契约 | done | 评审意见落地：probe 删 as never（tsc strict 零错误）；双阶段 Permit 防线实证（C2：错误形态 SDK 静默放行但第二层拦住，entered=1 executed=0）；PermitStore 契约冻结；旁路清单 5 处；VM 边界精确化；新增工程原则。probe 10/10 PASS |
+| 2026-11-25 | M1 受控工具层 | **done** | policy-lite + execution 两个 L1 包落地；policy-extension/agent-tools 双阶段防线；PiAgentAdapter noTools+受控注入+旧名映射；runId 贯通；contract 268/0 + engine 222/0 + optimizer 65/0 + e2e 4/4（fast）。报告：progress-result/M1-受控工具层-执行报告.md |
 
 ## 9. 参考引用
 

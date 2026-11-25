@@ -41,6 +41,11 @@ export interface AgentRunOptions {
    * 格式 runId:callIndex:attempt）；缺省时 Adapter 自造 UUID 兼容旧调用方。脚本不可见。
    */
   executionId?: string
+  /**
+   * 所属 workflow run 标识（M1：执行身份全链路贯通，CommandExecutor 审计关联）。
+   * 缺省空串兼容旧调用方；脚本不可见。
+   */
+  runId?: string
 }
 
 /**

@@ -63,8 +63,8 @@ export function agentAdapterToRunner(adapter: AgentAdapter): AgentSessionRunner 
       }
       const ctx: ExecutionContext = {
         executionId,
-        // AgentRunOptions 无 runId 字段（runtime 零修改原则）；Adapter 日志关联以 executionId 为准
-        runId: "",
+        // M1：runId 从 Runtime 贯通（AgentRunOptions.runId），审计与执行层关联
+        runId: options?.runId ?? "",
         phase: options?.phase,
       }
       // F-20 对齐：Adapter 一建会话就回调 sessionId（经由 onEvent，见各 Adapter 实现）

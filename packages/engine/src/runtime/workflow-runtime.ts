@@ -932,6 +932,8 @@ async function executeWorkflow(
               signal: attemptController.signal,
               // v5：Runtime 注入 executionId（Runtime 与 Adapter ID 体系统一）
               executionId,
+              // M1：runId 贯通（CommandExecutor 审计关联；执行计划 v3 D 系列）
+              runId: shared.runId,
               onUsage: (usage: AgentUsage) => {
                 record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
                 record.cost = (record.cost ?? 0) + (usage.cost ?? 0)

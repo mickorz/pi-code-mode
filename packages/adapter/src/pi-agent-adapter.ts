@@ -23,6 +23,15 @@ import {
 import os from "node:os"
 import path from "node:path"
 import type { Model } from "@earendil-works/pi-ai"
+import {
+  UnavailableCommandExecutor,
+  WorkspaceFileService,
+  type CommandExecutor,
+} from "../../execution/src/index.js"
+import { PermitStore } from "../../policy-lite/src/index.js"
+import type { PolicyConfig } from "../../policy-lite/src/types.js"
+import { createAgentToolsExtension } from "./extensions/agent-tools.js"
+import { createPolicyExtension } from "./extensions/policy-extension.js"
 import type { AgentAdapter, AgentEvent, AgentRequest, AgentResult, ExecutionContext } from "./types.js"
 import { validateStructured } from "./structured.js"
 import { resolveModelSpec } from "./model-spec.js"
@@ -30,11 +39,23 @@ import { createPartialBuffer } from "./partial-buffer.js"
 
 const DEFAULT_AGENT_DIR = path.join(os.homedir(), ".pi", "agent")
 
+/** pi 内置工具名 -> 受控工具名映射（兼容旧 workflow 脚本/allowTools 配置） */
+const TOOL_NAME_MIGRATION: Readonly<Record<string, string>> = {
+  read: "read_file",
+  bash: "run_command",
+  edit: "edit_file",
+  write: "write_file",
+}
+
 export interface PiAgentAdapterOptions {
   /** pi 全局配置目录，默认 ~/.pi/agent */
   agentDir?: string
   /** 会话工作目录，默认 process.cwd()（worktree 隔离时由 Engine 传入 worktree 路径） */
   defaultCwd?: string
+  /** 命令执行器（M2 接 SRT 沙盒；缺省 fail-closed 拒绝一切真实执行） */
+  commandExecutor?: CommandExecutor
+  /** Policy 配置（类别级规则；缺省内置保守规则） */
+  policy?: PolicyConfig
 }
 
 /** 剥掉 markdown 代码围栏后尝试 JSON.parse（P0 基础结构化透传） */
@@ -46,12 +67,17 @@ function parseStructured(raw: string): unknown {
 export class PiAgentAdapter implements AgentAdapter {
   private readonly agentDir?: string
   private readonly defaultCwd?: string
+  /** 命令执行器（M1 默认 fail-closed；M2 替换为 SRT 沙盒实现） */
+  private readonly commandExecutor: CommandExecutor
+  private readonly policy?: PolicyConfig
   /** executionId -> 在途会话（cancel 路由） */
   private readonly inflight = new Map<string, AgentSession>()
 
   constructor(options: PiAgentAdapterOptions = {}) {
     this.agentDir = options.agentDir
     this.defaultCwd = options.defaultCwd
+    this.commandExecutor = options.commandExecutor ?? new UnavailableCommandExecutor()
+    this.policy = options.policy
   }
 
   async execute(request: AgentRequest, ctx: ExecutionContext): Promise<AgentResult> {
@@ -62,7 +88,27 @@ export class PiAgentAdapter implements AgentAdapter {
     // noExtensions 默认 true：子会话不加载宿主扩展，递归编排通道关闭（M0 recursive-guard PASS）
     // 注：子 Agent 不再装配 MCP（2026-11-18 用户决策：workflow 直调为唯一 MCP 通道），见 workflow-runtime 的 mcp 池
     const agentDir = this.agentDir ?? DEFAULT_AGENT_DIR
-    const loader = new DefaultResourceLoader({ cwd, agentDir, noExtensions: policy.noExtensions !== false })
+    // M1 受控执行层：每个子代理调用独立的 PermitStore（session 隔离，禁止全局共享）
+    const permits = new PermitStore()
+    const files = new WorkspaceFileService(cwd)
+    const extensionDeps = {
+      permits,
+      files,
+      executor: this.commandExecutor,
+      policy: this.policy,
+      runId: ctx.runId || undefined,
+      executionId: ctx.executionId,
+    }
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      noExtensions: policy.noExtensions !== false,
+      // M1：受控扩展注入（policy 授权 + 受控工具），不加载任何用户/项目磁盘扩展
+      extensionFactories: [
+        { name: "pcm-policy", factory: createPolicyExtension(extensionDeps) },
+        { name: "pcm-agent-tools", factory: createAgentToolsExtension(extensionDeps) },
+      ],
+    })
     await loader.reload()
 
     let session: AgentSession
@@ -80,12 +126,16 @@ export class PiAgentAdapter implements AgentAdapter {
       const created = await createAgentSession({
         cwd,
         agentDir: this.agentDir,
+        // M1：禁用 pi 内置 read/bash/edit/write（执行权下沉：命令/文件只走受控工具）
+        noTools: "builtin",
         sessionManager: SessionManager.inMemory(),
         settingsManager: SettingsManager.create(cwd, agentDir),
         resourceLoader: loader,
         ...(sessionModel ? { model: sessionModel } : {}),
         ...(thinkingLevel ? { thinkingLevel: thinkingLevel as never } : {}),
-        ...(request.tools?.allowTools ? { tools: request.tools.allowTools } : {}),
+        ...(request.tools?.allowTools
+          ? { tools: request.tools.allowTools.map((t) => TOOL_NAME_MIGRATION[t] ?? t) }
+          : {}),
         ...(policy.excludeTools ? { excludeTools: policy.excludeTools } : {}),
       })
       session = created.session
@@ -212,6 +262,8 @@ export class PiAgentAdapter implements AgentAdapter {
     } finally {
       // 无条件退订（成功/异常/取消都释放 session 监听）
       unsubSession?.()
+      // 会话结束：未消费 Permit 自然过期，主动清空释放内存（session 隔离生命周期）
+      permits.clear()
       // 终态前把最后一段增量冲出去（节流窗口内的残余），随后停表
       partialBuffer.flush()
       partialBuffer.dispose()

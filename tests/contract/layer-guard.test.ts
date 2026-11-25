@@ -2,7 +2,7 @@
  * 分层守卫（架构强制）：packages/* 与 apps/* 的 import 方向必须只向下。
  *
  * 层划分（数值越小越基础，上层可 import 下层，禁止反向）：
- *   L1 基础设施   utils、mcp
+ *   L1 基础设施   utils、mcp、policy-lite、execution（安全横切层，只依赖 node 内建）
  *   L2 内核       engine
  *   L3 宿主适配   adapter
  *   L4 宿主服务   manager、tools、explorer
@@ -20,6 +20,8 @@ const ROOT = path.resolve(import.meta.dirname, "../..")
 const LAYERS: Record<string, number> = {
   utils: 1,
   mcp: 1,
+  "policy-lite": 1,
+  execution: 1,
   engine: 2,
   adapter: 3,
   manager: 4,
