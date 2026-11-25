@@ -85,7 +85,8 @@ export class PiAgentAdapter implements AgentAdapter {
     const policy = request.tools ?? {}
     const emit = (event: AgentEvent) => ctx.onEvent?.(event)
 
-    // noExtensions 默认 true：子会话不加载宿主扩展，递归编排通道关闭（M0 recursive-guard PASS）
+    // M1.1 安全收口：noExtensions 固定 true（不可配置）。扩展运行在宿主进程不受 Sandbox 约束，
+    // 开放磁盘扩展 = 绕过 Policy Gate / Permit / CommandExecutor 全部防线。
     // 注：子 Agent 不再装配 MCP（2026-11-18 用户决策：workflow 直调为唯一 MCP 通道），见 workflow-runtime 的 mcp 池
     const agentDir = this.agentDir ?? DEFAULT_AGENT_DIR
     // M1 受控执行层：每个子代理调用独立的 PermitStore（session 隔离，禁止全局共享）
@@ -102,7 +103,7 @@ export class PiAgentAdapter implements AgentAdapter {
     const loader = new DefaultResourceLoader({
       cwd,
       agentDir,
-      noExtensions: policy.noExtensions !== false,
+      noExtensions: true,
       // M1：受控扩展注入（policy 授权 + 受控工具），不加载任何用户/项目磁盘扩展
       extensionFactories: [
         { name: "pcm-policy", factory: createPolicyExtension(extensionDeps) },

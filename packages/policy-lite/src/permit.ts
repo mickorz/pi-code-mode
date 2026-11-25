@@ -18,7 +18,7 @@ import { createHash } from "node:crypto"
 export interface ToolPermit {
   toolCallId: string
   toolName: string
-  /** SHA-256(稳定序列化参数) 前 16 位：防 handler 改 input 后不重校验（SDK 契约） */
+  /** SHA-256(稳定序列化参数) 完整 64 位十六进制：防 handler 改 input 后不重校验（SDK 契约） */
   paramsDigest: string
   issuedAt: number
   expiresAt: number
@@ -27,7 +27,7 @@ export interface ToolPermit {
 /** 缺省 60s：一次工具调用从授权到执行的窗口上限 */
 export const PERMIT_TTL_MS = 60_000
 
-/** 参数稳定摘要：键序无关（排序后序列化），任何嵌套层级均可哈希 */
+/** 参数稳定摘要：键序无关（排序后序列化），任何嵌套层级均可哈希；完整 SHA-256 无截断 */
 export function paramsDigest(params: unknown): string {
   const stable = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(stable)
@@ -40,7 +40,7 @@ export function paramsDigest(params: unknown): string {
     }
     return value
   }
-  return createHash("sha256").update(JSON.stringify(stable(params))).digest("hex").slice(0, 16)
+  return createHash("sha256").update(JSON.stringify(stable(params))).digest("hex")
 }
 
 export class PermitStore {
@@ -62,20 +62,18 @@ export class PermitStore {
 
   /**
    * 一次性消费（Tool.execute 调用）：按 toolCallId 查找 -> 工具名 -> 参数摘要 -> 过期
-   * -> 删除 -> 放行。任一失败 fail-closed 返回 false，不暴露失败原因给模型以外的层。
+   * -> 删除 -> 放行。任一校验失败即销毁凭证（M1.1：失败尝试不得保留重试机会）。
    */
   consume(toolCallId: string, toolName: string, params: unknown): boolean {
     const p = this.permits.get(toolCallId)
-    if (
-      !p ||
-      p.toolName !== toolName ||
-      p.paramsDigest !== paramsDigest(params) ||
-      p.expiresAt < Date.now()
-    ) {
-      return false
-    }
+    if (!p) return false
+    const ok =
+      p.toolName === toolName &&
+      p.paramsDigest === paramsDigest(params) &&
+      p.expiresAt >= Date.now()
+    // 找到凭证后无论校验结果如何都销毁：正确消费、过期、篡改、错名一次全部作废
     this.permits.delete(toolCallId)
-    return true
+    return ok
   }
 
   /** 会话收尾清理（dispose 时调用；未消费 Permit 自然过期失效） */

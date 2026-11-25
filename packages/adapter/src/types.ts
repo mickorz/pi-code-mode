@@ -6,11 +6,13 @@
  * 由 agent-adapter.ts 的 agentAdapterToRunner() 做契约桥接；本文件是契约的标准定义。
  */
 
-/** 工具策略：excludeTools 支持通配符（pi SDK 原生）；noExtensions 默认 true 防递归。
- *  注：子 Agent 不再做 MCP 装配（2026-11-18 用户决策：workflow 直调为唯一 MCP 通道），MCP 走 workflow-runtime 的 mcp 池 */
+/** 工具策略：excludeTools 支持通配符（pi SDK 原生）。
+ * 注 1：子 Agent 不再做 MCP 装配（2026-11-18 用户决策：workflow 直调为唯一 MCP 通道），MCP 走 workflow-runtime 的 mcp 池。
+ * 注 2：noExtensions 已固定为 true（M1.1 安全收口，不可配置）：扩展运行在 Agent 宿主进程，
+ * 不受 Sandbox 约束，一旦加载不可信磁盘扩展即绕过 Policy Gate / Permit / CommandExecutor 全部防线。
+ * 未来开放第三方扩展必须走宿主层可信白名单，不是开放 noExtensions。 */
 export type ToolPolicy = {
   excludeTools?: string[]
-  noExtensions?: boolean
   allowTools?: string[]
 }
 

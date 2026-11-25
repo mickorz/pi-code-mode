@@ -28,8 +28,6 @@ export interface PolicyResult {
 }
 
 export interface PolicyConfig {
-  /** 额外放行的工具名（受控 4 工具之外的白名单；缺省空） */
-  extraTools?: readonly string[]
   /** 危险命令黑名单开关（缺省启用） */
   dangerousCommandsEnabled?: boolean
 }

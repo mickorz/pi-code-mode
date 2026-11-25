@@ -175,6 +175,21 @@ interface ToolPermit {
 
 验收结果：contract sandbox-m1 18/18（含 M0.1 C2 正式化：错误形态 SDK 放行但第二层拦截、executor 零调用；参数篡改 digest 拒绝；双 store 并发独立）；全量 contract 268/0、engine 222/0、optimizer 65/0；adapter 级 e2e 4/4（fast 档：write_file 落盘 / readBack+结构化输出 / run_command blocked / bash 不可用）。详见 dev-docs/progress-result/M1-受控工具层-执行报告.md。
 
+### M1.1：安全收尾（M2 前置，2026-11-25 完成）
+
+评审发现的 5 个问题全部修复（P0×2 / P1×2 / P2×1 + 2 个小项）：
+
+- [x] **P0 noExtensions 固定 true**：ToolPolicy 删除 noExtensions 字段（不可配置）。理由：扩展运行在 Agent 宿主进程不受 Sandbox 约束，加载不可信磁盘扩展 = 绕过 Policy Gate / Permit / CommandExecutor 全部防线。未来开放第三方扩展走宿主层可信白名单，不是开放 noExtensions。
+- [x] **P0 extraTools 删除**：受控 4 工具之外一律 deny（evaluate.ts）。未来新增工具必须同时接入 Tool Gateway 的 Permit 消费，不允许先放行再补防线。新增测试：任意未知工具名（web_fetch/mcp_call/custom_tool 等）deny。
+- [x] **P1 TOCTOU 加固**：openWithin（canonicalize 边界 + lstat 拒绝 symlink 最终组件 + create 用 wx（O_CREAT|O_EXCL 不跟随最终 symlink）+ 打开后 fstat 与 lstat dev/ino 复核）；全部 IO 从 FileHandle（fd）走，打开后不再路径解析。攻击测试 2 个（Windows 无特权 file-symlink EPERM 时显式 skip，Linux/CI 跑全量）。**残余风险已注释声明**：中间目录整链在检查后替换的窗口仍在（Node 无 openat），由 M2 沙盒策略收窄 + FileService 拒绝 symlink 最终组件缓解，OS 级完整隔离依赖 M2 SRT。
+- [x] **P1 AbortSignal 贯通**：agent-tools execute 接收 SDK 第三参 signal（Engine abort -> session.abort -> 工具 signal）→ FileService 读 / CommandExecutor 请求；e2e E3b 实证 signals=passed。M2 起一路到 Sandbox Host 进程组。
+- [x] **P2 e2e 确定性加强**：E0 零模型直查 SDK 工具清单（恰好受控 4 工具、零 builtin 泄漏）；E3 注入 CountingExecutor 断言调用次数=1（SDK 真实执行了工具的证据，不依赖模型自述）+ blocked + signal。模型自述 / SDK 执行 / 副作用层三层证据分离。
+- [x] **小项 Permit 强化**：完整 SHA-256（无截断）；consume 找到凭证后无论校验结果如何一律销毁（失败尝试不得保留重试机会），测试覆盖。
+
+**过程中抓到并修复 1 个真 bug**：fd 化后 edit 的读后写从 fd 尾部追加（FileHandle position 语义），详见 `dev-docs/experience/filehandle-write-after-read-appends-at-position.md`。
+
+验收：sandbox-m1 22/22；全量 contract 272/0、engine 222/0；build 零错误；e2e 5/5（E0 零模型工具清单 + E1 落盘 + E2 读回/结构化 + E3 确定性 + E3b signal）。
+
 ### M2：Sandbox Execution 实现（2～3 天）
 
 - [ ] 引入并固定 `@anthropic-ai/sandbox-runtime` 版本（PiBot 用 0.0.81，按当前可用版固定）。

@@ -18,8 +18,10 @@ export const CONTROLLED_TOOLS: Readonly<Record<string, ToolCategory>> = {
 }
 
 export function evaluateToolCall(input: PolicyInput, config: PolicyConfig = {}): PolicyResult {
+  // M1.1：白名单已删除——受控 4 工具之外一律 deny。未来新增工具必须同时接入 Tool Gateway
+  // 的 Permit 消费（agent-tools guarded() 包装），不允许先放行再补防线（评审 P0 结论）。
   const category = CONTROLLED_TOOLS[input.toolName]
-  if (!category && !(config.extraTools ?? []).includes(input.toolName)) {
+  if (!category) {
     return { decision: "deny", reason: "unknown_tool" }
   }
   if (category === "run_command") {

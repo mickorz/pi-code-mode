@@ -15,6 +15,7 @@ import { isProtectedPath } from "../../packages/policy-lite/src/protected-paths.
 import {
   UnavailableCommandExecutor,
   WorkspaceFileService,
+  openWithin,
   resolveWithin,
   PathBoundaryError,
   type CommandExecutor,
@@ -34,17 +35,20 @@ test("Permit: 一次性消费（第二次拒绝）", () => {
   assert.equal(store.size, 0)
 })
 
-test("Permit: 参数摘要不匹配拒绝（键序无关哈希）", () => {
+test("Permit: 参数摘要不匹配拒绝（键序无关哈希）+ 失败即销毁", () => {
   const store = new PermitStore()
   store.issue("call-1", "write_file", { path: "a", content: "x" })
   assert.equal(store.consume("call-1", "write_file", { path: "a", content: "y" }), false)
+  // M1.1：失败尝试已销毁凭证，同参数重试也拒绝（不得保留重试机会）
+  assert.equal(store.consume("call-1", "write_file", { path: "a", content: "x" }), false)
+  assert.equal(store.size, 0)
   // 同参数不同键序：摘要一致，应放行
   const store2 = new PermitStore()
   store2.issue("call-2", "write_file", { path: "a", content: "x" })
   assert.equal(store2.consume("call-2", "write_file", { content: "x", path: "a" }), true)
 })
 
-test("Permit: 过期拒绝 + 工具名不匹配拒绝", async () => {
+test("Permit: 过期拒绝 + 工具名不匹配拒绝（均销毁）", async () => {
   const store = new PermitStore()
   const permit = store.issue("call-1", "run_command", { command: "ls" })
   // 手工老化：改 expiresAt 为过去
@@ -52,10 +56,11 @@ test("Permit: 过期拒绝 + 工具名不匹配拒绝", async () => {
   internal.permits.get("call-1")!.expiresAt = Date.now() - 1
   void permit
   assert.equal(store.consume("call-1", "run_command", { command: "ls" }), false)
-  // 工具名不符
+  // 工具名不符（也销毁）
   const store2 = new PermitStore()
   store2.issue("call-2", "read_file", { path: "a" })
   assert.equal(store2.consume("call-2", "write_file", { path: "a" }), false)
+  assert.equal(store2.consume("call-2", "read_file", { path: "a" }), false)
 })
 
 test("Permit: 并发工具调用不串扰（两个独立 store = 两个 session）", async () => {
@@ -325,5 +330,80 @@ test("双阶段: Permit 参数摘要不一致（execute 参数被中途篡改）
     assert.ok(result.content[0].text.includes("permit denied"))
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+// ── M1.1：TOCTOU 加固与 symlink 攻击面 ──
+
+test("M1.1 TOCTOU: 目标被换成 symlink 后写入被拒（lstat 判定）", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-toctou-"))
+  try {
+    const svc = new WorkspaceFileService(root)
+    await svc.write("target.txt", "original")
+    // 攻击模拟：检查通过后（这里直接构造最终态）目标被换成指向工作区外的 symlink
+    const { symlink, rm } = await import("node:fs/promises")
+    await rm(path.join(root, "target.txt"))
+    // Windows 无特权创建 file-symlink 会 EPERM：该断言依赖 Linux/CI 或开发者模式，跳过但不静默
+    try {
+      await symlink(path.join(root, "..", "outside-secret.txt"), path.join(root, "target.txt"))
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EPERM") {
+        console.log("  [skip] Windows 无特权无法创建 file-symlink，完整断言在 Linux/CI 执行")
+        return
+      }
+      throw e
+    }
+    // lstat 发现最终组件是 symlink：拒绝（写到外部 = 绕过边界）
+    await assert.rejects(() => svc.write("target.txt", "pwned"), PathBoundaryError)
+    await assert.rejects(() => svc.read("target.txt"), PathBoundaryError)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("M1.1 TOCTOU: openWithin fd 复核——create 用 wx 不跟随最终 symlink", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-toctou2-"))
+  try {
+    const { symlink } = await import("node:fs/promises")
+    // 预置一个指向外部的 symlink，create 场景下内核 O_CREAT|O_EXCL 不跟随
+    try {
+      await symlink(path.join(root, "..", "evil.txt"), path.join(root, "trap.txt"))
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EPERM") {
+        console.log("  [skip] Windows 无特权无法创建 file-symlink，完整断言在 Linux/CI 执行")
+        return
+      }
+      throw e
+    }
+    await assert.rejects(() => openWithin(root, path.join(root, "trap.txt"), "create"), PathBoundaryError)
+    // 正常 create 仍可用
+    const h = await openWithin(root, path.join(root, "fresh.txt"), "create")
+    await h.writeFile("ok", "utf8")
+    await h.close()
+    const { readFile } = await import("node:fs/promises")
+    assert.equal(await readFile(path.join(root, "fresh.txt"), "utf8"), "ok")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("M1.1 signal: FileService 读写在 signal 中止后拒绝", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-signal-"))
+  try {
+    const svc = new WorkspaceFileService(root)
+    await svc.write("big.txt", "x".repeat(1024))
+    const aborted = AbortSignal.abort()
+    await assert.rejects(() => svc.read("big.txt", aborted))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("M1.1 evaluate: 受控工具之外一律 deny（extraTools 已删除）", () => {
+  // 任意未知工具名（含模拟未来的自定义工具）都 deny，无论 config 如何传
+  for (const name of ["web_fetch", "mcp_call", "custom_tool", "list_dir"]) {
+    const r = evaluateToolCall({ toolName: name, input: {}, cwd: "/w" }, {})
+    assert.equal(r.decision, "deny")
+    assert.equal(r.reason, "unknown_tool")
   }
 })

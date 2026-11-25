@@ -13,10 +13,14 @@ import type { ControlledExtensionDeps } from "./types.js"
 
 export function createAgentToolsExtension(deps: ControlledExtensionDeps) {
   const factory = (pi: ExtensionAPI): void => {
-    /** 第二阶段防线包装：无有效 Permit 一律拒绝真实执行 */
+    /** 第二阶段防线包装：无有效 Permit 一律拒绝真实执行；signal 贯通到执行层（M1.1） */
     const guarded = (
       name: string,
-      handler: (toolCallId: string, params: Record<string, unknown>) => Promise<{ text: string }>,
+      handler: (
+        toolCallId: string,
+        params: Record<string, unknown>,
+        signal: AbortSignal | undefined,
+      ) => Promise<{ text: string }>,
     ): ToolDefinition => ({
       name,
       label: name,
@@ -30,7 +34,9 @@ export function createAgentToolsExtension(deps: ControlledExtensionDeps) {
         ...(name === "edit_file" ? { path: Type.String(), oldText: Type.String(), newText: Type.String() } : {}),
         ...(name === "run_command" ? { command: Type.String(), timeoutMs: Type.Optional(Type.Number()) } : {}),
       }),
-      execute: async (toolCallId: string, params: Record<string, unknown>) => {
+      // SDK 契约：execute(toolCallId, params, signal, onUpdate, ctx)——第三参即会话级 AbortSignal
+      // （Engine abort -> session.abort -> 工具执行 signal），M2 起一路贯通到 Sandbox Host 进程组
+      execute: async (toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) => {
         if (!deps.permits.consume(toolCallId, name, params)) {
           deps.onPermitDenied?.({ toolName: name, toolCallId })
           return {
@@ -38,38 +44,39 @@ export function createAgentToolsExtension(deps: ControlledExtensionDeps) {
             details: undefined,
           }
         }
-        const outcome = await handler(toolCallId, params)
+        const outcome = await handler(toolCallId, params, signal)
         return { content: [{ type: "text", text: outcome.text }], details: undefined }
       },
     })
 
     pi.registerTool(
-      guarded("read_file", async (_id, params) => {
-        const text = await deps.files.read(String(params.path))
+      guarded("read_file", async (_id, params, signal) => {
+        const text = await deps.files.read(String(params.path), signal)
         return { text }
       }),
     )
     pi.registerTool(
-      guarded("write_file", async (_id, params) => {
-        await deps.files.write(String(params.path), String(params.content))
+      guarded("write_file", async (_id, params, signal) => {
+        await deps.files.write(String(params.path), String(params.content), signal)
         return { text: `written: ${String(params.path)}` }
       }),
     )
     pi.registerTool(
-      guarded("edit_file", async (_id, params) => {
-        const outcome = await deps.files.edit(String(params.path), String(params.oldText), String(params.newText))
+      guarded("edit_file", async (_id, params, signal) => {
+        const outcome = await deps.files.edit(String(params.path), String(params.oldText), String(params.newText), signal)
         return { text: `edited: ${outcome.path}（1 处替换）` }
       }),
     )
     pi.registerTool(
-      guarded("run_command", async (_id, params) => {
+      guarded("run_command", async (toolCallId, params, signal) => {
         const result = await deps.executor.execute({
           command: String(params.command),
           cwd: deps.files.root,
           timeoutMs: typeof params.timeoutMs === "number" ? params.timeoutMs : undefined,
+          signal, // M1.1：Engine abort -> session.abort -> 此处 -> Sandbox Host（M2 进程组终止）
           runId: deps.runId,
           executionId: deps.executionId,
-          toolCallId: _id,
+          toolCallId,
         })
         if (result.blocked) {
           return { text: `blocked: ${result.blockReason ?? "command_blocked"}` }
