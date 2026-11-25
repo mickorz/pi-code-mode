@@ -90,14 +90,25 @@ Workspace File Service        CommandExecutor（Sandbox Execution）
 
 目标：证明不修改 Pi SDK 即可实现受控工具注入。
 
-- [ ] 创建 `dev-examples/sandbox-agent-probe/`，<100 行测试扩展。
-- [ ] `DefaultResourceLoader({ noExtensions: true, extensionFactories: [probeExt] })` + `createAgentSession({ noTools: "builtin" })`。
-- [ ] 验证：自定义工具注册成功；内置 read/bash/edit/write 不可见；用户全局扩展未加载（probe 扩展 setup 日志为唯一来源）；tool_call 事件可拦截（block 生效）；取消信号传递到工具执行过程。
-- [ ] 零模型验证优先：工具注册/禁用/扩展加载均通过 session 工具清单与扩展 setup 日志断言，不烧 token；tool_call 端到端拦截若需走模型，按 model-tiers 规范先确认档位（建议 fast）。
-- [ ] 冻结接口：`AgentToolRuntime`、`CommandExecutor`、`SandboxCommandRequest/Result`。
-- [ ] 修复执行身份：`AgentRunOptions` 增加 `runId`；workflow-runtime 传 `shared.runId`；agent-adapter.ts 去除 `runId: ""` 硬编码；保留 executionId 体系。
+- [x] 创建 `dev-examples/sandbox-agent-probe/`（probe.ts，零模型段 + `--with-model <tier>` 模型段）。
+- [x] `DefaultResourceLoader({ noExtensions: true, extensionFactories: [probeExt] })` + `createAgentSession({ noTools: "builtin" })`。
+- [x] 验证：自定义工具注册成功；内置工具不可见；用户全局扩展未加载；tool_call 拦截 block 生效；abort 不抛异常。
+- [x] 零模型验证优先：A1-A4 用 session 工具清单与 extensionsResult 断言，零 token；tool_call 端到端走 fast 档（2026-11-25 用户确认）。
+- [ ] 冻结接口：`AgentToolRuntime`、`CommandExecutor`、`SandboxCommandRequest/Result`（M1 开工时定稿）。
+- [ ] 修复执行身份：`AgentRunOptions` 增加 `runId`；workflow-runtime 传 `shared.runId`；agent-adapter.ts 去除 `runId: ""` 硬编码（M1 一并做，避免单独动 adapter）。
 
-验收：自定义工具在 noExtensions=true 下可执行；用户扩展零加载；内置工具不可用；tool_call 拦截生效；Workflow Engine 调度语义不变。
+**M0 验证结论（2026-11-25，全部 PASS）**：
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| A1 probe 扩展 setup 运行 | PASS | `loaded=["probe-extension-setup"]` |
+| A2 用户/项目扩展零加载 | PASS | 真实 `~/.pi/agent`（装有用户扩展）下 `extensions=["<inline:m0-probe>"]`，磁盘扩展零加载 |
+| A3 内置工具全部禁用 | PASS | `active=["m0_probe_tool"]`，read/bash/edit/write/powershell/grep/find/ls 全部不可见 |
+| A4 自定义工具在 active | PASS | 同上 |
+| B1 tool_call 拦截 block 生效 | PASS | fast 档（deepseek-v4.1-flash）真实模型调用，handler block 后 toolResult `isError=true`（模型重试再次被拦） |
+| B2 abort 不抛异常 | PASS | abort 路径执行；严格信号传播断言留 M1 CommandExecutor |
+
+**踩坑沉淀（安全级）**：tool_call handler 返回 `{ action: "block" }`（错形态）时 pi 静默放行工具，不报错——详见 `dev-docs/experience/pi-tool-call-handler-wrong-result-shape-silent-pass.md`。正确形态是 `ToolCallEventResult { block?: boolean, reason?: string }`。M1 policy gate 必须有 end-to-end contract 测试断言“block 后 isError=true”，禁止只断言 handler 被调用；禁止对 handler 返回值 `as never`。
 
 ### M1：Agent 自定义工具层（1.5～2 天）
 
@@ -189,7 +200,7 @@ Workspace File Service        CommandExecutor（Sandbox Execution）
 |---|---|---|---|
 | 2026-11-24 | v1 文档创建 | done | 定位 Sandbox 适配器 + tool_call 拦截 |
 | 2026-11-25 | v2 修订 | done | 重构定位；SDK 1.3.0 六项判断核实（一项修正：workflow-runtime 有 exec/execFile 旁路）；旁路清单定为 4 处 |
-| （待填） | M0 | pending | |
+| 2026-11-25 | M0 探针验证 | **done** | probe 6/6 PASS（零模型 A1-A4 + fast 档 B1/B2）；沉淀 tool_call 返回形态安全坑；接口冻结与 runId 贯通移入 M1 |
 
 ## 9. 参考引用
 
