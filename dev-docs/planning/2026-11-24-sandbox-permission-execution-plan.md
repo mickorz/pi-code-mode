@@ -190,7 +190,11 @@ interface ToolPermit {
 
 验收：sandbox-m1 22/22；全量 contract 272/0、engine 222/0；build 零错误；e2e 5/5（E0 零模型工具清单 + E1 落盘 + E2 读回/结构化 + E3 确定性 + E3b signal）。
 
-### M2：Sandbox Execution 实现（2～3 天）
+### M2：Sandbox Execution 实现（2～3 天）—— 第一批完成（2026-11-25，Mac 实测待跑）
+
+**第一批交付（M2.0/M2.1 基础实现）**：`sandbox-config.ts`（工作区可写/凭据禁读/网络 strictAllowlist 全拒/环境变量黑名单/绝对路径规范化）、`sandbox-host.ts`（一命令一 Host、stdin 单行 JSON、fd3 控制通道 ready/failed/violations/exit、进程组回收）、`srt-executor.ts`（abort/timeout 杀组 + drain + Windows 拒绝）、`command/factory.ts`（平台工厂）、插件装配 `createCommandExecutor()`。SRT 精确固定 `0.0.81`。
+本机（Windows）已验证：build 零错误、sandbox-m2 9/9、contract 285/0、engine 222/0、e2e 5/5、Host 协议自检（`failed 125` + 命令零执行）。**M2.0 五项验收脚本 `dev-examples/sandbox-agent-probe/m2-check.ts` 待 Mac mini 执行**。详见 `dev-docs/progress-result/M2.0-沙盒执行层第一批-执行报告.md`。
+
 
 - [ ] 引入并固定 `@anthropic-ai/sandbox-runtime` 版本（PiBot 用 0.0.81，按当前可用版固定）。
 - [ ] `packages/execution/src/sandbox/`：sandbox-config / sandbox-host（独立宿主进程）/ sandbox-manager / violations。

@@ -1,3 +1,6 @@
 export * from "./command/types.js"
 export * from "./files/path-boundary.js"
 export * from "./files/workspace-file-service.js"
+export * from "./sandbox/sandbox-config.js"
+export * from "./sandbox/srt-executor.js"
+export * from "./command/factory.js"

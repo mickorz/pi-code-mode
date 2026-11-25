@@ -27,6 +27,7 @@ import { PiScheduleRunner } from "../../../packages/manager/src/pi-schedule-runn
 import { ScheduleRuntime } from "../../../packages/engine/src/schedule/runtime.js"
 import { loadModelTiers } from "../../../packages/engine/src/agent/model-tiers.js"
 import { PiAgentAdapter } from "../../../packages/adapter/src/pi-agent-adapter.js"
+import { createCommandExecutor } from "../../../packages/execution/src/index.js"
 import {
   makeWorkflowTool,
   makeWorkflowControlTool,
@@ -92,7 +93,12 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
     runManager,
     eventBus: getRuntimeEventBus(),
     journal: runJournal,
-    adapterFactory: () => withGlobalGate(new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd() }), runManager.gate),
+    // M2：命令执行器按平台选择（darwin/linux = SRT 沙盒；Windows = isolation_unavailable，绝不降级）
+    adapterFactory: () =>
+      withGlobalGate(
+        new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd(), commandExecutor: createCommandExecutor() }),
+        runManager.gate,
+      ),
     cwd,
     // 模型分层解析（R3 P2）：tier 名 -> provider/modelId（未配置的 tier 回退会话默认模型）；
     // 数组档位回退首模型（池缺失环境如 print 模式直调时的兼容面，正常链路走 resolveTierPool）
