@@ -34,7 +34,7 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.81",
+    "@anthropic-ai/sandbox-runtime": "0.0.83",
     "acorn": "^8.16.0",
     "cron-parser": "^5.10.5"
   },

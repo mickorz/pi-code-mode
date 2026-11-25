@@ -49,6 +49,11 @@ export interface SandboxPolicyInput {
   workspace: string
   /** 额外允许访问的域名（缺省空 = 网络全拒） */
   allowedDomains?: readonly string[]
+  /**
+   * Windows 沙盒后端（仅 win32 生效，SRT >= 0.0.83）：显式 'srt-win'，
+   * 不启用实验性 MXC（避免同时引入两套 Windows 沙盒技术）。
+   */
+  windowsBackend?: "srt-win" | "mxc"
 }
 
 /** 规范化绝对路径：解析相对路径 + 消解 symlink（工作区不存在时退回 resolve 结果） */
@@ -96,6 +101,8 @@ export function buildSandboxConfig(input: SandboxPolicyInput): SandboxRuntimeCon
       // 按名拒绝：这些变量能把任意命令/代码注入沙盒内的子进程
       envVars: DENIED_ENV_VARS.map((name) => ({ name, mode: "deny" as const })),
     },
+    // Windows 后端显式选择（SRT >= 0.0.83）；不指定则由 SRT 自行探测
+    ...(input.windowsBackend ? { windows: { backend: input.windowsBackend } } : {}),
   }
   return config as unknown as SandboxRuntimeConfig
 }

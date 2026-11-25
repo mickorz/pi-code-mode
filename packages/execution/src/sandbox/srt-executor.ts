@@ -1,15 +1,17 @@
 /**
- * SrtCommandExecutor —— CommandExecutor 的 SRT 实现（M2.0/M2.1/M2.3/M2.5）
+ * SrtCommandExecutor —— CommandExecutor 的 SRT 实现
  *
  * 每条命令 spawn 一个独立 Sandbox Host 进程（见 sandbox-host.ts 的"为什么独立进程"）。
  *
- * 平台策略（M2.5）：Windows 直接返回 isolation_unavailable，不 spawn、不降级宿主执行。
- * 注意不要依赖 SRT 的 isSupportedPlatform()——0.0.81 的 Windows Alpha 后端对 windows 也返回 true，
- * 但本项目的隔离承诺只为 darwin/linux 背书。
+ * 平台策略：
+ *   darwin / linux        -> 支持（Seatbelt / bubblewrap+seccomp）
+ *   win32                 -> **默认拒绝**（isolation_unavailable，绝不降级宿主执行）
+ *   win32 + windowsBackend -> 显式 opt-in 后才走 srt-win 后端（M2-W0 可行性验证用；
+ *                            需先完成系统级安装，未通过安全验收前不得作为默认）
+ *   其他平台              -> 拒绝
  *
- * 取消语义（评审第一处细节）：SRT 的 abortSignal 只覆盖包裹阶段，"杀正在跑的命令"必须由这里做：
- *   abort/timeout -> kill(-hostPid, SIGTERM) -> 宽限期 -> SIGKILL -> 等 Host 退出 -> drain 输出
- * Host 是进程组长且把命令放在同组，所以杀组即杀命令与其派生进程，不留孤儿。
+ * 取消语义：Host 是独立进程，abort/timeout 由父进程 kill 整组；
+ * Host 内部用 SRT 的 spawnSandboxed().kill() 杀命令及其派生进程。
  */
 
 import { spawn } from "node:child_process"
@@ -21,11 +23,11 @@ import { sandboxPlatformSupported } from "./sandbox-config.js"
 import type { SandboxHostPayload } from "./sandbox-host.js"
 import type { CommandExecutor, SandboxCommandRequest, SandboxCommandResult } from "../command/types.js"
 
-/** 停止宽限期：SIGTERM 后多久 SIGKILL */
+/** 停止宽限期：SIGTERM 后多久 SIGKILL 宿主 */
 const STOP_GRACE_MS = 3000
-/** 默认超时（毫秒）：0 = 不限 */
+/** 默认超时（毫秒） */
 const DEFAULT_TIMEOUT_MS = 120_000
-/** 输出上限（每流，字节）：超限截断并标注，防巨量输出打爆父进程内存 */
+/** 输出上限（每流，字节）：超限截断并标注 */
 const MAX_OUTPUT_BYTES = 1024 * 1024
 
 interface HostEntry {
@@ -34,7 +36,7 @@ interface HostEntry {
 }
 
 /**
- * 定位 Host 入口：优先用同目录已编译的 .js（发布产物）；开发态（jiti 直载 TS）退回 tsx 加载器。
+ * 定位 Host 入口：优先同目录已编译 .js（发布产物）；开发态（jiti 直载 TS）退回 tsx 加载器。
  * 用绝对路径喂 --import，避免子进程 cwd（工作区）里找不到 tsx。
  */
 function resolveHostEntry(): HostEntry {
@@ -42,14 +44,13 @@ function resolveHostEntry(): HostEntry {
   const dir = path.dirname(here)
   const compiled = path.join(dir, "sandbox-host.js")
   if (existsSync(compiled)) return { script: compiled, execArgv: [] }
-  const source = path.join(dir, "sandbox-host.ts")
-  const require = createRequire(import.meta.url)
-  // tsx 的 loader.mjs 可直接作为 --import 目标
-  const loader = require.resolve("tsx")
-  return { script: source, execArgv: ["--import", loader] }
+  return {
+    script: path.join(dir, "sandbox-host.ts"),
+    execArgv: ["--import", createRequire(import.meta.url).resolve("tsx")],
+  }
 }
 
-function capOutput(chunks: Buffer[], total: number): { text: string; truncated: boolean } {
+function capOutput(chunks: Buffer[]): { text: string; truncated: boolean } {
   const joined = Buffer.concat(chunks)
   if (joined.length <= MAX_OUTPUT_BYTES) return { text: joined.toString("utf8"), truncated: false }
   return { text: joined.subarray(0, MAX_OUTPUT_BYTES).toString("utf8"), truncated: true }
@@ -62,6 +63,11 @@ function blocked(reason: string): SandboxCommandResult {
 export interface SrtExecutorOptions {
   /** 平台覆盖（测试用） */
   platform?: NodeJS.Platform
+  /**
+   * Windows 后端显式 opt-in（SRT >= 0.0.83）。设置后才允许 win32 走 srt-win/mxc。
+   * 缺省 undefined = Windows 保持 unsupported（fail-closed）。
+   */
+  windowsBackend?: "srt-win" | "mxc"
   /** Host 入口覆盖（测试用） */
   hostEntry?: HostEntry
 }
@@ -69,27 +75,37 @@ export interface SrtExecutorOptions {
 export class SrtCommandExecutor implements CommandExecutor {
   constructor(private readonly options: SrtExecutorOptions = {}) {}
 
+  private get platform(): NodeJS.Platform {
+    return this.options.platform ?? process.platform
+  }
+
+  private get enabled(): boolean {
+    if (sandboxPlatformSupported(this.platform)) return true
+    // Windows 仅在显式 opt-in 后启用（M2-W0 验证路径）
+    return this.platform === "win32" && this.options.windowsBackend !== undefined
+  }
+
   async execute(request: SandboxCommandRequest): Promise<SandboxCommandResult> {
-    if (!sandboxPlatformSupported(this.options.platform ?? process.platform)) {
-      // M2.5：明确不支持，绝不退回宿主执行
+    if (!this.enabled) {
       return blocked(
-        `isolation_unavailable：平台 ${this.options.platform ?? process.platform} 无受支持的 OS 级隔离后端（Windows 需 WSL2/Docker 方案，另行评估）`,
+        `isolation_unavailable：平台 ${this.platform} 无受支持的 OS 级隔离后端（Windows 需先完成 srt-win 安装与 M2-W0 安全验收）`,
       )
     }
     if (!request.command.trim()) return blocked("empty_command")
-    if (request.signal?.aborted) {
-      return { exitCode: null, stdout: "", stderr: "", blocked: true, blockReason: "aborted_before_start" }
-    }
+    if (request.signal?.aborted) return blocked("aborted_before_start")
 
     const host = this.options.hostEntry ?? resolveHostEntry()
     const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const payload: SandboxHostPayload = {
       command: request.command,
-      // 相对 cwd 按工作区解析，并转绝对路径：Host 直接以此为 spawn cwd（不用 process.chdir）
       cwd: path.resolve(request.cwd),
-      policy: { workspace: request.cwd },
+      policy: {
+        workspace: request.cwd,
+        ...(this.options.windowsBackend ? { windowsBackend: this.options.windowsBackend } : {}),
+      },
       commandId: request.toolCallId ?? request.executionId ?? `cmd-${Date.now()}`,
       commandText: request.command,
+      timeoutMs,
     }
 
     return await new Promise<SandboxCommandResult>((resolve) => {
@@ -100,11 +116,11 @@ export class SrtCommandExecutor implements CommandExecutor {
       let settled = false
       let timedOut = false
       let aborted = false
-      let stopReason: string | undefined
+      let failedInit = false
 
       const child = spawn(process.execPath, [...host.execArgv, host.script], {
         cwd: payload.cwd,
-        // detached：Host 成为进程组长，kill(-pid) 才能终止整组（命令 + 派生进程）
+        // detached：Host 成为进程组长，kill(-pid) 终止整组（Host + 命令 + 派生进程）
         detached: true,
         stdio: ["pipe", "pipe", "pipe", "pipe"],
         windowsHide: true,
@@ -132,13 +148,11 @@ export class SrtCommandExecutor implements CommandExecutor {
             } catch {
               /* 归因解析失败不影响执行结果 */
             }
-          } else if (line.startsWith("failed")) {
-            stopReason = "isolation_unavailable"
-          }
+          } else if (line.startsWith("failed")) failedInit = true
+          else if (line === "exit timeout") timedOut = true
         }
       })
 
-      /** 终止整个进程组（Host 是组长） */
       const killGroup = (signal: NodeJS.Signals) => {
         try {
           if (child.pid) process.kill(-child.pid, signal)
@@ -164,7 +178,7 @@ export class SrtCommandExecutor implements CommandExecutor {
               timedOut = true
               killGroup("SIGTERM")
               setTimeout(() => killGroup("SIGKILL"), STOP_GRACE_MS).unref()
-            }, timeoutMs)
+            }, timeoutMs + 5000) // Host 内部有自己的 timeoutMs，父进程留 5s 余量兜底
           : undefined
       timer?.unref()
 
@@ -173,15 +187,19 @@ export class SrtCommandExecutor implements CommandExecutor {
         settled = true
         if (timer) clearTimeout(timer)
         request.signal?.removeEventListener("abort", onAbort)
-        const stdout = capOutput(out, 0)
-        const stderr = capOutput(err, 0)
+        if (!ready && failedInit) {
+          resolve(
+            blocked(
+              "isolation_unavailable：沙盒初始化失败（SRT 依赖缺失、平台后端未安装或配置被拒），命令未执行",
+            ),
+          )
+          return
+        }
+        const stdout = capOutput(out)
+        const stderr = capOutput(err)
         const stderrParts = [stderr.text]
         if (stderr.truncated) stderrParts.push("[stderr 超限已截断]")
         if (violations.length) stderrParts.push(`[sandbox violations]\n${violations.join("\n")}`)
-        if (!ready && stopReason === "isolation_unavailable") {
-          resolve(blocked("isolation_unavailable：沙盒初始化失败（SRT 依赖缺失或平台后端不可用），命令未执行"))
-          return
-        }
         resolve({
           exitCode: aborted || timedOut ? null : exitCode,
           stdout: stdout.text + (stdout.truncated ? "\n[stdout 超限已截断]" : ""),
@@ -193,10 +211,9 @@ export class SrtCommandExecutor implements CommandExecutor {
 
       child.once("error", () => settle(null))
       child.once("exit", (code) => {
-        // Host 退出后其管道可能仍有残余数据：等 stdio 关闭再结算（drain）
-        const drain = () => settle(code)
-        if (child.stdout?.readableEnded && child.stderr?.readableEnded) drain()
-        else child.once("close", drain)
+        // Host 退出后管道可能仍有残余：等 stdio 关闭再结算（drain）
+        if (child.stdout?.readableEnded && child.stderr?.readableEnded) settle(code)
+        else child.once("close", () => settle(code))
       })
     })
   }
