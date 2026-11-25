@@ -1,162 +1,201 @@
-# 沙盒与权限管理执行文档
+# PiAgentAdapter 受控工具注入与 Sandbox Execution 改造计划
 
 > 状态：待执行（M0 未启动）
-> 依据调研：`dev-docs/research/2026-11-24-pibot-sandbox-permission-research.md`（PiBot 实现调研）
-> 创建日期：2026-11-24
-> 目标仓库路径：本仓库（pi-code-mode）
+> 日期：2026-11-24 初版 / 2026-11-25 修订（v2，定位重构）
+> 目标仓库：pi-code-mode
+> 参考项目：PiBot（REF-023，commit 86a7967）
+> 技术基础：Pi SDK 1.3.0（已核实）+ Anthropic Sandbox Runtime
+> 调研依据：`dev-docs/research/2026-11-24-pibot-sandbox-permission-research.md`
 
-## 1. 背景与问题
+## 修订记录
 
-pi-code-mode 的 workflow 会 fan-out 子代理执行实施与验证命令（coder/fixer 角色），但当前**没有任何权限闸门与执行隔离**：
+- v1（2026-11-24）：初版定位"Sandbox 适配器 + tool_call 事件拦截"。
+- v2（2026-11-25）：定位改为 **Agent 工具执行层重构**。拦截方式从 tool_call 事件被动拦截，改为 **受控扩展注入 + 自定义工具 + 双阶段 permit**。触发原因：核实 Pi SDK 1.3.0 已有公开 API（`extensionFactories` + `noTools: "builtin"`），无需复制 PiBot 的私有 Extension Loader，且执行权下沉（禁用内置 bash、命令走统一 Sandbox）比事件拦截更彻底。v1 的 M0/M4 大部分内容被本版吸收重排。
 
-- 子代理的命令执行发生在 pi 子会话的 bash 工具里，模型生成的命令以宿主用户全权限运行；
-- workflow VM 只防脚本非确定性（`packages/engine/src/runtime/vm.ts` 自述"vm 不是安全沙箱"），不是安全边界；
-- 无统一策略裁决、无审批卡片、无持久授权、无安全审计。
+## 1. 定位与核心目标
 
-PiBot（REF-023）验证了成熟做法：统一策略引擎 + OS 级沙盒 + 审批闭环。本文档把它落地为本仓库的执行计划。
+这不是"给 pi-code-mode 加一个 Sandbox 适配器"，而是 **Agent 工具执行层重构**：
 
-**类比**：本次建设相当于给 workflow 的每条命令加一套"机场安检系统"——策略引擎是安检仪（每件行李都过机扫描，X 光片可查），沙盒是隔离候机区（进了候机区只能走指定通道），审批与授权是登机牌签发（首次人工盖章，盖过章的路线免检并随时可吊销），审计是黑匣子（只记录"谁几点过了哪个口"，不录音谈话内容）。
+**保留现有 Workflow Engine、Worker、SQLite Durable Execution 和 Dashboard，只调整 Pi Agent 的工具注册与执行链路，让 Agent 和 Workflow 都通过统一的 Sandbox Execution 层执行命令。**
 
-## 2. 关键前提（已核实）
+三个原则（PiBot 参照）：
 
-| 事实 | 出处 | 对方案的影响 |
+1. **受控扩展注入**：只加载 pi-code-mode 自己需要的 Extension，不开放用户环境的全部扩展。
+2. **执行权下沉**：Agent 不再直接使用 Pi 内置 bash 执行宿主机命令。
+3. **统一执行边界**：Agent 工具和 Workflow JS 后续使用同一套 Sandbox 执行接口，避免两套安全体系。
+
+类比：v1 方案是"在现有安检口加一道闸门"（tool_call 事件拦截，命令仍走 pi bash，只是拦一道）；v2 是"关闭旧安检口，新开唯一安检大厅"（内置工具禁用，所有动作从我们自己注册的工具走，闸门内建在工具执行链上）。前者拦不完（漏一个工具就裸奔），后者天然完备（没有别的路）。
+
+## 2. 关键技术判断（2026-11-25 核实）
+
+以下判断已对照本机 `node_modules/@earendil-works/pi-coding-agent@1.3.0` 的 dist 源码逐条核实：
+
+| 判断 | 结论 | 证据 |
 |---|---|---|
-| pi 扩展可挂 `tool_call` 处理器，**可 mutate input 或 block execution**，handler 出错也 block（fail-safe） | pi docs/extensions.md L106、L263 | 权限闸门的官方接入点，无需 fork pi |
-| pi 无内置沙盒，官方隔离 = Docker / Docker Sandboxes / OpenShell / Gondolin（工具级 micro-VM） | pi docs/security.md、containerization.md | OS 沙盒可优先复用官方容器方案，SRT 作进程级补充 |
-| pi-code-mode 自身不 spawn 命令，命令执行在 `PiAgentAdapter`（createAgentSession）子会话的 bash 工具里 | packages/adapter/src/pi-agent-adapter.ts | 拦截点必须在子会话也生效（M0 验证项） |
-| 落盘惯例 `.pi/workflows/`（model-tiers.json / journal / register.json） | 本仓库 .pi/workflows/ | 权限配置与 grant 沿用此目录 |
-| 命令注册惯例 extensions/commands/ 目录形态 + 架构守卫测试 | CLAUDE.md 开发规范、tests/contract/commands-structure.test.ts | 新命令必须按规范接入，先跑 test:contract |
-| 任何大模型调用必须走 model-tiers 档位 | CLAUDE.md 强制规范 | 本方案零模型调用（纯规则引擎），不涉及档位 |
+| SDK 版本 1.3.0 | 属实 | 根 package.json `1.3.0` |
+| `DefaultResourceLoader.extensionFactories: InlineExtension[]` 存在 | 属实 | dist/core/resource-loader.d.ts L79 |
+| `createAgentSession.noTools: "all" \| "builtin"` 存在 | 属实 | dist/core/sdk.d.ts L33，注释明确 "disable the default built-in tools (read, bash, edit, write) but keep extension/custom tools enabled" |
+| `noExtensions=true` 与 `extensionFactories` 可同时用 | 属实 | resource-loader.js `loadCurrentExtensionSet()`：noExtensions 只过滤磁盘发现的 extensionPaths，`includeInlineFactories: true` 分支无条件调 `loadExtensionFactories()` 追加 inline 工厂 |
+| verifier-runner.ts 用 child_process.execFile | 属实 | packages/engine/src/optimizer/verifier-runner.ts L122 |
+| worktree.ts 用 child_process.execFile（git 控制面） | 属实 | packages/engine/src/isolation/worktree.ts L46 |
+| agent-adapter.ts 硬编码 runId | 属实 | packages/adapter/src/agent-adapter.ts L67 `runId: ""`，注释"AgentRunOptions 无 runId 字段（runtime 零修改原则）"——本改造有意打破该原则，执行身份必须贯通 |
+| ~~workflow-runtime.ts 无通用 shell 能力~~ | **不属实（v2 修正）** | workflow-runtime.ts L30 `import { exec, execFile, spawnSync }`：① L1374 `commandSuccess` helper 用 `exec` 跑**任意 shell 命令**（VM check 注入面）；② `runTool`（P4.1-B 原生工具节点）用 `execFile` 按 workflow 脚本指定的路径跑脚本。**旁路清单共 4 处，M4 全部纳入** |
 
-## 3. 总体架构
+现状有利条件：`pi-agent-adapter.ts` 已使用 `DefaultResourceLoader({ noExtensions })` + `createAgentSession`（L65/L80），改造即在此处增加 `extensionFactories` 与 `noTools: "builtin"` 两个参数，接入成本极低。
+
+最终接入决策：
+
+| 参数 | 值 | 语义 |
+|---|---|---|
+| `noExtensions` | `true`（保留现状） | 不加载宿主/项目磁盘发现的扩展 |
+| `extensionFactories` | 新增 | 注入 pi-code-mode 自己的 policy + agent-tools 扩展 |
+| `noTools` | `"builtin"` | 禁用 pi 默认 read/bash/edit/write，保留自定义工具 |
+
+不使用 PiBot 的私有 `loadExtensionFactories()` 桥接，用 SDK 1.3.0 公开 API。
+
+## 3. 目标架构
 
 ```
-pi 宿主（含本扩展）
-  |
-  | tool_call 事件（bash / write / edit / mcp 等全部工具）
-  v
-[权限引擎 packages/policy-lite]
-  1. 归类：请求映射到类别（run_command / write_file / web / mcp_call / agent_spawn）
-  2. 裁决：级别 never ask always + 受保护路径 + grant 匹配 -> allow / ask / deny
-  3. 命令静态分析（保守起步：命令文本 + cwd + 声明 writePaths；看不懂 = ask）
-  |
-  |-- allow --> 放行（附注记，进审计）
-  |-- deny  --> 直接返回 block（原因码进审计）
-  |-- ask   --> 审批卡片（pi 扩展 UI 通道）
-                  用户答复 allow / deny / remember
-                  remember -> grant 落盘 .pi/workflows/permissions.json
-  v
-[沙盒执行通道 packages/sandbox-exec]（M3，可选启用）
-  对标记 needsIsolation 的命令：一命令一宿主进程（SRT 包裹）
-  文件边界（allowWrite 限工作区）+ 网络域名白名单（SRT 代理）
-  |
-  v
-[审计] journal 事件扩展（事实 only：路径 域名 原因码 时长，永不记内容）
+Workflow Engine（不动）
+  agent() / parallel() / pipeline()
+    |
+AgentAdapter Contract（接口不动：executionId / runId / AbortSignal）
+    |
+PiAgentAdapter（改造点）
+  noExtensions=true · noTools="builtin" · extensionFactories=[policy, agent-tools]
+    |
+受控 Extension Runtime
+  Policy Extension（tool_call 事件 -> Policy Gate -> 一次性 permit）
+  Agent Tools Extension（run_command / read_file / write_file / edit_file）
+    |
+统一 Tool Gateway（permit 校验：toolCallId + 工具名 + 参数摘要）
+    |                              |
+Workspace File Service        CommandExecutor（Sandbox Execution）
+  canonicalize/realpath         sandbox-config · sandbox-host（一命令一进程）
+  路径边界校验                    @anthropic-ai/sandbox-runtime
+                               macOS Seatbelt / Linux bubblewrap+seccomp
 ```
 
-### 3.1 与 PiBot 方案的取舍
+职责边界：
 
-| PiBot 原设计 | 本方案 | 理由 |
+- **文件工具**（read/write/edit）由受控 Workspace File Service 执行，必须过路径权限校验（canonicalize/realpath 防符号链接逃逸）。
+- **命令工具**（run_command）由 Sandbox Execution 执行，不允许直接宿主 exec。
+- **Workflow JS** 继续用原 VM/Runtime，不在本次改造范围（VM 定位是确定性，非安全）。
+- **MCP** 保留 Workflow Runtime 直调通道，不重新装配进子 Agent。
+- **双阶段授权**（PiBot 同款）：tool_call 事件触发 Policy Gate → 通过后生成一次性 permit → 工具 execute 按 toolCallId+工具名+参数校验 permit → 通过才执行。禁止无 permit 绕过。
+
+## 4. 里程碑
+
+### M0：Pi SDK 接入验证与接口冻结（0.5～1 天）
+
+目标：证明不修改 Pi SDK 即可实现受控工具注入。
+
+- [ ] 创建 `dev-examples/sandbox-agent-probe/`，<100 行测试扩展。
+- [ ] `DefaultResourceLoader({ noExtensions: true, extensionFactories: [probeExt] })` + `createAgentSession({ noTools: "builtin" })`。
+- [ ] 验证：自定义工具注册成功；内置 read/bash/edit/write 不可见；用户全局扩展未加载（probe 扩展 setup 日志为唯一来源）；tool_call 事件可拦截（block 生效）；取消信号传递到工具执行过程。
+- [ ] 零模型验证优先：工具注册/禁用/扩展加载均通过 session 工具清单与扩展 setup 日志断言，不烧 token；tool_call 端到端拦截若需走模型，按 model-tiers 规范先确认档位（建议 fast）。
+- [ ] 冻结接口：`AgentToolRuntime`、`CommandExecutor`、`SandboxCommandRequest/Result`。
+- [ ] 修复执行身份：`AgentRunOptions` 增加 `runId`；workflow-runtime 传 `shared.runId`；agent-adapter.ts 去除 `runId: ""` 硬编码；保留 executionId 体系。
+
+验收：自定义工具在 noExtensions=true 下可执行；用户扩展零加载；内置工具不可用；tool_call 拦截生效；Workflow Engine 调度语义不变。
+
+### M1：Agent 自定义工具层（1.5～2 天）
+
+- [ ] 实现 `agent-tools` Extension：注册 `run_command` / `read_file` / `write_file` / `edit_file`。
+- [ ] 实现 `policy-extension`：tool_call → Policy Gate → 一次性 permit。
+- [ ] 文件操作全走 Workspace File Service（canonicalize/realpath 校验）。
+- [ ] 未知工具默认拒绝。
+- [ ] PiAgentAdapter 改造：loader 注入受控 factories；`noTools: "builtin"`；兼容现有 allowTools/excludeTools 映射到新工具名；工具执行 signal 与 request.signal 合并。
+- [ ] CommandExecutor 用测试 Mock，**生产链路不增加宿主机直接执行旁路**。
+
+验收：Agent 能读写工作区文件、发起 run_command；全部工具过统一权限检查；不再暴露 pi bash；AgentAdapter 的结构化输出/usage/partial/cancel 契约不回归。
+
+### M2：Sandbox Execution 实现（2～3 天）
+
+- [ ] 引入并固定 `@anthropic-ai/sandbox-runtime` 版本（PiBot 用 0.0.81，按当前可用版固定）。
+- [ ] `packages/execution/src/sandbox/`：sandbox-config / sandbox-host（独立宿主进程）/ sandbox-manager / violations。
+- [ ] 父子生命周期：stdin 单行 JSON payload 保活；独立控制通道回报 ready/failed/violations；stdout/stderr 流式回传；超时与 AbortSignal；进程组清理与 drain 确认；每命令独立临时目录。
+- [ ] 沙盒边界配置：工作区可写；系统目录只读；凭据目录（.ssh/.gnupg/.aws 等）禁读；工作区外写默认禁止；网络默认严格拒绝（strictAllowlist）；环境变量黑名单（JAVA_TOOL_OPTIONS、GIT_CONFIG_COUNT）；Git 元数据写入单独保护。
+- [ ] **SRT 是模块级单例（PiBot 实测：manager 按最近一次全局配置过滤），强制一命令一 Sandbox Host 进程，多命令配置不得串扰。**
+- [ ] Windows/不支持平台返回 `isolation_unavailable`，禁止降级宿主执行。
+
+验收：工作区内命令正常；工作区外写被拦；敏感路径被拦；网络按白名单；并行命令配置互不影响；取消无孤儿进程；不支持平台明确拒绝。
+
+### M3：Policy Lite 与安全边界（1.5～2 天）
+
+- [ ] `packages/policy-lite/`：types / evaluate / levels / protected-paths / command-analysis。
+- [ ] 类别：`run_command`（风险分析+沙盒）、`read_file` / `write_file` / `edit_file`（工作区路径校验）。
+- [ ] 三态裁决：allow / ask / deny；ask 在 headless（无审批 UI）**fail-closed 拒绝**，不自动放行。
+- [ ] 保守命令分析（不引 tree-sitter）：危险命令、重定向、网络访问、incomplete 一律 ask。
+- [ ] 持久 Grant / 撤销 / 根会话审批 UI 留后续迭代，不阻塞 MVP。
+
+验收：危险命令不因普通 allow 放行；越界操作不能绕过路径检查；未知操作不默认允许；headless 不绕过人工审批。
+
+### M4：统一执行入口、生命周期与可观测性（1～2 天）
+
+消除全部 4 处既有旁路（2026-11-25 核实清单）：
+
+| 旁路 | 位置 | 处理 |
 |---|---|---|
-| tree-sitter-bash AST 全量静态分析 | M2 保守版起步（文本级），M4 再评估 AST | 工作区命令大多是明文；AST 是增强不是前提，incomplete 一律 ask 已是安全默认 |
-| SRT 沙盒（Seatbelt / bubblewrap + seccomp / 网络代理） | M3 引入，但先支持 pi 官方容器路线作为宿主级隔离 | Gondolin/Docker 零代码成本；SRT 需分发 ripgrep 与 seccomp helper，打包成本高，按需再上 |
-| 150 类审计事件 | 按 workflow 场景取 6 至 8 类子集 | 我们无 phone/runner/browser 场景 |
-| Grants 表（SQLite） | permissions.json 落盘（沿用 .pi/workflows 惯例） | 无服务端，量小（上限 200 条），避免引入 sqlite 依赖 |
-| 一命令一宿主进程 | 同款复刻（SRT 单例坑，PiBot 实测注释确认） | 必须照抄，不可省略 |
-| Windows 无 OS 隔离 | 显式 unsupported，全审批兜底 | PiBot 同款诚实处理 |
+| verifier 命令执行 | `packages/engine/src/optimizer/verifier-runner.ts` L122（execFile） | 改注入 CommandExecutor，在 after 工作区执行；保留超时/exitCode/stdout/stderr 契约 |
+| workflow check helper | `packages/engine/src/runtime/workflow-runtime.ts` L1374 `commandSuccess`（exec，任意 shell） | 改走 CommandExecutor（或沙盒内等价物）；check 语义不变 |
+| workflow runTool | `workflow-runtime.ts` `TOOL_INTERPRETER`/execFile（按脚本路径执行） | 脚本路径过工作区边界校验后走 CommandExecutor |
+| git 控制面 | `packages/engine/src/isolation/worktree.ts` L46（execFile git） | 保留为受控 Control Plane（内部工作区管理，非模型可达），文档明示边界 |
 
-## 4. 里程碑拆解
+- [ ] Agent 生命周期：session.dispose → Sandbox Host release → AbortSignal 传播 → runId/executionId 关联 → 清理完成后才结束执行。
+- [ ] 观测事件：tool.started / tool.updated / tool.finished / sandbox.blocked，只记事实（工具名、类别、路径、域名、原因码、时长），不记密钥/完整提示词/敏感内容。
+- [ ] Workflow Journal / SQLite / Dashboard 结构性零回归。
 
-### M0 验证与奠基（预计 0.5 天）
+## 5. 首期明确不做
 
-目标：确认拦截点在子会话生效，冻结接口设计。
+1. 不重构 Workflow VM（其定位是确定性，非安全）。
+2. 不修改 Durable Worker + SQLite 架构。
+3. 不修改 Dashboard。
+4. 不把 MCP 重新装配到子 Agent。
+5. 不实现 PiBot 150 类审计事件（取 4 类子集）。
+6. 不实现完整 tree-sitter-bash 分析（保守文本分析起步）。
+7. 不实现跨项目/跨用户 Grant 管理（持久 Grant 后续迭代）。
+8. 不引入 computer-use、浏览器操作。
+9. 不为 Windows 兼容回退宿主机执行（不支持即拒绝；WSL2/Docker 后端另议）。
 
-- [ ] **验证子会话 tool_call 可达**：写最小扩展试验（dev-examples/policy-probe/），在 tool_call handler 打日志，经 PiAgentAdapter 跑一个会执行 bash 的子代理，确认事件到达。若不可达，则拦截点改为 PiAgentAdapter 内部对子会话注入 policy（方案 B，接口不变）。
-- [ ] **确认 pi 权限扩展现状**：检查 pi 是否已有官方/社区 permission 扩展可复用（docs/packages.md、examples），避免重复造轮子。
-- [ ] **接口冻结**：新建 `packages/policy-lite/src/types.ts`，定义 `Decision = "allow" | "ask" | "deny"`、`Category`、`Level`、`PolicyRequest`、`PolicyResult`（含 reason 码、facts、grantScope）、`Grant`、`GrantScope`。zod strict schema，对标 PiBot `protocol-base/src/permissions/settings.ts` 形态。
-- [ ] 类别最小集冻结：`run_command`、`write_file`、`web_fetch`、`mcp_call`、`agent_spawn`。
+## 6. 总体验收标准
 
-验收：probe 结论写入本文档 M0 一节；types.ts 有 contract 测试。
+| 项目 | 通过标准 |
+|---|---|
+| Extension 隔离 | 只加载受控 ExtensionFactory，用户扩展零加载 |
+| Builtin 工具 | 子 Agent 不再使用 pi 内置工具 |
+| Tool Policy | 无 permit 的工具调用无法执行 |
+| 文件边界 | 越出工作区的读写被拒（含符号链接逃逸防护） |
+| 命令边界 | Agent 命令必须走 Sandbox |
+| OS 隔离 | 不支持隔离的平台拒绝执行（不降级） |
+| 进程管理 | 取消/超时后无孤儿进程 |
+| 并行隔离 | 多命令沙盒配置不串扰 |
+| 旁路清理 | verifier / check helper / runTool 全部走 CommandExecutor |
+| 身份追踪 | runId / executionId 全链路贯通 |
+| 原有能力 | Workflow、结构化输出、重试、恢复、Dashboard 不回归 |
 
-### M1 权限引擎骨架（预计 2 天）
+## 7. 执行纪律
 
-目标：每个工具调用过闸门，三态裁决 + 审批卡 + grant 持久化。
+- 严格 M0 → M1 → M2 → M3 → M4；M0 未过不开工 M1，M1 未证明自定义工具链路不碰 SRT，M2 未过进程隔离测试不接生产 Agent。
+- 每里程碑收尾：`npm run build`（类型关卡）→ `npm run test:contract` → 专项测试 → 端到端 `pi -ne -e <repo> -p` 自测（Git Bash 加 `MSYS_NO_PATHCONV=1`；看产物与状态，不看 print 模式 UI）。
+- 并发联调遵守仓库专项约定（最多 2 个长时用例、看门狗、journal 落盘证据优先）。
+- 本方案零大模型调用；若引入 AI 辅助风险分析，先问 model-tiers 档位（分析类建议 big，执行类建议 fast）。
+- 每里程碑完成同步更新 `dev-docs/progress/执行进度.md` 与 `dev-docs/progress-result/` 独立阶段报告。
+- 平台验证顺序（用户既定）：Mac mini 首验 SRT，Linux 补测试，Windows 显式 unsupported。
 
-- [ ] `packages/policy-lite/`：`levels.ts`（override ?? global，5 行同款）、`evaluate.ts`（裁决主流程，10 秒超时预算）、`protected-paths.ts`（系统目录 + 凭据目录 deny 清单，抄 PiBot 三平台清单）、`grants.ts`（grant 匹配 + 撤销）、`config.ts`（permissions.json 读写，zod 校验，未知字段拒收）
-- [ ] 默认级别：`run_command=ask`、`write_file=ask`、`web_fetch=always`、`mcp_call=ask`、`agent_spawn=always`（保守默认，用户可改）
-- [ ] 扩展接入：`apps/plugin/extensions/policy/`（新目录，主入口只装配），注册 `pi.on("tool_call", ...)` 统一闸门；按工具名映射类别，unknown 工具一律 ask
-- [ ] 审批卡：走 pi 扩展 UI（ctx.ui），卡片展示命令文本、cwd、读写路径、原因码；答复 allow / deny / remember
-- [ ] 命令注册：`extensions/commands/permissions/`（index.ts 路由 + 子命令 `show` / `set` / `grant list` / `grant revoke`），按规范先跑 `npm run test:contract`
-- [ ] deny 时清空所有附带开放路径（PiBot deny.ts 同款语义）
-
-验收：
-- `pi -ne -e <repo> -p` 端到端：子代理执行 `rm -rf /` 类命令被 deny；执行普通 `ls` 按 always 放行；ask 命令出卡，remember 后第二次免问
-- permissions.json 格式有 contract 测试；grant 撤销立即生效
-
-### M2 命令静态分析（预计 1.5 天）
-
-目标：命令裁决从"全问"进化到"有依据地问"。
-
-- [ ] `packages/policy-lite/src/analyze/`：`programs.ts`（只读程序白名单：ls cat grep rg git status 等，对标 PiBot readonly-programs）、`redirects.ts`（输出重定向识别）、`dangerous.ts`（危险命令清单：rm -rf、dd、mkfs、chmod 777 /、curl 管道 sh 等，产出 risk: danger）
-- [ ] 分析产物：`{ programs, reads, writes, domains, network, readonly, incomplete }`；`incomplete=true`（管道、变量展开、反引号、多段组合）一律 ask，不猜
-- [ ] danger 级命令：任何级别都 ask（never 则 deny），YOLO 也不放行
-- [ ] contract 测试：危险命令、只读命令、incomplete 命令各一组用例（无模型，纯函数）
-
-验收：`git status` 类命令在 run_command=always 时自动放行；`curl ... | sh` 永远出卡。
-
-### M3 沙盒执行通道（预计 3 天，可选启用，默认关）
-
-目标：标记需要隔离的命令进 OS 级沙盒执行。
-
-- [ ] 前置决策（需用户确认）：优先 pi 官方 Gondolin/Docker 路线（零代码，配文档）还是 SRT 进程级（本插件代码）。默认建议：先文档化官方容器路线（M3a），SRT 通道（M3b）按需求启动。
-- [ ] M3b 实现：`packages/sandbox-exec/`，`sandbox-config.ts`（写根校验 + 敏感读边界 + 环境变量黑名单 JAVA_TOOL_OPTIONS GIT_CONFIG_COUNT）、`sandbox-host.ts`（**一命令一宿主进程**，stdin 一行 JSON payload 保活，fd 3 回报 prepared ready failed violations，父死全组杀，照抄 PiBot）、`violations.ts`（deny 归因上报）
-- [ ] 平台边界：macOS Linux 启用；Windows 返回 `isolation_unavailable`，命令降级走 ask 兜底（显式 unsupported，不假装隔离）
-- [ ] fail-closed：依赖缺失（ripgrep、seccomp helper）抛错拒绝执行，不降级为不隔离运行
-- [ ] 级别联动：`run_command=always` 且沙盒可用且分析完整时，命令可自动放行进沙盒（PiBot sandboxed_command 同款）；沙盒不可用则回 ask
-
-验收：macOS/Linux 上沙盒内命令读工作区外文件被 block 且归因可见；沙盒内网络默认拒绝；杀父进程无孤儿残留。
-
-### M4 审计与收尾（预计 1 天）
-
-- [ ] journal 事件扩展：`policy.denied`、`approval.requested`、`approval.resolved`、`grant.created`、`grant.revoked`、`exec.sandboxed`，只记事实（工具名、类别、路径、域名、原因码、时长）
-- [ ] explorer/workflows 面板补权限状态展示（隔离可用性、当前级别、活跃 grant 数）
-- [ ] 文档：README 加"权限与沙盒"章节（读者向 docs/），本执行文档更新完成状态并归档 planning/completed/
-- [ ] 回填 CLAUDE.md：新增调用点规范（如后续引入 AI 辅助分析，须走 model-tiers 档位并问用户）
-
-## 5. 依赖与风险
-
-| 风险 | 等级 | 缓解 |
-|---|---|---|
-| 子会话 tool_call 不可达（M0 假设失败） | 中 | 方案 B：PiAgentAdapter 对子会话注入 policy 配置或切换拦截层，接口已冻结不受影响 |
-| 审批卡阻塞后台 run / schedule 任务 | 高 | 定时任务（routines 语义）永不享受 YOLO 式自动放行；超时默认 deny 并落审计，不无限等待 |
-| ask 卡片在 print 模式无 UI | 高（已知） | print 模式下 ask 一律按 deny 处理并提示用交互会话；与 pi -p 自测规范对齐 |
-| SRT 依赖分发（ripgrep、seccomp helper） | 中 | M3b 启动前先做打包验证；不可分发则整段降级为官方容器路线 |
-| grant 文件被并发写坏 | 低 | 单写者约定（扩展进程内串行），写入走临时文件 + rename 原子替换 |
-| 性能：每命令过闸门 | 低 | 纯同步规则匹配 + 白名单查询，微秒级；无模型调用 |
-
-## 6. 纪律对齐（本仓库强制规范）
-
-- M1 新命令按 extensions/commands 目录形态开发，主入口只装配；完成后跑 `npm run test:contract`（架构守卫）。
-- M3 涉及 src 修改，每个里程碑完成后先 `npm run build`（类型关卡）再测试。
-- 每个里程碑交付前用 `pi -ne -e <repo> -p` 端到端自测（注意 Git Bash 加 `MSYS_NO_PATHCONV=1`），看产物与状态，不看 print 模式 UI 输出。
-- 里程碑完成同步更新 `dev-docs/progress/执行进度.md` 并在 `dev-docs/progress-result/` 建独立阶段报告。
-- 本方案零大模型调用；若 M4 后引入 AI 辅助风险分析，先 ask_user_question 确认档位再实现。
-
-## 7. 执行记录（滚动更新）
+## 8. 执行记录（滚动更新）
 
 | 日期 | 里程碑 | 状态 | 备注 |
 |---|---|---|---|
-| 2026-11-24 | 文档创建 | done | 依据 PiBot 调研与 pi docs 核实 |
+| 2026-11-24 | v1 文档创建 | done | 定位 Sandbox 适配器 + tool_call 拦截 |
+| 2026-11-25 | v2 修订 | done | 重构定位；SDK 1.3.0 六项判断核实（一项修正：workflow-runtime 有 exec/execFile 旁路）；旁路清单定为 4 处 |
 | （待填） | M0 | pending | |
 
----
+## 9. 参考引用
 
-## 参考引用
-
-- PiBot 实现调研（本仓库）：`dev-docs/research/2026-11-24-pibot-sandbox-permission-research.md`
-- PiBot 源码（thirdparties/PiBot，只读）：packages/policy、packages/execution/src/sandbox、packages/brain/src/core/approvals.ts、packages/protocol-base/src/permissions
-- pi 扩展 API（tool_call 拦截）：pi docs/extensions.md（宿主安装目录 @earendil-works/pi-coding-agent/docs/extensions.md）
-- pi 安全模型：pi docs/security.md；隔离方案：pi docs/containerization.md
+- PiBot：REF-023，commit 86a7967；源码 thirdparties/PiBot（packages/policy、packages/execution/src/sandbox、packages/brain/src/core/approvals.ts）
+- Pi SDK 1.3.0 源码（本机 node_modules/@earendil-works/pi-coding-agent/dist）：core/sdk.d.ts（noTools）、core/resource-loader.js（loadCurrentExtensionSet/loadExtensionFactories）
+- Pi SDK 上游：https://github.com/earendil-works/pi（v1.3.0 packages/coding-agent/src/core/resource-loader.ts、sdk.ts）
 - Anthropic Sandbox Runtime：https://github.com/anthropics/sandbox-runtime
-- 本仓库规范：CLAUDE.md（开发流程、命令开发规范、model-tiers 强制、自测纪律）
-- 登记清单：thirdparties/REFERENCES.md（REF-023 PiBot）
+- 调研报告：dev-docs/research/2026-11-24-pibot-sandbox-permission-research.md
+- 本仓库规范：CLAUDE.md（命令开发规范、model-tiers 强制、自测纪律、联调约定）
