@@ -50,7 +50,7 @@ pi.on("tool_call", (event) => {
 
 ## 预防与注意事项
 
-1. **这是安全级坑**：权限闸门返回错形态 = 无闸门且无告警。M1 policy-extension 的返回值必须有 contract 测试直接断言"block 后工具结果 isError=true"（end-to-end），不能只断言 handler 被调用。
-2. 永远不要对 pi handler 返回值用 `as never` / `as any` 强转；让 TS 检查 `ToolCallEventResult` 形态。
-3. pi 各事件 handler 的 Result 类型形态不统一（有的 `{ action: ... }`，有的裸布尔字段），写 handler 前先查 `dist/core/extensions/types.d.ts` 对应的 `XxxEventResult`。
+1. **这是安全级坑**：权限闸门返回错形态 = 无闸门且无告警。防御已双层化（v3 执行计划 M0.1）：第一层 tool_call handler 正确返回 `{ block: true, reason }`；第二层 Tool.execute 的一次性 Permit 校验（无 Permit 即拒绝真实执行）。M0.1 已实证：错误形态下 SDK 静默放行（execute 被进入），Permit 第二层拦住真实执行（entered=1 executed=0）。
+2. 永远不要对 pi handler 返回值用 `as never` / `as any` 强转；让 TS 检查 `ToolCallEventResult` 形态。probe 已于 2026-11-25（M0.1）清理自身全部强转（唯一保留处是敌手模拟测试，有注释），`tsc --strict` 零错误。
+3. pi 各事件 handler 的 Result 类型形态不统一（有的 `{ action: ... }`，有的裸布尔字段），写 handler 前先查 `dist/core/extensions/types.d.ts` 对应的 `XxxEventResult`。SDK `emitToolCall()` 只检查 `result.block` 字段（源码 runner.ts）。
 4. 类似的静默宽松行为也存在于 `session.subscribe` 的事件结构：工具结果是 `role="toolResult"` 的顶层消息（字段 `toolName`/`isError`），不是嵌套的 `message.toolResults` 数组。

@@ -11,6 +11,13 @@
 
 - v1（2026-11-24）：初版定位"Sandbox 适配器 + tool_call 事件拦截"。
 - v2（2026-11-25）：定位改为 **Agent 工具执行层重构**。拦截方式从 tool_call 事件被动拦截，改为 **受控扩展注入 + 自定义工具 + 双阶段 permit**。触发原因：核实 Pi SDK 1.3.0 已有公开 API（`extensionFactories` + `noTools: "builtin"`），无需复制 PiBot 的私有 Extension Loader，且执行权下沉（禁用内置 bash、命令走统一 Sandbox）比事件拦截更彻底。v1 的 M0/M4 大部分内容被本版吸收重排。
+- v3（2026-11-25）：安全契约评审后新增 **M0.1 阶段**（已完成）：修正 probe 自身的 `as never` 矛盾、实证双阶段 Permit 防线（关键证据：handler 错误形态时 SDK 静默放行但 Permit 第二层拦性，`entered=1 executed=0`）、冻结 ToolPermit/PermitStore 契约。M4 旁路清单 +1（spawnSync Python 探测）；VM 安全边界表述精确化；新增工程原则"事件回调不得作为唯一防线"。
+
+## 工程原则（v3 起强制）
+
+**任何安全控制，都不能仅仅依赖 Agent Framework 的事件回调成功执行。真正执行外部副作用的最后一层，必须再次验证授权。**
+
+落地形态即双阶段防线：tool_call 事件负责**授权**（Policy Gate -> 签发 Permit），Tool.execute 负责**强制执行授权**（验证 Permit 后才触碰 CommandExecutor / File Service）。两者不能互相替代：handler 返回错误形态、handler 抛异常、未来接入其他 Agent Runtime 或 MCP 工具时，第二层 Permit 校验都是完不成即拒绝的独立闸门。M0.1 已实证：SDK 对错误形态静默放行时（`entered=1`），无 Permit 的 execute 拒绝真实执行（`executed=0`）。
 
 ## 1. 定位与核心目标
 
@@ -94,7 +101,7 @@ Workspace File Service        CommandExecutor（Sandbox Execution）
 - [x] `DefaultResourceLoader({ noExtensions: true, extensionFactories: [probeExt] })` + `createAgentSession({ noTools: "builtin" })`。
 - [x] 验证：自定义工具注册成功；内置工具不可见；用户全局扩展未加载；tool_call 拦截 block 生效；abort 不抛异常。
 - [x] 零模型验证优先：A1-A4 用 session 工具清单与 extensionsResult 断言，零 token；tool_call 端到端走 fast 档（2026-11-25 用户确认）。
-- [ ] 冻结接口：`AgentToolRuntime`、`CommandExecutor`、`SandboxCommandRequest/Result`（M1 开工时定稿）。
+- [ ] 冻结接口：`AgentToolRuntime`、`CommandExecutor`、`SandboxCommandRequest/Result`（M1 开工时定稿，PermitStore 契约已在 M0.1 冻结）。
 - [ ] 修复执行身份：`AgentRunOptions` 增加 `runId`；workflow-runtime 传 `shared.runId`；agent-adapter.ts 去除 `runId: ""` 硬编码（M1 一并做，避免单独动 adapter）。
 
 **M0 验证结论（2026-11-25，全部 PASS）**：
@@ -108,18 +115,64 @@ Workspace File Service        CommandExecutor（Sandbox Execution）
 | B1 tool_call 拦截 block 生效 | PASS | fast 档（deepseek-v4.1-flash）真实模型调用，handler block 后 toolResult `isError=true`（模型重试再次被拦） |
 | B2 abort 不抛异常 | PASS | abort 路径执行；严格信号传播断言留 M1 CommandExecutor |
 
-**踩坑沉淀（安全级）**：tool_call handler 返回 `{ action: "block" }`（错形态）时 pi 静默放行工具，不报错——详见 `dev-docs/experience/pi-tool-call-handler-wrong-result-shape-silent-pass.md`。正确形态是 `ToolCallEventResult { block?: boolean, reason?: string }`。M1 policy gate 必须有 end-to-end contract 测试断言“block 后 isError=true”，禁止只断言 handler 被调用；禁止对 handler 返回值 `as never`。
+**踩坑沉淀（安全级）**：tool_call handler 返回 `{ action: "block" }`（错形态）时 pi 静默放行工具，不报错——详见 `dev-docs/experience/pi-tool-call-handler-wrong-result-shape-silent-pass.md`。正确形态是 `ToolCallEventResult { block?: boolean, reason?: string }`（SDK `emitToolCall()` 只检查 `result.block` 字段）。防御已由 M0.1 的双阶段防线实证（见下）。
+
+### M0.1：安全契约修正（2026-11-25 完成）
+
+M1 的正式前置条件。任务与结论：
+
+- [x] 删除 probe 中全部危险类型强转（唯一保留的 `as never` 是故意的敌手模拟，有注释；tsc --strict 零错误）。
+- [x] 验证 ToolCallEventResult 类型契约（正确形态 `{ block, reason }`，无强转自然过类型）。
+- [x] 增加工具实际执行计数（`entered`/`executed` 双计数：SDK 层放行 vs 真实副作用层）。
+- [x] 验证错误返回形态不会导致命令执行（C2：`entered=1 executed=0`）。
+- [x] 冻结 PermitStore 契约（见下）。
+
+**M0.1 验收结果（probe 10/10 PASS，fast 档沿用 2026-11-25 用户确认）：**
+
+| 测试 | 预期 | 实测 | 状态 |
+|---|---|---|---|
+| 正确 block 返回 | isError=true | blocked=1，probeResult isError=true | PASS |
+| block 后工具执行计数 | 0 | entered=0 executed=0 | PASS |
+| 错误返回形态 | 不产生 Permit | handler 无签发动华 | PASS |
+| 错误返回形态下调用工具 | Tool.execute 拒绝 | **entered=1 executed=0**（SDK 静默放行但第二层拦住） | PASS |
+| 无 Permit 直接执行 | 拒绝 | execute 统一 permit 检查入口 | PASS |
+| Permit 一次性消费 | 第二次拒绝 | first=true second=false | PASS |
+| Permit 过期 | 拒绝 | consumed=false | PASS |
+| allow 路径正常 | 执行 1 次 | executed=1 | PASS |
+| A1-A4 回归（扩展隔离/内置禁用/自定义注册） | 全部保持 | 全 PASS | PASS |
+| strict 类型检查 | 零错误 | tsc --noEmit --strict exit=0 | PASS |
+
+（并发不串扰与参数摘要不匹配两项在 M1 的 PermitStore 正式实现 + contract 测试中补齐，probe 单会话场景无法构造并发竞争。）
+
+**冻结契约：ToolPermit / PermitStore（M1 落地为 `packages/policy-lite/src/permit.ts`）**
+
+```ts
+interface ToolPermit {
+  toolCallId: string   // SDK 契约：tool_call 事件与 execute 首参同 ID
+  toolName: string
+  paramsDigest: string // SHA-256(稳定序列化参数)，防 input 途中被改（SDK 明确：handler 改 input 后不重新 schema 校验）
+  issuedAt: number
+  expiresAt: number    // 缺省 60s TTL
+}
+```
+
+规则：
+1. 按 toolCallId 查找 -> 校验工具名 -> 校验参数摘要 -> 校验过期 -> 一次性删除 -> 全过才放行；任一失败 fail-closed。
+2. PermitStore 按 AgentSession 隔离，禁止全局共享 Map。
+3. Policy Extension 不主动修改 `event.input`；Tool.execute 对参数做二次 schema 校验；摘要必须与 execute 实收参数一致。
+4. Policy 异常（抛错）时 fail-closed：不签发 Permit，execute 拒绝。
 
 ### M1：Agent 自定义工具层（1.5～2 天）
 
 - [ ] 实现 `agent-tools` Extension：注册 `run_command` / `read_file` / `write_file` / `edit_file`。
-- [ ] 实现 `policy-extension`：tool_call → Policy Gate → 一次性 permit。
+- [ ] 实现 `policy-extension`：tool_call -> Policy Gate -> 按 M0.1 冻结契约签发一次性 Permit。
+- [ ] 实现 `packages/policy-lite/src/permit.ts`：PermitStore（session 隔离、一次性消费、参数摘要、TTL）。
 - [ ] 文件操作全走 Workspace File Service（canonicalize/realpath 校验）。
 - [ ] 未知工具默认拒绝。
 - [ ] PiAgentAdapter 改造：loader 注入受控 factories；`noTools: "builtin"`；兼容现有 allowTools/excludeTools 映射到新工具名；工具执行 signal 与 request.signal 合并。
 - [ ] CommandExecutor 用测试 Mock，**生产链路不增加宿主机直接执行旁路**。
 
-验收：Agent 能读写工作区文件、发起 run_command；全部工具过统一权限检查；不再暴露 pi bash；AgentAdapter 的结构化输出/usage/partial/cancel 契约不回归。
+验收：Agent 能读写工作区文件、发起 run_command；全部工具过统一权限检查；不再暴露 pi bash；AgentAdapter 的结构化输出/usage/partial/cancel 契约不回归。**Permit 验收（M0.1 遗留两项在此补齐）：并发工具调用 Permit 不串扰；参数摘要不匹配拒绝；plus 错误形态下 CommandExecutor 调用次数为 0 的 end-to-end 断言。**
 
 ### M2：Sandbox Execution 实现（2～3 天）
 
@@ -144,14 +197,23 @@ Workspace File Service        CommandExecutor（Sandbox Execution）
 
 ### M4：统一执行入口、生命周期与可观测性（1～2 天）
 
-消除全部 4 处既有旁路（2026-11-25 核实清单）：
+消除全部 5 处既有旁路（2026-11-25 v3 核实清单）：
 
 | 旁路 | 位置 | 处理 |
 |---|---|---|
 | verifier 命令执行 | `packages/engine/src/optimizer/verifier-runner.ts` L122（execFile） | 改注入 CommandExecutor，在 after 工作区执行；保留超时/exitCode/stdout/stderr 契约 |
 | workflow check helper | `packages/engine/src/runtime/workflow-runtime.ts` L1374 `commandSuccess`（exec，任意 shell） | 改走 CommandExecutor（或沙盒内等价物）；check 语义不变 |
 | workflow runTool | `workflow-runtime.ts` `TOOL_INTERPRETER`/execFile（按脚本路径执行） | 脚本路径过工作区边界校验后走 CommandExecutor |
+| Python 解释器探测 | `workflow-runtime.ts` `spawnSync(bin, ["-V"])`（runTool 前置探测） | 登记为受控启动探测：仅 `-V` 探测无参数注入面，纳入执行入口审计清单，保留但禁止扩大用途 |
 | git 控制面 | `packages/engine/src/isolation/worktree.ts` L46（execFile git） | 保留为受控 Control Plane（内部工作区管理，非模型可达），文档明示边界 |
+
+**VM 安全边界（v3 精确化，禁止笼统宣称 Workflow JS 受 OS Sandbox 保护）：**
+
+- Agent 命令：必须走 Sandbox。
+- Workflow Runtime 启动的外部命令和脚本：必须走 CommandExecutor。
+- Workflow VM：仍是可信代码执行环境（vm.ts 自述"不是安全沙箱"），不属于本次 OS 隔离范围。
+- Worktree Git：受控 Control Plane，保留明确的内部执行权限。
+- Python 解释器探测：纳入执行入口审计，明确处理方式。
 
 - [ ] Agent 生命周期：session.dispose → Sandbox Host release → AbortSignal 传播 → runId/executionId 关联 → 清理完成后才结束执行。
 - [ ] 观测事件：tool.started / tool.updated / tool.finished / sandbox.blocked，只记事实（工具名、类别、路径、域名、原因码、时长），不记密钥/完整提示词/敏感内容。
@@ -200,7 +262,8 @@ Workspace File Service        CommandExecutor（Sandbox Execution）
 |---|---|---|---|
 | 2026-11-24 | v1 文档创建 | done | 定位 Sandbox 适配器 + tool_call 拦截 |
 | 2026-11-25 | v2 修订 | done | 重构定位；SDK 1.3.0 六项判断核实（一项修正：workflow-runtime 有 exec/execFile 旁路）；旁路清单定为 4 处 |
-| 2026-11-25 | M0 探针验证 | **done** | probe 6/6 PASS（零模型 A1-A4 + fast 档 B1/B2）；沉淀 tool_call 返回形态安全坑；接口冻结与 runId 贯通移入 M1 |
+| 2026-11-25 | M0 探针验证 | done | probe 6/6 PASS（零模型 A1-A4 + fast 档 B1/B2）；沉淀 tool_call 返回形态安全坑；接口冻结与 runId 贯通移入 M1 |
+| 2026-11-25 | v3 + M0.1 安全契约 | **done** | 评审意见落地：probe 删 as never（tsc strict 零错误）；双阶段 Permit 防线实证（C2：错误形态 SDK 静默放行但第二层拦住，entered=1 executed=0）；PermitStore 契约冻结；旁路清单 5 处；VM 边界精确化；新增工程原则。probe 10/10 PASS |
 
 ## 9. 参考引用
 
