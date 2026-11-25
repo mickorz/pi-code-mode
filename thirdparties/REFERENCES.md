@@ -29,6 +29,7 @@
 | REF-021 | pi-percy | https://github.com/ghoseb/pi-percy.git | thirdparties/pi-percy | a67c3a2340e3e19a46322f4127cf89ef2bd4dee8 | MIT | 方法论参考：pi 上下文自压缩扩展（旧 tool output 替换为指针、旧消息段替换为摘要、recall 检索回读，永久 session 条目）；只读研究，集成前再评估 | 2026-11-19 引入。长会话上下文治理（compaction/recall）与本包 workflow 观测/上下文管理方向对照 |
 | REF-022 | linger | https://github.com/simplexai-labs/linger.git | thirdparties/linger | e9bd35883230b2fc8552dbf6e94a33614e144b3c | 修改版 Apache-2.0（附加托管服务限制与前端 LOGO/版权信息保留条款） | 架构参考：开源个人 Agent（本地运行，pnpm monorepo：apps/packages/contracts/e2e 分层）；只读研究，禁止复制其前端代码，集成前再评估 | 2026-11-20 引入。个人 Agent 产品架构（会话/技能/集成组织）与本地 AI 运行形态对照 |
 | REF-023 | PiBot | https://github.com/w01fb0ss/PiBot.git | thirdparties/PiBot | 86a79674de1da9bceea20e60a544af391321e496 | Apache-2.0 | 架构参考：本地优先桌面多 Agent 团队应用（命名 Bot 单聊/群聊、规划/命令/文件/浏览器、风险步骤审批门禁，基于 pi agent kernel）；只读研究，集成前再评估 | 2026-11-22 引入。多 Bot 协作与审批门禁形态与本包 workflow 编排/子代理方向对照（pi 内核衍生生态） |
+| REF-024 | pine | https://github.com/pmndre/pine.git | thirdparties/pine | 601f02a7ffe1f35660454288d9ff898f925f46f2 | MIT | 架构参考：事件驱动的 agent harness（agents 订阅任意事件源并对文件/命令/网页/webhook 作出反应、无配置文件的管理型工具调用、BM25 自发现手册、内置 undo/plan/goal/swarm 编排）；只读研究，集成前再评估 | 2026-11-25 引入。**Windows 沙盒策略的第三路线参考**：其 Windows 上通过 WSL 获得 Linux 沙盒、原生 Windows 仅 `auto`/`bypass` 模式，与本包 M2 的 MXC BaseContainer / srt-win 选型直接对标；事件驱动触发形态与 workflow 编排方向对照 |
 
 ## Submodule 引入与登记流程
 

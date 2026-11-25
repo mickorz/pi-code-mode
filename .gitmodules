@@ -89,3 +89,7 @@
 	path = thirdparties/PiBot
 	url = https://github.com/w01fb0ss/PiBot.git
 	branch = main
+[submodule "thirdparties/pine"]
+	path = thirdparties/pine
+	url = https://github.com/pmndre/pine.git
+	branch = next
