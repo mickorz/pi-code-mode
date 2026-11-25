@@ -63,9 +63,11 @@ export class WorkspaceFileService {
       }
     }
     try {
-      // fd 写入必须显式 position 0：fd 的当前位置可能不为 0（readFile 后会推到尾部）
-      await handle.write(content, 0, "utf8")
-      await handle.truncate(content.length)
+      // M1.2：Buffer 写入 + 字节长度 truncate。
+      // content.length 是 UTF-16 码元数，truncate 收字节数——中文/Emoji 会错位截断。
+      const buffer = Buffer.from(content, "utf8")
+      await handle.write(buffer, 0, buffer.length, 0)
+      await handle.truncate(buffer.length)
     } finally {
       await handle.close()
     }
@@ -90,9 +92,10 @@ export class WorkspaceFileService {
         throw new WorkspaceFileError(`edit 失败：oldText 在 ${target} 中出现多次（要求唯一匹配）`)
       }
       const next = content.slice(0, first) + newText + content.slice(first + oldText.length)
-      // 同一 fd 上读后写：显式 position 0（fd 当前位置在文件尾，否则会追加写）
-      await handle.write(next, 0, "utf8")
-      await handle.truncate(next.length)
+      // M1.2：Buffer 写入 + 字节长度 truncate（避免 UTF-16 码元数 vs UTF-8 字节数错位）
+      const buffer = Buffer.from(next, "utf8")
+      await handle.write(buffer, 0, buffer.length, 0)
+      await handle.truncate(buffer.length)
       return { path: resolved, replacements: 1 }
     } finally {
       await handle.close()

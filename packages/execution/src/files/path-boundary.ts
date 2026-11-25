@@ -1,20 +1,25 @@
 /**
- * 路径边界 —— 工作区文件访问的强制防线（M1 + M1.1 TOCTOU 加固）
+ * 路径边界 —— 工作区文件访问的强制防线（M1.1 + M1.2 加固）
  *
  * 边界判定：目标 canonicalize（realpath 消解 symlink）后必须落在 workspace root 内。
  *
- * TOCTOU 防护（M1.1，评审 P1）：
- *   窗口：canonicalize 通过(T1) -> 内核 open(T2) 之间，另一进程把目标或中间目录换成
- *   指向外部的 symlink。防护三层：
- *   1. 目标最终组件是 symlink -> 拒绝（lstat 判定 + fd 的 fstat 复核比对 dev/ino）；
- *   2. 新建文件用 O_CREAT|O_EXCL（"wx"）：最终组件是 symlink 时内核不跟随，直接失败；
- *   3. 打开后 fstat(fd) 与打开前 lstat(real) 比对 dev+ino：不一致 = 检查后被替换，拒绝。
+ * TOCTOU 防护（M1.2，评审 P0 修复）：
+ *   窗口：lstat 检查(T1) -> 内核 open(T2) 之间，攻击者把目标换成指向外部的 symlink。
+ *   防护三层：
+ *   1. 打开前 lstat：最终组件是 symlink -> 立即拒绝；
+ *   2. open 带 O_NOFOLLOW（Linux/macOS）：内核层拒绝最终组件 symlink，T1..T2 窗口内
+ *      被换成 symlink 时 open 直接 ELOOP 失败（不跟随，不是事后才检查）；
+ *   3. fstat(fd) 与 **打开前保存的 lstat 结果** 比对 dev+ino（M1.2 修正：M1.1 误用
+ *      open 后重新 stat(real)——攻击者替换后两侧都是外部文件，校验恒通过，形同虚设）。
+ *   新建文件用 O_CREAT|O_EXCL（"wx"）：最终组件是 symlink 时内核不跟随。
+ *
  *   残余风险（如实声明）：中间目录整链在 T1..T2 被替换的窗口仍在（Node 无 openat）；
- *   M2 后 run_command 在沙盒内（可写边界=工作区），该攻击面由「FileService 拒绝 symlink
- *   最终组件」与沙盒策略共同收窄，OS 级完整隔离依赖 M2 SRT。
+ *   该风险由「FileService 拒绝 symlink 最终组件」与 M2 沙盒策略共同收窄，
+ *   OS 级完整路径隔离需 M2 SRT（注意：SRT 只约束子进程，不保护宿主进程内的本服务）。
  */
 
-import { lstat, open, realpath, stat } from "node:fs/promises"
+import { constants } from "node:fs"
+import { lstat, open, realpath } from "node:fs/promises"
 import type { FileHandle } from "node:fs/promises"
 import path from "node:path"
 
@@ -55,41 +60,79 @@ export async function resolveWithin(root: string, target: string): Promise<strin
 }
 
 /**
- * 安全打开（M1.1 TOCTOU 加固核心）：
+ * 测试/攻击模拟钩子（仅 openWithin 内部使用）：在 lstat 检查通过、实际 open 之前调用，
+ * 用于确定性地模拟"检查后替换"竞争窗口。生产路径不传。
+ */
+export interface OpenWithinHooks {
+  beforeOpen?: (realPath: string) => void | Promise<void>
+}
+
+/** Windows 无 O_NOFOLLOW 语义（且 file symlink 需特权）；有则用于内核层拒绝最终组件 symlink */
+const O_NOFOLLOW = process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0)
+
+/**
+ * 安全打开（M1.2）：
  *   1. resolveWithin 边界判定
- *   2. 最终组件为 symlink -> 拒绝（写场景尤其严格；读场景同样拒绝防信息外泄）
- *   3. 语义：
- *      - "read"：目标必须已存在，O_RDONLY 打开
- *      - "edit"：目标必须已存在，O_RDWR 打开
- *      - "create"：目标必须不存在，"wx"（O_CREAT|O_EXCL，不跟随最终 symlink）打开
- *   4. 打开后 fstat(fd) 与 lstat（判定时点）比对 dev+ino，不一致 -> 关闭并拒绝
+ *   2. 打开前 lstat：最终组件是 symlink -> 拒绝
+ *   3. open 带 O_NOFOLLOW（非 Windows）：
+ *      - "read"：O_RDONLY
+ *      - "edit"：O_RDWR
+ *      - "create"：O_CREAT|O_EXCL|O_WRONLY（wx：不跟随最终 symlink，不覆盖已有文件）
+ *   4. fstat(fd) 与打开前 lstat 的 dev+ino 比对，不一致 -> 关闭并拒绝
  * 返回 FileHandle（调用方负责 close；从 fd 读写，不再走路径解析）。
  */
 export async function openWithin(
   root: string,
   target: string,
   mode: "read" | "edit" | "create",
+  hooks: OpenWithinHooks = {},
 ): Promise<FileHandle> {
   const real = await resolveWithin(root, target)
-  const st = await lstat(real).catch(() => undefined)
-  if (st?.isSymbolicLink()) {
+  const before = await lstat(real).catch(() => undefined)
+  if (before?.isSymbolicLink()) {
     throw new PathBoundaryError(target, "symlink_final_component")
   }
-  let handle: FileHandle
-  if (mode === "create") {
-    if (st) throw new PathBoundaryError(target, "already_exists_for_create")
-    // wx：最终组件是 symlink 时内核不跟随（EEXIST/失败），防创建竞争
-    handle = await open(real, "wx").catch(() => {
-      throw new PathBoundaryError(target, "create_race")
-    })
-  } else {
-    if (!st) throw new PathBoundaryError(target, mode === "read" ? "not_found" : "not_found")
-    handle = await open(real, mode === "read" ? "r" : "r+")
+  if (mode === "create" && before) {
+    throw new PathBoundaryError(target, "already_exists_for_create")
   }
-  // fstat 复核：打开的 inode 必须就是判定时 lstat 看到的那个（防检查后被替换）
+  if (mode !== "create" && !before) {
+    throw new PathBoundaryError(target, "not_found")
+  }
+
+  // 攻击模拟注入点：此处到 open 之间即真实竞争窗口
+  await hooks.beforeOpen?.(real)
+
+  const baseFlags =
+    mode === "create"
+      ? constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY
+      : mode === "edit"
+        ? constants.O_RDWR
+        : constants.O_RDONLY
+  let handle: FileHandle
+  try {
+    handle = await open(real, baseFlags | O_NOFOLLOW)
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code
+    // ELOOP（O_NOFOLLOW 命中 symlink）/ EEXIST（create 竞争）/ ENOENT（被删除）
+    throw new PathBoundaryError(
+      target,
+      code === "ELOOP"
+        ? "symlink_race_blocked"
+        : code === "EEXIST"
+          ? "create_race"
+          : code === "ENOENT"
+            ? "vanished_after_check"
+            : "open_failed",
+    )
+  }
+
+  // M1.2 修正：与**打开前**的 lstat 比对（M1.1 比对 open 后的 stat(real) 无效）
+  if (mode === "create") {
+    // create 场景：打开前必须不存在，新建的 inode 无需比对（已由 O_EXCL 保证全新文件）
+    return handle
+  }
   const opened = await handle.stat()
-  const expected = await stat(real).catch(() => undefined)
-  if (!expected || opened.dev !== expected.dev || opened.ino !== expected.ino) {
+  if (!before || opened.dev !== before.dev || opened.ino !== before.ino) {
     await handle.close()
     throw new PathBoundaryError(target, "replaced_after_check")
   }

@@ -407,3 +407,118 @@ test("M1.1 evaluate: 受控工具之外一律 deny（extraTools 已删除）", (
     assert.equal(r.reason, "unknown_tool")
   }
 })
+
+// ── M1.2：UTF-8 字节长度正确性（P1） ──
+
+test("M1.2 UTF-8: 中文/Emoji/混合内容写入不被截断", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-utf8-"))
+  try {
+    const svc = new WorkspaceFileService(root)
+    const cases: Array<[string, string]> = [
+      ["chinese.txt", "麻将规则与游戏设计文档：角色、技能、关卡配置。"],
+      ["emoji.txt", "🎮🎯🏆✨ 游戏图标与状态标记 ✅❌⚠️"],
+      ["mixed.md", "# 标题 PRD\n\n中文 English 混合 🚀\n\n- 条目一\n- 条目二\n"],
+    ]
+    for (const [file, content] of cases) {
+      await svc.write(file, content)
+      const back = await svc.read(file)
+      assert.equal(back, content, `${file} 往返内容应完全一致`)
+      // 磁盘字节数 = UTF-8 字节长度（防 truncate 用了 UTF-16 码元数）
+      const { readFile, stat } = await import("node:fs/promises")
+      const raw = await readFile(path.join(root, file))
+      assert.equal(raw.toString("utf8"), content)
+      assert.equal((await stat(path.join(root, file))).size, Buffer.byteLength(content, "utf8"))
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("M1.2 UTF-8: 中文/Emoji 编辑（写入比原文更长与更短两种）", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-utf8edit-"))
+  try {
+    const svc = new WorkspaceFileService(root)
+    // 变短（旧内容更长，验证 truncate 用字节数）
+    await svc.write("a.md", "游戏设计文档：这是一个很长的中文段落，包含大量字符。")
+    await svc.edit("a.md", "这是一个很长的中文段落，包含大量字符。", "短")
+    assert.equal(await svc.read("a.md"), "游戏设计文档：短")
+    // 变长（中文替换为 Emoji，字节数变化更大）
+    await svc.write("b.md", "状态：待办")
+    await svc.edit("b.md", "待办", "✅ 已完成 🎯")
+    assert.equal(await svc.read("b.md"), "状态：✅ 已完成 🎯")
+    const { stat } = await import("node:fs/promises")
+    assert.equal((await stat(path.join(root, "b.md"))).size, Buffer.byteLength("状态：✅ 已完成 🎯", "utf8"))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// ── M1.2：真实竞争窗口（P0 修复验证） ──
+
+test("M1.2 TOCTOU: lstat 通过后目标被换成 symlink —— O_NOFOLLOW 内核层拦截", async () => {
+  if (process.platform === "win32") {
+    console.log("  [skip] Windows 无 O_NOFOLLOW 且无特权建 file-symlink；完整断言在 Linux/macOS/CI 执行")
+    return
+  }
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-race-"))
+  const outside = await mkdtemp(path.join(tmpdir(), "pcm-race-out-"))
+  try {
+    const { writeFile, rm: rmf, symlink } = await import("node:fs/promises")
+    const victim = path.join(outside, "secret.txt")
+    await writeFile(victim, "TOP-SECRET", "utf8")
+    const target = path.join(root, "data.txt")
+    await writeFile(target, "original", "utf8")
+
+    // 确定性竞争模拟：在 openWithin 的 lstat 之后、open 之前把目标换成指向外部的 symlink
+    const { openWithin } = await import("../../packages/execution/src/index.js")
+    await assert.rejects(
+      () =>
+        openWithin(root, target, "read", {
+          beforeOpen: async (realPath) => {
+            await rmf(realPath)
+            await symlink(victim, realPath)
+          },
+        }),
+      (e: unknown) => {
+        const reason = (e as { reason?: string }).reason
+        // O_NOFOLLOW -> ELOOP -> symlink_race_blocked（不允许走到 replaced_after_check）
+        assert.equal(reason, "symlink_race_blocked", `应被内核层拦截，实际 reason=${reason}`)
+        return true
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test("M1.2 TOCTOU: lstat 通过后目标被换成另一个普通文件 —— 打开前 inode 比对拦截", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pcm-swap-"))
+  try {
+    const { writeFile } = await import("node:fs/promises")
+    const target = path.join(root, "data.txt")
+    const decoy = path.join(root, "decoy.txt")
+    await writeFile(target, "original", "utf8")
+    await writeFile(decoy, "decoy-content-longer", "utf8")
+    const { openWithin, PathBoundaryError } = await import("../../packages/execution/src/index.js")
+
+    // 无 O_NOFOLLOW 生效的场景（同平台普通文件替换）：靠 fstat vs 打开前 lstat 的 dev/ino 比对拦截。
+    // 用 rename 覆盖制造 inode 变化（Windows/Linux 均可）。
+    const { rename } = await import("node:fs/promises")
+    await assert.rejects(
+      () =>
+        openWithin(root, target, "read", {
+          beforeOpen: async (realPath) => {
+            await rename(decoy, realPath) // 原子替换：realPath 现在指向 decoy 的 inode
+          },
+        }),
+      (e: unknown) => {
+        assert.ok(e instanceof PathBoundaryError)
+        assert.equal((e as { reason?: string }).reason, "replaced_after_check")
+        return true
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
