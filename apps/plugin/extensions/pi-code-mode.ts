@@ -27,7 +27,7 @@ import { PiScheduleRunner } from "../../../packages/manager/src/pi-schedule-runn
 import { ScheduleRuntime } from "../../../packages/engine/src/schedule/runtime.js"
 import { loadModelTiers } from "../../../packages/engine/src/agent/model-tiers.js"
 import { PiAgentAdapter } from "../../../packages/adapter/src/pi-agent-adapter.js"
-import { createCommandExecutor } from "../../../packages/execution/src/index.js"
+import { WorkspaceRegistry, createCommandExecutor, ensureWorkspace } from "../../../packages/execution/src/index.js"
 import {
   makeWorkflowTool,
   makeWorkflowControlTool,
@@ -56,6 +56,18 @@ import { ExplorerController } from "../../../packages/explorer/src/controller/ex
 import { createRunJournal } from "../../../packages/manager/src/run-journal.js"
 
 const runManager = new RunManager(16, getRuntimeEventBus())
+/**
+ * M2-W2 工作区注册表（Runtime 权威）：与 extension 同寿的单例。
+ * 职责分离：Agent 提执行请求 → 本注册表决定跨工作区 deny → SRT/MXC 强制执行。
+ * 注册失败不阻止插件加载，但会让受控命令执行被 fail-closed 拒绝（宁可不可用，不可无隔离）。
+ */
+const workspaceRegistry = new WorkspaceRegistry()
+// 当前项目目录登记为工作区（后续 adapter 还会按执行目录 ensure 其他工作区）
+try {
+  ensureWorkspace(workspaceRegistry, process.cwd())
+} catch (e) {
+  console.warn(`[pi-code-mode] 工作区登记失败，沙盒命令将被拒绝: ${String((e as Error)?.message ?? e)}`)
+}
 // run journal 单实例：写入方（workflow 工具 / schedule runner）与读取方（Explorer 详情）共用同一实例，
 // 否则读侧会命中陈旧内存缓存（评审修复 H1）
 const runJournal = createRunJournal(process.cwd())
@@ -96,7 +108,11 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
     // M2：命令执行器按平台选择（darwin/linux = SRT 沙盒；Windows = isolation_unavailable，绝不降级）
     adapterFactory: () =>
       withGlobalGate(
-        new PiAgentAdapter({ defaultCwd: cwd ?? process.cwd(), commandExecutor: createCommandExecutor() }),
+        new PiAgentAdapter({
+          defaultCwd: cwd ?? process.cwd(),
+          commandExecutor: createCommandExecutor({ workspaceRegistry }),
+          workspaceRegistry,
+        }),
         runManager.gate,
       ),
     cwd,

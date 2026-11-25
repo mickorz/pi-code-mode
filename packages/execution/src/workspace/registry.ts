@@ -87,11 +87,11 @@ export class WorkspaceRegistry {
 
     // 同路径已登记（不同 id）→ 视为同一工作区，返回既有条目
     for (const entry of this.byId.values()) {
-      if (entry.key === normalized.canonicalKey) return entry
+      if (entry.key === normalized.canonicalKey) return { ...entry, owners: [...entry.owners] }
     }
     const existing = this.byId.get(input.workspaceId)
     if (existing) {
-      if (existing.key === normalized.canonicalKey) return existing
+      if (existing.key === normalized.canonicalKey) return { ...existing, owners: [...existing.owners] }
       throw new WorkspaceRegistryError(
         `workspaceId ${input.workspaceId} 已绑定到其他路径（${existing.canonicalRoot}）`,
         "duplicate_id",
@@ -110,7 +110,7 @@ export class WorkspaceRegistry {
       lastActiveAt: now,
     }
     this.byId.set(entry.workspaceId, entry)
-    return entry
+    return { ...entry, owners: [...entry.owners] }
   }
 
   /** 取用（引用计数 +1，status -> active） */
@@ -120,7 +120,7 @@ export class WorkspaceRegistry {
     if (!entry.owners.includes(ownerId)) entry.owners.push(ownerId)
     entry.status = "active"
     entry.lastActiveAt = Date.now()
-    return entry
+    return { ...entry, owners: [...entry.owners] }
   }
 
   /** 释放（引用计数 -1）；最后一个 owner 释放后 status -> inactive，**条目保留** */
@@ -131,7 +131,7 @@ export class WorkspaceRegistry {
     entry.owners.splice(idx, 1)
     entry.lastActiveAt = Date.now()
     if (entry.owners.length === 0) entry.status = "inactive"
-    return entry
+    return { ...entry, owners: [...entry.owners] }
   }
 
   /** 注销：仍有 owner 时拒绝（防止运行中的任务失去隔离范围） */
@@ -146,8 +146,12 @@ export class WorkspaceRegistry {
     this.byId.delete(workspaceId)
   }
 
+  /**
+   * 快照（浅拷贝）：调用方拿到的是副本，直接改 status/owners 不会影响注册表内部状态，
+   * 必须经 acquire/release 才是有效变更。
+   */
   getAll(): WorkspaceEntry[] {
-    return [...this.byId.values()]
+    return [...this.byId.values()].map((e) => ({ ...e, owners: [...e.owners] }))
   }
 
   /** 按路径查工作区（自动登记用；未命中返回 undefined） */

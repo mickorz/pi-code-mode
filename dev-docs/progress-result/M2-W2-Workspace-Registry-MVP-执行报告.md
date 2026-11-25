@@ -98,3 +98,60 @@ build 零错误；contract **291/0**（+6）；engine **222/0**。
 | 接入 RunManager / 插件入口 | 当前 `createCommandExecutor` 尚未自动挂注册表；需在 M2 后续把工作区生命周期与 Run 生命周期绑定 |
 | Cocos 真实构建链 | 仍未验证（M2-W3） |
 | Windows Sandbox 正式验收 | 仍为 CONDITIONAL-GO，未放行 |
+
+---
+
+## 6. M2-W2b：接线到 Runtime（2026-11-25 续）
+
+### 6.1 解决的问题
+
+M2-W2 只证明了"注册表 → executor → MXC"链路正确，但注册表还是进程内孤立对象，无人填充。
+本阶段把它接到插件入口与 Adapter 生命周期。
+
+### 6.2 交付
+
+| 文件 | 改动 |
+|---|---|
+| `packages/execution/src/workspace/ensure.ts`（新） | `ensureWorkspace(registry, path)` 自动登记；`workspaceIdForKey` 由比较键**确定性派生**（`ws-<sha256前12>`，不含随机数，天然幂等） |
+| `packages/execution/src/workspace/registry.ts` | `getAll()` / `register()` / `acquire()` / `release()` 返回**快照**（浅拷贝），外部拿到引用改字段不影响内部状态，必须经 acquire/release 才有效 |
+| `packages/execution/src/command/factory.ts` | `createCommandExecutor({ workspaceRegistry })` 透传 |
+| `packages/adapter/src/pi-agent-adapter.ts` | 新增 `workspaceRegistry` 选项；`execute()` 内 `ensureWorkspace` + `acquire(executionId)`，`finally` 中 `release`。登记失败 → 返回 `fail("session", ...)`（fail-closed，不在无隔离策略下执行） |
+| `apps/plugin/extensions/pi-code-mode.ts` | 模块级 `WorkspaceRegistry` 单例（与 extension 同寿）；加载时登记 `process.cwd()`；同时注入 `createCommandExecutor` 与 `PiAgentAdapter` |
+
+### 6.3 端到端验证（真实 MXC）：7/7 PASS
+
+| 编号 | 内容 | 结果 |
+|---|---|---|
+| E1 | `ensureWorkspace` 自动登记 + id 确定性（大小写变体得到同一 id） | PASS |
+| E2 | acquire → active；release → inactive 但条目保留 | PASS |
+| E3 | A 读 B 被拒（**调用方未传任何 deny，Runtime 自动注入**） | PASS |
+| E3b | 对照组：B 读自己的文件允许（不是一刀切拒绝） | PASS |
+| E4 | 未登记目录 fail-closed 拒绝 | PASS |
+| E5 | 多 execution 并发同工作区：引用计数正确、无提前注销 | PASS |
+| E6 | **调用方传 `denyWorkspaces: []` 试图清空隔离 → 被忽略，A 仍读不到 B** | PASS |
+
+E6 是接线层的核心安全断言：权限决策权在 Runtime，Agent/脚本无法自行解除隔离。
+
+### 6.4 本轮抓到的问题（都在测试侧/设计侧，非安全缺陷）
+
+1. **测试对象引用陷阱**：`getAll()` 返回的条目是活引用，`release()` 后原先取到的 `during` 会跟着变成 `inactive`，断言读到最终态。
+   - 测试修正：断言前快照值。
+   - 设计修正：`getAll()` 等改为返回浅拷贝——顺带消除"外部直接改 `entry.status` 绕过 acquire"的隐患。
+2. **不存在的嵌套路径**（M2-W2 阶段修复）：只用 `path.resolve` 会让 Windows 短名/长名产生不同比较键，嵌套路径漏判；改为向上找最近存在祖先 realpath 再拼回尾段。
+
+### 6.5 全量回归
+
+- build 零错误
+- contract **291/0**
+- engine **222/0**
+- 插件真实加载冒烟：`pi -ne -e . -p "只回复 ok"` → `ok`（注册表单例装配无异常）
+
+### 6.6 遗留（诚实边界）
+
+| 项 | 说明 |
+|---|---|
+| 注册表不持久化 | 进程退出后丢失；重启后由插件加载时重新登记当前项目。跨进程/跨会话的工作区身份未保留——若要求"重启后仍 deny 上次登记过的其他项目"，需落盘（`~/.pi/...` 或项目 `.pi/`） |
+| 仅登记执行过的目录 | `ensureWorkspace` 只在 Adapter 执行时触发。未被 pi-code-mode 打开过的项目目录不在保护范围 |
+| 未登记目录 = 拒绝执行 | 这是当前的 fail-closed 选择；若希望"未登记也可执行但无跨项目隔离"，需显式放宽（不建议） |
+| Cocos 真实构建链 | 仍未验证（M2-W3） |
+| Windows Sandbox 正式验收 | 仍为 CONDITIONAL-GO，未放行 |

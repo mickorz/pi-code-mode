@@ -29,6 +29,7 @@ import {
   type CommandExecutor,
 } from "../../execution/src/index.js"
 import { PermitStore } from "../../policy-lite/src/index.js"
+import { ensureWorkspace, type WorkspaceRegistry } from "../../execution/src/index.js"
 import type { PolicyConfig } from "../../policy-lite/src/types.js"
 import { createAgentToolsExtension } from "./extensions/agent-tools.js"
 import { createPolicyExtension } from "./extensions/policy-extension.js"
@@ -56,6 +57,13 @@ export interface PiAgentAdapterOptions {
   commandExecutor?: CommandExecutor
   /** Policy 配置（类别级规则；缺省内置保守规则） */
   policy?: PolicyConfig
+  /**
+   * 工作区注册表（M2-W2）：Runtime 权威。提供后：
+   *   - 执行前自动登记工作区
+   *   - 按 executionId 引用计数（acquire/release），条目在 run 结束后保留（inactive）
+   *   - 跨工作区 deny 由 SrtCommandExecutor 从注册表读取，模型/脚本无从绕过
+   */
+  workspaceRegistry?: WorkspaceRegistry
 }
 
 /** 剥掉 markdown 代码围栏后尝试 JSON.parse（P0 基础结构化透传） */
@@ -70,6 +78,7 @@ export class PiAgentAdapter implements AgentAdapter {
   /** 命令执行器（M1 默认 fail-closed；M2 替换为 SRT 沙盒实现） */
   private readonly commandExecutor: CommandExecutor
   private readonly policy?: PolicyConfig
+  private readonly workspaceRegistry?: WorkspaceRegistry
   /** executionId -> 在途会话（cancel 路由） */
   private readonly inflight = new Map<string, AgentSession>()
 
@@ -78,6 +87,7 @@ export class PiAgentAdapter implements AgentAdapter {
     this.defaultCwd = options.defaultCwd
     this.commandExecutor = options.commandExecutor ?? new UnavailableCommandExecutor()
     this.policy = options.policy
+    this.workspaceRegistry = options.workspaceRegistry
   }
 
   async execute(request: AgentRequest, ctx: ExecutionContext): Promise<AgentResult> {
@@ -89,6 +99,17 @@ export class PiAgentAdapter implements AgentAdapter {
     // 开放磁盘扩展 = 绕过 Policy Gate / Permit / CommandExecutor 全部防线。
     // 注：子 Agent 不再装配 MCP（2026-11-18 用户决策：workflow 直调为唯一 MCP 通道），见 workflow-runtime 的 mcp 池
     const agentDir = this.agentDir ?? DEFAULT_AGENT_DIR
+    // M2-W2：工作区登记与引用计数（Runtime 权威）。登记失败 → 会话创建失败（fail-closed）
+    let registryLease: { workspaceId: string; ownerId: string } | undefined
+    if (this.workspaceRegistry) {
+      try {
+        const entry = ensureWorkspace(this.workspaceRegistry, cwd)
+        this.workspaceRegistry.acquire(entry.workspaceId, ctx.executionId)
+        registryLease = { workspaceId: entry.workspaceId, ownerId: ctx.executionId }
+      } catch (e) {
+        return fail("session", `工作区登记失败（拒绝在无隔离策略下执行）: ${String((e as Error)?.message ?? e)}`)
+      }
+    }
     // M1 受控执行层：每个子代理调用独立的 PermitStore（session 隔离，禁止全局共享）
     const permits = new PermitStore()
     const files = new WorkspaceFileService(cwd)
@@ -265,6 +286,14 @@ export class PiAgentAdapter implements AgentAdapter {
       unsubSession?.()
       // 会话结束：未消费 Permit 自然过期，主动清空释放内存（session 隔离生命周期）
       permits.clear()
+      // M2-W2：释放工作区引用（最后一个 owner 释放后置 inactive，条目保留以维持跨工作区 deny）
+      if (registryLease) {
+        try {
+          this.workspaceRegistry?.release(registryLease.workspaceId, registryLease.ownerId)
+        } catch {
+          /* 重复释放/已注销：不影响终态 */
+        }
+      }
       // 终态前把最后一段增量冲出去（节流窗口内的残余），随后停表
       partialBuffer.flush()
       partialBuffer.dispose()
