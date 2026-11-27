@@ -26,6 +26,12 @@ export interface SandboxCommandRequest {
    * 同样必须由 Runtime/项目配置提供，**不得来自模型输入**；仅限"构建专用权限档"使用。
    */
   writePaths?: readonly string[]
+  /**
+   * 受控面执行的**per-call 审批**回调：由我们的受控工具（agent-tools）注入，
+   * 内部走 ctx.ui.confirm；print/headless 模式无 UI → 返回 false → fail-closed。
+   * **只允许可信扩展设置**（模型输入不经过这里）。
+   */
+  approve?: (info: { command: string; cwd: string; reason: string }) => Promise<boolean>
   /** 执行身份贯通（runId/executionId 全链路关联，审计用） */
   runId?: string
   executionId?: string

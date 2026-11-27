@@ -18,6 +18,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import fs from "node:fs"
 import path from "node:path"
 import { RunManager, withGlobalGate } from "../../../packages/manager/src/run-manager.js"
 import { getRuntimeEventBus } from "../../../packages/engine/src/events/runtime-event-bus.js"
@@ -27,7 +28,14 @@ import { PiScheduleRunner } from "../../../packages/manager/src/pi-schedule-runn
 import { ScheduleRuntime } from "../../../packages/engine/src/schedule/runtime.js"
 import { loadModelTiers } from "../../../packages/engine/src/agent/model-tiers.js"
 import { PiAgentAdapter } from "../../../packages/adapter/src/pi-agent-adapter.js"
-import { WorkspaceRegistry, createCommandExecutor, ensureWorkspace } from "../../../packages/execution/src/index.js"
+import {
+  ControlPlaneExecutor,
+  RoutedCommandExecutor,
+  WorkspaceRegistry,
+  createCommandExecutor,
+  ensureWorkspace,
+  type ControlPlaneRule,
+} from "../../../packages/execution/src/index.js"
 import {
   makeWorkflowTool,
   makeWorkflowControlTool,
@@ -62,6 +70,25 @@ const runManager = new RunManager(16, getRuntimeEventBus())
  * 注册失败不阻止插件加载，但会让受控命令执行被 fail-closed 拒绝（宁可不可用，不可无隔离）。
  */
 const workspaceRegistry = new WorkspaceRegistry()
+/**
+ * 受控执行面规则（M2-W4 路线 A）：沙盒物理上无法承载的命令（GUI/Electron 构建链）
+ * 走宿主执行，但必须 ① 命中这里的规则 ② 人工审批 ③ 全程审计。
+ * 规则只从项目配置读取，**模型无法声明**。
+ */
+function loadControlPlaneRules(cwd: string): ControlPlaneRule[] {
+  const file = path.join(cwd, ".pi", "workflows", "control-plane.json")
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8")) as { allow?: Array<{ match?: string; reason?: string }> }
+    return (raw.allow ?? [])
+      .filter((r) => typeof r?.match === "string" && r.match.trim() && typeof r?.reason === "string")
+      .map((r) => ({ match: r.match!.trim(), reason: r.reason!.trim() }))
+  } catch {
+    // 无配置文件或格式错误 → 无控制面规则（全部走沙盒；GUI 命令将被 fail-closed 拒绝）
+    return []
+  }
+}
+const controlPlaneRules = loadControlPlaneRules(process.cwd())
+
 // 当前项目目录登记为工作区（后续 adapter 还会按执行目录 ensure 其他工作区）
 try {
   ensureWorkspace(workspaceRegistry, process.cwd())
@@ -110,7 +137,10 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
       withGlobalGate(
         new PiAgentAdapter({
           defaultCwd: cwd ?? process.cwd(),
-          commandExecutor: createCommandExecutor({ workspaceRegistry }),
+          commandExecutor: new RoutedCommandExecutor(
+            createCommandExecutor({ workspaceRegistry }),
+            new ControlPlaneExecutor({ allow: controlPlaneRules }),
+          ),
           workspaceRegistry,
         }),
         runManager.gate,

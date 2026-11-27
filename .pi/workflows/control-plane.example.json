@@ -1,0 +1,13 @@
+{
+  "__说明": "受控执行面白名单（M2-W4 路线 A）。沙盒物理上无法承载的命令（GUI/Electron 构建链）可在此登记，执行前必须人工审批，全程审计。规则只从本文件读取，模型无法声明。复制为 control-plane.json 生效。",
+  "allow": [
+    {
+      "match": "index.js build",
+      "reason": "Cocos CLI 构建：CocosCreator 是 Electron GUI 应用，MXC BaseContainer 无法启动（M2-W3b 实测）。产物与沙盒外构建一致。"
+    },
+    {
+      "match": "CocosCreator.exe",
+      "reason": "编辑器本体启动：同上，GUI 进程无法在 MXC 内运行。"
+    }
+  ]
+}
