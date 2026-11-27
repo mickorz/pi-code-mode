@@ -34,6 +34,7 @@ import {
   WorkspaceRegistry,
   createCommandExecutor,
   ensureWorkspace,
+  ControlPlaneAuditWriter,
   type ControlPlaneRule,
 } from "../../../packages/execution/src/index.js"
 import {
@@ -88,6 +89,8 @@ function loadControlPlaneRules(cwd: string): ControlPlaneRule[] {
   }
 }
 const controlPlaneRules = loadControlPlaneRules(process.cwd())
+// 受控面审计落盘（append-only JSONL，按日分文件）；写失败只警告，不阻断执行
+const controlPlaneAudit = new ControlPlaneAuditWriter(process.cwd(), (m) => console.warn(`[pi-code-mode] ${m}`))
 
 // 当前项目目录登记为工作区（后续 adapter 还会按执行目录 ensure 其他工作区）
 try {
@@ -139,7 +142,10 @@ function makeDeps(cwd?: string): WorkflowToolDeps {
           defaultCwd: cwd ?? process.cwd(),
           commandExecutor: new RoutedCommandExecutor(
             createCommandExecutor({ workspaceRegistry }),
-            new ControlPlaneExecutor({ allow: controlPlaneRules }),
+            new ControlPlaneExecutor({
+              allow: controlPlaneRules,
+              onAudit: (event) => void controlPlaneAudit.write(event),
+            }),
           ),
           workspaceRegistry,
         }),
